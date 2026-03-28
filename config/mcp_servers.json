@@ -1,28 +1,29 @@
 {
-  "_readme": "MCP server catalog for spark-sovereign. Copy any block into the mcpServers section of config/openclaw.json to enable it. All ${ENV_VAR} placeholders are substituted from .env by scripts/07_nemoclaw.sh. Enable only what you need — each server spawns a subprocess.",
+  "_docs": "https://modelcontextprotocol.io/examples",
+  "_note": "MCP server catalog for spark-sovereign. Copy server blocks into config/openclaw.json mcpServers to enable them. npm packages use npx -y. Python packages use uvx (install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh).",
 
   "servers": {
 
-    "_category_files_code": "=== FILES, CODE, VERSION CONTROL ===",
+    "_category_files_code": "=== FILES & CODE ===",
 
     "filesystem": {
-      "_description": "Read, write, search, and move files on the Spark. Essential for any file-manipulation task.",
+      "_package": "@modelcontextprotocol/server-filesystem (npm)",
+      "_description": "Read, write, search, move files. Most essential server.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem",
-               "/home/${USER}/projects",
-               "/opt/agent",
-               "/tmp"]
+               "/home/user/projects"]
     },
 
     "git": {
-      "_description": "Full git operations — commit, branch, diff, log, blame, stash. Works on any local repo.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-git",
-               "--repository", "/home/${USER}/projects"]
+      "_package": "mcp-server-git (PyPI — uvx, NOT npm)",
+      "_description": "Git operations — commit, branch, diff, log, stash.",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "/home/user/projects"]
     },
 
     "github": {
-      "_description": "GitHub API — create/review PRs, open issues, push commits, manage releases, search code.",
+      "_package": "@modelcontextprotocol/server-github (npm)",
+      "_description": "GitHub API — PRs, issues, code search, releases.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
@@ -30,97 +31,62 @@
       }
     },
 
-    "aider": {
-      "_description": "Trigger aider coding sessions from within an agent. Agent writes the prompt, aider applies code changes.",
+    "gitlab": {
+      "_package": "@modelcontextprotocol/server-gitlab (npm)",
+      "_description": "GitLab API — MRs, issues, pipelines.",
       "command": "npx",
-      "args": ["-y", "@aider-ai/mcp-server"],
+      "args": ["-y", "@modelcontextprotocol/server-gitlab"],
       "env": {
-        "OPENAI_API_BASE": "http://localhost:8000/v1",
-        "OPENAI_API_KEY": "EMPTY",
-        "AIDER_MODEL": "openai/qwen35-122b"
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_PAT}",
+        "GITLAB_API_URL": "https://gitlab.com"
       }
     },
 
-    "_category_browser_web": "=== BROWSER & WEB ===",
-
-    "puppeteer": {
-      "_description": "Full browser control — navigate URLs, click, fill forms, take screenshots, scrape pages. Required for any web automation.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
-      "env": {
-        "PUPPETEER_HEADLESS": "true"
-      }
-    },
+    "_category_web": "=== WEB & HTTP ===",
 
     "fetch": {
-      "_description": "Make HTTP requests to any API or URL. GET/POST/PUT/DELETE with custom headers. Lighter than puppeteer for pure API calls.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+      "_package": "mcp-server-fetch (PyPI — uvx, NOT npm)",
+      "_description": "HTTP requests to any API or URL.",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
     },
 
-    "searxng": {
-      "_description": "Web search via local SearXNG — private, no API key. Feeds results into pgvector RAG cache.",
+    "puppeteer": {
+      "_package": "@modelcontextprotocol/server-puppeteer (npm)",
+      "_description": "Headless browser — navigate, click, screenshot, scrape.",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-searxng"],
-      "env": {
-        "SEARXNG_URL": "http://localhost:8080"
-      }
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"]
     },
 
-    "_category_shell_infra": "=== SHELL & INFRASTRUCTURE ===",
-
-    "shell": {
-      "_description": "Execute bash commands on the Spark. Use for any system operation the agent needs to perform autonomously.",
-      "_warning": "Powerful — restrict allowed_commands in production if needed.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-shell"],
-      "env": {
-        "SHELL_ALLOWED_COMMANDS": "bash,python3,pip,docker,git,npm,node,curl,ls,cat,grep,find,mkdir,cp,mv"
-      }
-    },
-
-    "docker": {
-      "_description": "Manage Docker containers — start/stop/inspect containers, pull images, view logs.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-docker"],
-      "env": {
-        "DOCKER_HOST": "unix:///var/run/docker.sock"
-      }
-    },
+    "_category_data": "=== DATA & MEMORY ===",
 
     "postgres": {
-      "_description": "Direct SQL queries to pgvector / agent_memory DB. Useful for agent introspection of its own memory.",
+      "_package": "@modelcontextprotocol/server-postgres (npm)",
+      "_description": "SQL queries against any PostgreSQL DB including pgvector.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-postgres",
                "postgresql://postgres:${POSTGRES_PASSWORD}@localhost/${POSTGRES_DB}"]
     },
 
-    "_category_cloud": "=== CLOUD SERVICES ===",
-
-    "aws": {
-      "_description": "AWS operations — S3, EC2, Lambda, CloudWatch, DynamoDB, SQS, IAM. Uses local AWS profile.",
+    "memory": {
+      "_package": "@modelcontextprotocol/server-memory (npm)",
+      "_description": "Built-in MCP knowledge graph for in-session entity memory. Complements pgvector.",
       "command": "npx",
-      "args": ["-y", "@aws/mcp-server"],
-      "env": {
-        "AWS_PROFILE": "${AWS_PROFILE}"
-      }
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
     },
 
-    "_category_payments_saas": "=== PAYMENTS & SAAS ===",
-
-    "stripe": {
-      "_description": "Stripe API — customers, subscriptions, invoices, webhooks, refunds, disputes.",
+    "sequential-thinking": {
+      "_package": "@modelcontextprotocol/server-sequential-thinking (npm)",
+      "_description": "Structured multi-step reasoning tool. Helps Brain decompose complex tasks.",
       "command": "npx",
-      "args": ["-y", "@stripe/mcp"],
-      "env": {
-        "STRIPE_SECRET_KEY": "${STRIPE_SECRET_KEY}"
-      }
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
 
-    "_category_productivity": "=== PRODUCTIVITY & COMMS ===",
+    "_category_comms": "=== COMMUNICATIONS ===",
 
     "slack": {
-      "_description": "Read channels, send messages, search Slack. Distinct from the NemoClaw Slack channel (which receives commands). This lets the agent proactively post.",
+      "_package": "@modelcontextprotocol/server-slack (npm)",
+      "_description": "Read channels, send messages, search Slack history.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-slack"],
       "env": {
@@ -129,49 +95,34 @@
       }
     },
 
-    "notion": {
-      "_description": "Read and write Notion pages and databases — notes, project docs, wikis.",
+    "_category_cloud": "=== CLOUD ===",
+
+    "aws": {
+      "_package": "@aws/mcp-server (npm — official AWS package)",
+      "_description": "AWS operations — S3, EC2, Lambda, CloudWatch, DynamoDB.",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-notion"],
+      "args": ["-y", "@aws/mcp-server"],
       "env": {
-        "NOTION_API_TOKEN": "${NOTION_API_TOKEN}"
+        "AWS_PROFILE": "${AWS_PROFILE}"
       }
     },
 
-    "linear": {
-      "_description": "Linear issue tracker — create/update issues, manage sprints, query projects.",
+    "stripe": {
+      "_package": "@stripe/mcp (npm — official Stripe package)",
+      "_description": "Stripe API — customers, subscriptions, invoices, refunds.",
       "command": "npx",
-      "args": ["-y", "@linear/mcp-server"],
+      "args": ["-y", "@stripe/mcp"],
       "env": {
-        "LINEAR_API_KEY": "${LINEAR_API_KEY}"
-      }
-    },
-
-    "gmail": {
-      "_description": "Read and send email via Gmail. Agent can draft and send on your behalf.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-gmail"],
-      "env": {
-        "GMAIL_CREDENTIALS_PATH": "/home/${USER}/.gmail-mcp-credentials.json"
-      }
-    },
-
-    "google-calendar": {
-      "_description": "Read calendar, create events, check availability, schedule meetings.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-google-calendar"],
-      "env": {
-        "GCAL_CREDENTIALS_PATH": "/home/${USER}/.gcal-mcp-credentials.json"
+        "STRIPE_SECRET_KEY": "${STRIPE_SECRET_KEY}"
       }
     }
   },
 
-  "_active_profile_note": "The profiles below are pre-selected subsets. Copy the relevant servers into openclaw.json mcpServers.",
-
-  "profiles": {
-    "minimal": ["filesystem", "git", "github", "fetch", "shell"],
-    "developer": ["filesystem", "git", "github", "aider", "fetch", "shell", "docker", "postgres"],
-    "saas_builder": ["filesystem", "git", "github", "aider", "fetch", "puppeteer", "shell", "docker", "postgres", "stripe", "aws"],
-    "full": ["filesystem", "git", "github", "aider", "puppeteer", "fetch", "searxng", "shell", "docker", "postgres", "aws", "stripe", "slack", "notion", "linear", "gmail", "google-calendar"]
+  "_notes": {
+    "no_official_docker_mcp": "There is no official @modelcontextprotocol/server-docker package. Use the fetch or shell approach for Docker API calls, or the puppeteer server to automate Portainer.",
+    "no_official_shell_mcp": "There is no official @modelcontextprotocol/server-shell package. NemoClaw's OpenShell sandbox provides safe command execution natively without needing a separate MCP server.",
+    "git_is_python": "mcp-server-git is Python-only (uvx mcp-server-git). There is no @modelcontextprotocol/server-git npm package.",
+    "fetch_is_python": "mcp-server-fetch is Python-only (uvx mcp-server-fetch). There is no @modelcontextprotocol/server-fetch npm package.",
+    "uvx_prereq": "uvx requires uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
   }
 }

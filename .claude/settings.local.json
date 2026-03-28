@@ -2,7 +2,24 @@
   "permissions": {
     "allow": [
       "Bash(python3 -c \"import json; json.load\\(open\\(''config/openclaw.json'', encoding=''utf-8''\\)\\); print\\(''openclaw.json OK''\\)\")",
-      "Bash(python3 -c \"import json; json.load\\(open\\(''config/mcp_servers.json'', encoding=''utf-8''\\)\\); print\\(''mcp_servers.json OK''\\)\")"
+      "Bash(python3 -c \"import json; json.load\\(open\\(''config/mcp_servers.json'', encoding=''utf-8''\\)\\); print\\(''mcp_servers.json OK''\\)\")",
+      "WebSearch",
+      "WebFetch(domain:docs.nvidia.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:build.nvidia.com)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:eastondev.com)",
+      "WebFetch(domain:openclawvps.io)",
+      "WebFetch(domain:lumadock.com)",
+      "WebFetch(domain:aiinsider.in)",
+      "WebFetch(domain:www.nvidia.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:nvidianews.nvidia.com)",
+      "Bash(bash -n scripts/07_nemoclaw.sh)",
+      "Bash(python3 -c \"import json; json.load\\(open\\(''config/openclaw.json'', encoding=''utf-8''\\)\\); print\\(''openclaw.json: OK''\\)\")",
+      "Bash(python3 -c \"import json; json.load\\(open\\(''config/mcp_servers.json'', encoding=''utf-8''\\)\\); print\\(''mcp_servers.json: OK''\\)\")"
     ]
   }
 }
