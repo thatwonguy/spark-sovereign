@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json; json.load\\(open\\(''config/openclaw.json'', encoding=''utf-8''\\)\\); print\\(''openclaw.json OK''\\)\")",
+      "Bash(python3 -c \"import json; json.load\\(open\\(''config/mcp_servers.json'', encoding=''utf-8''\\)\\); print\\(''mcp_servers.json OK''\\)\")"
+    ]
+  }
+}
