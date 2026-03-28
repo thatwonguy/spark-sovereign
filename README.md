@@ -36,28 +36,46 @@ Everything this stack can do — across all interfaces and modalities.
 | **Photo to text** | Handwritten notes, whiteboard photos, documents — OCR-level extraction with semantic understanding |
 | **Vision via Telegram** | Send any photo to the Telegram bot → Brain analyzes it and responds. Same UX as GPT-4o on mobile |
 
+### Deep vs Fast — Two Sandboxes, One Command to Switch
+
+NemoClaw runs **sandboxes** — each sandbox is an isolated OpenShell environment with its own model endpoint. We run two:
+
+| Sandbox | Model | Use for |
+|---|---|---|
+| `deep` | Qwen3.5-122B (port 8000) | Vision, multimodal, coding, complex reasoning, long tasks |
+| `fast` | Nemotron-Nano (port 8001) | Quick replies, Telegram/Slack chat, sub-agent execution, iteration |
+
+```bash
+nemoclaw deep connect    # switch to Brain — vision + deep reasoning
+nemoclaw fast connect    # switch to Nano — fast replies, sub-agents
+nemoclaw list            # see all sandboxes and their status
+openshell term           # monitor sandbox activity in real-time
+```
+
+**Vision is Brain-only.** Qwen3.5-122B is multimodal — it accepts images alongside text. Nemotron-Nano is text-only. Any image sent via Telegram or the API routes to the `deep` sandbox automatically.
+
 ### Agentic Orchestration (the core engine)
 
+NemoClaw uses **OpenShell** for sandboxed execution. Each agent run gets:
+- A network namespace with only explicitly allowed outbound endpoints
+- Filesystem access scoped to your projects directory
+- MCP tools available as callable functions inside the sandbox
+
 ```
-You give a goal to the Brain (Qwen3.5-122B)
-        │
-        ├─ Brain decomposes into parallel sub-tasks
-        │
-        ├─► Nano sub-agent 1 (e.g. read codebase, find relevant files)
-        ├─► Nano sub-agent 2 (e.g. run tests, collect failures)
-        ├─► Nano sub-agent 3 (e.g. search SearXNG for error context)
-        ├─► Nano sub-agent 4 (e.g. check GitHub issues for similar bugs)
-        │         │
-        │         └─► Each Nano can spawn further sub-agents (depth 2)
-        │
-        └─ Brain synthesizes results, applies changes, reports back
+You give a goal → NemoClaw sandbox (deep or fast)
+                        │
+                        ├─ Calls MCP tools in parallel as needed:
+                        │    filesystem → read relevant files
+                        │    github     → check issues / PRs
+                        │    fetch      → call external APIs
+                        │    git        → inspect history
+                        │    puppeteer  → automate browser tasks
+                        │    postgres   → query memory DB
+                        │
+                        └─ Synthesizes results, applies changes, reports back
 ```
 
-**Spawn limits:** 8 concurrent Nano agents, depth 2, 5 children per agent, 1-hour timeout per run. Nano handles 128K context so each sub-agent can independently process large files or long search results.
-
-**MCP tool access:** Every agent (Brain and Nano) can call any MCP tool — read files, run shell commands, query GitHub, trigger browser automation, execute SQL, manage Docker containers. The Brain plans which tools to invoke; Nano agents execute in parallel.
-
-**Goal tracking:** NemoClaw tracks the top-level goal and ensures sub-agent results roll up correctly. If a sub-agent fails or times out, Brain retries or reroutes.
+The `deep` sandbox (Brain) is used for planning and synthesis. The `fast` sandbox (Nano) handles parallel sub-tasks and quick tool calls. NemoClaw coordinates between them via its sub-agent spawning — Brain decomposes the goal, Nano instances execute the sub-tasks concurrently, Brain assembles the final result.
 
 ### Remote Access — Work From Anywhere
 
@@ -87,31 +105,31 @@ Everything you get with ChatGPT Plus on your phone, plus real agentic capability
 | Bill per message | Yes ($20+/mo) | No — $0 per message |
 | Private | No | Yes — never leaves your hardware |
 
-**Usage:** Text, voice note, or image → Telegram bot → NemoClaw routes to fast (Nano) or deep (Brain) → response back in chat. Use `/deep` prefix for Brain-level reasoning. Use `/code` to trigger the coding agent with full Aider + GitHub access.
+**Routing:** Text and voice notes → `fast` sandbox (Nano, instant). Images → `deep` sandbox (Brain, vision-capable). For complex tasks from Telegram, switch your active sandbox first: `nemoclaw deep connect`, then send your message.
 
 ### What the Agent Can Control via MCP
 
 MCP (Model Context Protocol) gives agents direct tool access to real systems. Every tool below can be called autonomously by the Brain or any Nano sub-agent:
 
-| Category | MCP Server | What the agent can do |
-|---|---|---|
-| **Files** | `filesystem` | Read, write, search, move any file in your projects directory |
-| **Git** | `git` | Commit, branch, merge, diff, log, stash, cherry-pick |
-| **GitHub** | `github` | Create PRs, review code, open/close issues, manage releases, search repos |
-| **Browser** | `puppeteer` | Navigate websites, click, fill forms, take screenshots, scrape pages |
-| **HTTP** | `fetch` | Call any REST API with custom headers and bodies |
-| **Shell** | `shell` | Run bash commands on Spark — install packages, run scripts, manage services |
-| **Docker** | `docker` | Start/stop containers, pull images, view logs, inspect state |
-| **Database** | `postgres` | Query pgvector memory DB or any PostgreSQL DB |
-| **AWS** | `aws` | S3, EC2, Lambda, CloudWatch, DynamoDB, SQS, IAM |
-| **Stripe** | `stripe` | Customers, subscriptions, invoices, refunds, disputes |
-| **Slack** | `slack` | Send messages, read channels, search history |
-| **Notion** | `notion` | Read/write pages and databases |
-| **Linear** | `linear` | Create/update issues, manage sprints |
-| **Gmail** | `gmail` | Read email, draft and send |
-| **Calendar** | `google-calendar` | Check schedule, create events |
+MCP (Model Context Protocol) gives the agent direct tool access to real systems from inside the NemoClaw sandbox:
 
-See `config/mcp_servers.json` for the full catalog with enable/disable comments and pre-built profiles (`minimal`, `developer`, `saas_builder`, `full`).
+| Category | Package | What the agent can do |
+|---|---|---|
+| **Files** | `@modelcontextprotocol/server-filesystem` (npm) | Read, write, search, move files in your projects directory |
+| **Git** | `mcp-server-git` (uvx/PyPI) | Commit, branch, diff, log, stash — on any local repo |
+| **GitHub** | `@modelcontextprotocol/server-github` (npm) | Create PRs, review code, open issues, manage releases |
+| **Browser** | `@modelcontextprotocol/server-puppeteer` (npm) | Navigate sites, click, fill forms, take screenshots, scrape |
+| **HTTP** | `mcp-server-fetch` (uvx/PyPI) | Call any REST API with custom headers and bodies |
+| **Database** | `@modelcontextprotocol/server-postgres` (npm) | Query pgvector memory DB or any PostgreSQL DB |
+| **Memory** | `@modelcontextprotocol/server-memory` (npm) | In-session knowledge graph; complements pgvector |
+| **Reasoning** | `@modelcontextprotocol/server-sequential-thinking` (npm) | Structured multi-step decomposition for complex tasks |
+| **AWS** | `@aws/mcp-server` (npm — official) | S3, EC2, Lambda, CloudWatch, DynamoDB |
+| **Stripe** | `@stripe/mcp` (npm — official) | Customers, subscriptions, invoices, refunds |
+| **Slack** | `@modelcontextprotocol/server-slack` (npm) | Send messages, read channels, search history |
+
+> **Shell/Docker:** There are no official MCP packages for shell execution or Docker. NemoClaw's OpenShell sandbox handles safe command execution natively — the agent can run commands within the sandbox's allowed policy without a separate MCP server.
+
+See `config/mcp_servers.json` for the full catalog. Add any server to the `mcpServers` block in `config/openclaw.json` to enable it.
 
 ---
 
