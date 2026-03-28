@@ -1,0 +1,33 @@
+# =============================================================================
+# Aider config — spark-sovereign
+# Uses local vLLM endpoints. No API keys needed.
+# Brain (8000) for complex coding. Nano (8001) for fast edits.
+#
+# To swap models: change model/editor-model to match served_name in models.yml
+# =============================================================================
+
+# Primary model — Qwen3.5-122B for complex coding tasks
+model: openai/qwen35-122b
+
+# Editor model — Nano for fast diff application
+editor-model: openai/nemotron-nano
+
+# Local vLLM endpoint (Brain on 8000)
+openai-api-base: http://localhost:8000/v1
+openai-api-key: EMPTY
+
+# Coding behavior
+auto-commits: false          # always review before committing
+map-tokens: 4096             # codebase context map size
+cache-prompts: true          # cache repeated system prompts
+edit-format: diff            # show diffs — easier to review
+
+# Usage:
+#   cd ~/projects/my-saas && aider
+#   aider --message "Add Stripe webhook handler"
+#
+# Use Nano for fast simple edits:
+#   aider --model openai/nemotron-nano --message "fix typo in README"
+#
+# Use Brain explicitly:
+#   aider --model openai/qwen35-122b --message "refactor auth middleware"

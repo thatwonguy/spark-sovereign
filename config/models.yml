@@ -1,0 +1,140 @@
+# =============================================================================
+# MODEL REGISTRY — spark-sovereign
+# =============================================================================
+# This is the single source of truth for all models in the stack.
+# To swap any model:
+#   1. Edit the relevant section below
+#   2. Re-run the corresponding script (scripts/02_download_models.sh, etc.)
+#   3. Restart the affected Docker container
+#
+# All scripts source this file via `yq` or the helper `config/parse_models.sh`
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# BRAIN — primary reasoning, coding, vision, deep tasks
+# -----------------------------------------------------------------------------
+brain:
+  name: qwen35-122b
+  hf_repo: RedHatAI/Qwen3.5-122B-A10B-NVFP4
+  local_path: /opt/models/qwen35-122b
+  port: 8000
+  served_name: qwen35-122b
+  docker_image: avarok/dgx-vllm-nvfp4-kernel:v23      # GB10 SM121 NVFP4 optimized
+  gpu_memory_utilization: 0.60                          # ~77GB on 128GB Spark
+  max_model_len: 65536                                  # 64K context
+  kv_cache_dtype: fp8
+  max_num_seqs: 4
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3
+  extra_env:
+    VLLM_NVFP4_GEMM_BACKEND: marlin
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+    VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
+    VLLM_USE_FLASHINFER_MOE_FP4: "0"
+    VLLM_MARLIN_USE_ATOMIC_ADD: "1"
+  # --- SWAP EXAMPLE ---
+  # To use a different brain, comment the above and uncomment:
+  # name: llama4-scout-109b
+  # hf_repo: meta-llama/Llama-4-Scout-17B-16E-Instruct
+  # local_path: /opt/models/llama4-scout
+  # docker_image: nvcr.io/nvidia/vllm:26.02-py3
+  # gpu_memory_utilization: 0.58
+
+# -----------------------------------------------------------------------------
+# SUB-AGENTS — fast chat, tool calls, parallel agent tasks
+# -----------------------------------------------------------------------------
+subagent:
+  name: nemotron-nano
+  hf_repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+  local_path: /opt/models/nemotron-nano
+  port: 8001
+  served_name: nemotron-nano
+  docker_image: nvcr.io/nvidia/vllm:26.02-py3
+  gpu_memory_utilization: 0.18                          # ~23GB
+  max_model_len: 131072                                 # 128K context
+  kv_cache_dtype: fp8
+  max_num_seqs: 8
+  tool_call_parser: qwen3_coder
+  reasoning_parser: nano_v3
+  reasoning_parser_plugin: nano_v3_reasoning_parser.py
+  # --- SWAP EXAMPLE ---
+  # name: mistral-small-3.1-24b
+  # hf_repo: mistralai/Mistral-Small-3.1-24B-Instruct-2503
+  # local_path: /opt/models/mistral-small
+  # gpu_memory_utilization: 0.16
+
+# -----------------------------------------------------------------------------
+# ASR — speech-to-text (streaming WebSocket)
+# -----------------------------------------------------------------------------
+asr:
+  name: nemotron-asr
+  hf_repo: nvidia/nemotron-speech-streaming-en-0.6b    # latest March 12 2026 checkpoint
+  local_path: /opt/models/nemotron-asr
+  port: 8002
+  # --- SWAP EXAMPLE ---
+  # name: whisper-large-v3
+  # hf_repo: openai/whisper-large-v3
+  # local_path: /opt/models/whisper-large-v3
+  # port: 8002
+
+# -----------------------------------------------------------------------------
+# TTS — text-to-speech (7 languages, 5 voices)
+# -----------------------------------------------------------------------------
+tts:
+  name: magpie-tts
+  hf_repo: nvidia/magpie_tts_multilingual_357m
+  local_path: /opt/models/magpie-tts
+  port: 8003
+  # --- SWAP EXAMPLE ---
+  # name: kokoro-82m
+  # hf_repo: hexgrad/Kokoro-82M
+  # local_path: /opt/models/kokoro
+  # port: 8003
+
+# -----------------------------------------------------------------------------
+# EMBEDDINGS — vector encoding for RAG + pgvector memory
+# -----------------------------------------------------------------------------
+embeddings:
+  name: nomic-embed
+  hf_repo: nomic-ai/nomic-embed-text-v1.5
+  local_path: /opt/models/nomic-embed
+  port: 8004
+  dimensions: 384
+  # --- SWAP EXAMPLE (higher-quality, more RAM) ---
+  # name: nv-embed-v2
+  # hf_repo: nvidia/NV-Embed-v2
+  # local_path: /opt/models/nv-embed-v2
+  # port: 8004
+  # dimensions: 4096
+
+# -----------------------------------------------------------------------------
+# INFRASTRUCTURE — not swappable models, just reference
+# -----------------------------------------------------------------------------
+infrastructure:
+  pgvector:
+    image: pgvector/pgvector:pg17
+    port: 5432
+    data_path: /opt/pgvector
+  searxng:
+    image: searxng/searxng:latest
+    port: 8080
+    config_path: /opt/searxng
+  nemoclaw:
+    ui_port: 18789
+
+# -----------------------------------------------------------------------------
+# MEMORY MAP (128GB unified — verified March 2026)
+# -----------------------------------------------------------------------------
+# Component                  Allocated   Note
+# Qwen3.5-122B NVFP4         75.6 GB    0.60 util
+# Nemotron Nano NVFP4        20.0 GB    0.18 util
+# ASR (nemotron-speech)       2.4 GB    always-on
+# TTS (magpie_tts)            1.4 GB    always-on
+# Embeddings (nomic)          0.4 GB    always-on
+# pgvector + PostgreSQL       2.0 GB    always-on
+# SearXNG                     0.5 GB    always-on
+# NemoClaw + OpenClaw         1.0 GB    always-on
+# OS + Docker + vLLM          6.0 GB    always-on
+# ─────────────────────────────────────────
+# TOTAL                     109.3 GB
+# KV CACHE HEADROOM          18.7 GB    ✅ safe

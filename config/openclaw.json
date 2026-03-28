@@ -1,0 +1,143 @@
+{
+  "_comment": "NemoClaw / OpenClaw agent runtime config. MCP server catalog: config/mcp_servers.json. Model ports: config/models.yml. Env vars substituted from .env by scripts/07_nemoclaw.sh.",
+
+  "model": "http://localhost:8001/v1/nemotron-nano",
+
+  "agents": {
+    "defaults": {
+      "subagents": {
+        "model": "nemotron-nano",
+        "thinking": "low",
+        "maxSpawnDepth": 2,
+        "maxChildrenPerAgent": 5,
+        "maxConcurrent": 8,
+        "runTimeoutSeconds": 3600
+      }
+    },
+    "list": [
+      {
+        "_comment": "Main orchestrator — uses Brain for deep planning, spawns Nano sub-agents for parallel execution",
+        "name": "main",
+        "model": "http://localhost:8000/v1/qwen35-122b",
+        "thinking": "high",
+        "subagents": {
+          "model": "nemotron-nano",
+          "thinking": "low"
+        }
+      },
+      {
+        "_comment": "Fast responder — Nano only, for quick Telegram/Slack replies that don't need deep reasoning",
+        "name": "fast",
+        "model": "http://localhost:8001/v1/nemotron-nano",
+        "thinking": "low",
+        "subagents": {
+          "model": "nemotron-nano",
+          "thinking": "low",
+          "maxConcurrent": 8
+        }
+      },
+      {
+        "_comment": "Coding agent — Brain orchestrates, Nano applies diffs via aider MCP tool",
+        "name": "coder",
+        "model": "http://localhost:8000/v1/qwen35-122b",
+        "thinking": "high",
+        "subagents": {
+          "model": "nemotron-nano",
+          "thinking": "low",
+          "maxSpawnDepth": 3,
+          "maxChildrenPerAgent": 6,
+          "maxConcurrent": 8
+        }
+      }
+    ]
+  },
+
+  "channels": {
+    "telegram": {
+      "_comment": "Get bot token from @BotFather. Get your numeric user ID from @userinfobot.",
+      "token": "${TELEGRAM_BOT_TOKEN}",
+      "allowedUsers": ["${TELEGRAM_ALLOWED_USER_IDS}"],
+      "defaultAgent": "fast",
+      "voiceEnabled": true,
+      "imageEnabled": true,
+      "_usage": "Send text, voice notes (auto-transcribed via ASR), or images (vision via Brain). Prefix with /deep for Brain-level reasoning."
+    },
+    "slack": {
+      "_comment": "Create Slack app at api.slack.com — requires bot token (xoxb-) and app-level token (xapp-).",
+      "botToken": "${SLACK_BOT_TOKEN}",
+      "appToken": "${SLACK_APP_TOKEN}",
+      "defaultAgent": "fast",
+      "voiceEnabled": false,
+      "imageEnabled": true,
+      "_usage": "Mention @spark or DM it. Use /deep prefix to invoke the Brain. Images and screenshots interpreted via vision."
+    }
+  },
+
+  "mcpServers": {
+    "_comment": "Active profile: developer. See config/mcp_servers.json for full catalog and profiles (minimal/developer/saas_builder/full).",
+
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem",
+               "/home/${USER}/projects", "/opt/agent", "/tmp"]
+    },
+
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git",
+               "--repository", "/home/${USER}/projects"]
+    },
+
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PAT}"}
+    },
+
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    },
+
+    "shell": {
+      "_comment": "Allows agent to run bash commands on Spark. Required for autonomous DevOps tasks.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-shell"],
+      "env": {
+        "SHELL_ALLOWED_COMMANDS": "bash,python3,pip,docker,git,npm,node,curl,ls,cat,grep,find,mkdir,cp,mv"
+      }
+    },
+
+    "docker": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-docker"],
+      "env": {"DOCKER_HOST": "unix:///var/run/docker.sock"}
+    },
+
+    "postgres": {
+      "_comment": "Agent can introspect its own memory DB or query your app DBs.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres",
+               "postgresql://postgres:${POSTGRES_PASSWORD}@localhost/${POSTGRES_DB}"]
+    },
+
+    "puppeteer": {
+      "_comment": "Headless browser — web automation, screenshots, form filling, scraping.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "env": {"PUPPETEER_HEADLESS": "true"}
+    },
+
+    "aws": {
+      "command": "npx",
+      "args": ["-y", "@aws/mcp-server"],
+      "env": {"AWS_PROFILE": "${AWS_PROFILE}"}
+    },
+
+    "stripe": {
+      "command": "npx",
+      "args": ["-y", "@stripe/mcp"],
+      "env": {"STRIPE_SECRET_KEY": "${STRIPE_SECRET_KEY}"}
+    }
+  }
+}
