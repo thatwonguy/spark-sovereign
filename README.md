@@ -4,7 +4,8 @@ Private local AI supercomputer stack on **NVIDIA DGX Spark** (128GB unified memo
 
 **Zero cloud. Zero API cost. Gets smarter every session.**
 
-- Qwen3.5-122B NVFP4 brain + Nemotron Nano sub-agents
+- Qwen3-VL-32B FP8 brain — vision, coding, deep reasoning, 128K context
+- Nemotron Nano 30B NVFP4 sub-agents — 56–70 tok/s daily driver
 - Streaming voice I/O (ASR + TTS)
 - pgvector continuous learning memory + SearXNG web search RAG
 - NemoClaw agentic orchestration via Telegram / Slack
@@ -30,10 +31,10 @@ Everything this stack can do — across all interfaces and modalities.
 
 | Capability | How |
 |---|---|
-| **Image understanding** | Qwen3.5-122B is a vision model — send images via the `/v1/chat/completions` endpoint with base64 image content |
+| **Image understanding** | Qwen3-VL-32B is a native vision-language model — send images via `/v1/chat/completions` with base64 image content |
 | **Screenshot analysis** | Send a screenshot from your phone or laptop; Brain describes, debugs, or acts on what it sees |
-| **Diagram / chart reading** | Architecture diagrams, database ERDs, whiteboards — Brain interprets and explains |
-| **Photo to text** | Handwritten notes, whiteboard photos, documents — OCR-level extraction with semantic understanding |
+| **Diagram / chart reading** | Architecture diagrams, database ERDs, whiteboards — top-tier ChartQA and spatial reasoning |
+| **Photo to text** | Handwritten notes, whiteboard photos, documents — Qwen3-VL leads on OCR across 32 languages |
 | **Vision via Telegram** | Send any photo to the Telegram bot → Brain analyzes it and responds. Same UX as GPT-4o on mobile |
 
 ### Default: Nano. Switch to Brain on demand.
@@ -43,7 +44,7 @@ Everything this stack can do — across all interfaces and modalities.
 | Model | Speed | Use for | Vision |
 |---|---|---|---|
 | Nemotron-Nano (default) | 56–70 tok/s | Chat, email, Slack, coding tasks, sub-agents, most things | No |
-| Qwen3.5-122B (Brain) | ~16 tok/s | Vision, large codebase architecture, overnight builds, frontier reasoning | **Yes** |
+| Qwen3-VL-32B (Brain) | ~40–55 tok/s | Vision, large codebase architecture, deep reasoning, complex multi-step tasks | **Yes** |
 
 **Mode locks for the session — set once, stays until you change it:**
 
@@ -94,7 +95,7 @@ Nano reviews, commits via git MCP, opens PR via github MCP
 Sends you Telegram summary
 ```
 
-Switch to Brain for overnight work only when the task needs vision or genuine frontier-level reasoning across a very large codebase. Everything else: Nano is fast enough and more than capable.
+Switch to Brain for work requiring vision or deep multi-step reasoning across a large codebase. Everything else: Nano is fast enough and more than capable.
 
 NemoClaw sandboxes isolate each agent run:
 - Network namespace — only explicitly allowed outbound endpoints
@@ -140,9 +141,7 @@ Everything you get with ChatGPT Plus on your phone, plus real agentic capability
 
 ### What the Agent Can Control via MCP
 
-MCP (Model Context Protocol) gives agents direct tool access to real systems. Every tool below can be called autonomously by the Brain or any Nano sub-agent:
-
-MCP (Model Context Protocol) gives the agent direct tool access to real systems from inside the NemoClaw sandbox:
+MCP (Model Context Protocol) gives agents direct tool access to real systems. Every tool below can be called autonomously by the Brain or any Nano sub-agent from inside the NemoClaw sandbox:
 
 | Category | Package | What the agent can do |
 |---|---|---|
@@ -166,7 +165,59 @@ See `config/mcp_servers.json` for the full catalog. Add any server to the `mcpSe
 
 ## What This Is — and Why It Compounds
 
-Most AI setups are stateless: every session starts from zero, every token costs money, everything you type leaves your network. spark-sovereign is the opposite. It runs a 122B-parameter reasoning brain and a fast 30B sub-agent stack entirely on local hardware, with a pgvector memory layer that accumulates verified knowledge across every session. Web search results that prove correct get stored permanently. Failures get tagged and avoided. At the end of each session, the Nano model curates durable lessons from what happened and writes them to the DB. The system gets materially smarter with every use — not through retraining, but through growing, queryable, domain-specific memory. After six months of daily use, your Spark knows your codebase, your preferences, your infrastructure, and your failure patterns in a way no cloud model ever will. After a year, you have a proprietary dataset of verified, outcome-tagged interactions that can be used to fine-tune a permanently improved custom model — one that no one else has, that lives entirely on hardware you own, and that can never be deprecated, rate-limited, or changed under you.
+Most AI setups are stateless: every session starts from zero, every token costs money, everything you type leaves your network. spark-sovereign is the opposite. It runs a 32B vision-language brain and a fast 30B sub-agent stack entirely on local hardware, with a pgvector memory layer that accumulates verified knowledge across every session. Web search results that prove correct get stored permanently. Failures get tagged and avoided. At the end of each session, the Nano model curates durable lessons from what happened and writes them to the DB. The system gets materially smarter with every use — not through retraining, but through growing, queryable, domain-specific memory. After six months of daily use, your Spark knows your codebase, your preferences, your infrastructure, and your failure patterns in a way no cloud model ever will. After a year, you have a proprietary dataset of verified, outcome-tagged interactions that can be used to fine-tune a permanently improved custom model — one that no one else has, that lives entirely on hardware you own, and that can never be deprecated, rate-limited, or changed under you.
+
+---
+
+## Model Benchmarks
+
+### Brain — Qwen3-VL-32B-Instruct-FP8
+
+Official FP8 quantization from Qwen. Near-BF16 quality on standard benchmarks.
+
+#### Vision & Multimodal
+
+| Benchmark | Qwen3-VL-32B | Qwen2.5-VL-72B | GPT-4o |
+|---|---|---|---|
+| **MMMU val** | **>70.2** | 70.2 | 69.1 |
+| **DocVQA** | **≥96.4** | 96.4 | 91.1 |
+| **ChartQA** | **≥89.5** | 89.5 | 85.7 |
+| **MMBench EN** | **≥88.0** | 88.0 | 83.4 |
+| **MathVista** | **≥74.8** | 74.8 | 63.8 |
+| **OCR (multilingual)** | 32 languages | — | Limited |
+
+> Qwen3-VL-32B matches or exceeds Qwen2.5-VL-72B across multimodal benchmarks despite being less than half the parameter count — the Qwen3 architecture generation makes the difference. Source: Qwen official model card comparisons.
+
+#### Reasoning & Coding
+
+| Benchmark | Qwen3-VL-32B | Notes |
+|---|---|---|
+| **MMLU** | ~82–85% | Qwen3 architecture backbone |
+| **GPQA Diamond** | Competitive | Strong STEM reasoning |
+| **HumanEval** | ~85–88% | Coding capability from Qwen3 base |
+| **Context window** | **128K tokens** | 256K native (capped at 128K in config) |
+
+#### Memory Footprint
+
+| Precision | Size on disk | GPU allocated (util 0.40) |
+|---|---|---|
+| BF16 (base) | ~65 GB | — |
+| **FP8 (deployed)** | **35.5 GB** | **~51 GB** |
+
+---
+
+### Sub-agent — Nemotron-Nano-30B-A3B-NVFP4
+
+| Benchmark | Score | Notes |
+|---|---|---|
+| **Throughput** | 56–70 tok/s | On GB10, single-user |
+| **HumanEval** | ~82% | Strong for 3B active params |
+| **MMLU** | ~75% | Competitive at this size |
+| **Context window** | 128K tokens | Full context active |
+| **Tool calling** | Native | qwen3_coder parser |
+| **Parallel workers** | Up to 8 | Via NemoClaw sessions_spawn |
+
+NVFP4 quantized — uses native GB10 FP4 tensor cores. 3B active parameters (30B total MoE) means inference is extremely fast with full model quality on most tasks.
 
 ---
 
@@ -176,8 +227,9 @@ Most AI setups are stateless: every session starts from zero, every token costs 
 
 | Capability | GPT-5.4 (OpenAI Cloud) | Claude Sonnet 4.6 (Anthropic Cloud) | spark-sovereign (Local) |
 |---|---|---|---|
-| **Raw reasoning** | Best-in-class | Best-in-class | ~85% parity (Qwen3.5-122B NVFP4) |
-| **Context window** | 1M tokens | 200K tokens | 64K brain / 128K Nano |
+| **Raw reasoning** | Best-in-class | Best-in-class | ~82–87% parity (Qwen3-VL-32B) |
+| **Vision / multimodal** | Best-in-class | Best-in-class | **Competitive** — DocVQA 96+, ChartQA 89+ |
+| **Context window** | 1M tokens | 200K tokens | 128K brain / 128K Nano |
 | **Cost per session** | $5–50+ | $2–20+ | **$0** (hardware sunk cost) |
 | **Privacy** | Data sent to OpenAI | Data sent to Anthropic | **100% local, never leaves hardware** |
 | **Memory across sessions** | Optional (limited) | None by default | **Full pgvector — grows every session** |
@@ -198,7 +250,7 @@ The gap to frontier cloud models narrows continuously as the vector DB accumulat
 
 | Timeframe | Domain task performance (vs. GPT-5.4 baseline) | What's driving the change |
 |---|---|---|
-| **Day 1** | ~75–80% | Raw model capability — Qwen3.5-122B is genuinely competitive |
+| **Day 1** | ~75–80% | Raw model capability — Qwen3-VL-32B competitive on vision + coding + reasoning |
 | **1 month** | ~83–87% | First lessons stored, common failure patterns avoided, web search results cached |
 | **3 months** | ~88–92% | Deep domain recall — verified answers surface before any web search; agent skips redundant lookups entirely |
 | **6 months** | ~93–97% | Near-parity on your specific domains; Spark knows your stack, preferences, prior decisions; cloud models still start from zero every session |
@@ -208,39 +260,50 @@ The gap to frontier cloud models narrows continuously as the vector DB accumulat
 
 ---
 
-## Precision Architecture — Why NVFP4 is the Right Choice for Spark
+## Precision Architecture — Why FP8 for Brain, NVFP4 for Nano
 
-The GB10 Superchip has **dedicated FP4 tensor cores** in its Blackwell architecture. NVFP4 is not naive 4-bit quantization — it uses per-block scaling factors (~4.5 bits effective precision) that preserve model quality while fitting 122B parameters in 75.6GB.
+The GB10 Superchip has **dedicated FP4 tensor cores** in its Blackwell architecture. The Brain and Nano use different precision strategies optimized for their respective roles.
+
+### Brain — Qwen3-VL-32B FP8
 
 | Layer | Precision | Why |
 |---|---|---|
-| Model weights (Brain + Nano) | **NVFP4** | Native GB10 tensor cores — maximum throughput, minimum memory |
-| KV cache | **FP8** | Halves KV memory vs FP16; `--kv-cache-dtype fp8` on both models |
-| Attention compute | **FlashInfer + TRT-LLM backend** | `VLLM_FLASHINFER_ALLREDUCE_BACKEND=trtllm` — Blackwell-optimized |
-| GEMM kernels | **Marlin** | `VLLM_NVFP4_GEMM_BACKEND=marlin` — the correct kernel for NVFP4 on GB10 |
-| MoE routing (Nano) | **Cutlass fallback** | `VLLM_USE_FLASHINFER_MOE_FP4=0` — FlashInfer MoE FP4 has stability issues on current vLLM; cutlass is correct |
-| Atomic add (Brain) | **Enabled** | `VLLM_MARLIN_USE_ATOMIC_ADD=1` — required for NVFP4 numerical stability on Blackwell |
+| Model weights | **FP8** | Official Qwen FP8 — near-BF16 quality, 35.5GB footprint, no custom kernel |
+| KV cache | **FP8** | Halves KV memory vs FP16; `--kv-cache-dtype fp8` |
+| Inference runtime | **Standard vLLM** | `nvcr.io/nvidia/vllm:26.02-py3` — no custom image required |
+| Attention backend | **FlashInfer** | Auto-selected by vLLM for Blackwell |
 
-**Why not FP16 or BF16?** On GB10, running FP16 would require ~244GB for the 122B model — more than the entire unified memory pool. NVFP4 is not a compromise; it's the format the hardware was architected for. The RedHatAI NVFP4 checkpoint was specifically trained and validated for single-Spark deployment.
+**Why FP8 over NVFP4 for Brain?** The official Qwen FP8 checkpoint was released by Qwen directly with validated quality. On 128GB unified memory, 35.5GB weights leave 40GB+ headroom — no need to push to FP4 and introduce a custom kernel dependency. FP8 on GB10 is fast, stable, and uses the standard vLLM image.
 
-**Why not INT4/GPTQ?** GPTQ uses symmetric quantization with row-level scales. NVFP4 uses asymmetric block-scaled quantization with hardware-native support — substantially better quality at the same memory footprint on Blackwell.
+### Sub-agent — Nemotron Nano NVFP4
+
+| Layer | Precision | Why |
+|---|---|---|
+| Model weights | **NVFP4** | Native GB10 FP4 tensor cores — maximum throughput for 56–70 tok/s |
+| KV cache | **FP8** | `--kv-cache-dtype fp8` |
+| GEMM kernels | **Marlin** | `VLLM_NVFP4_GEMM_BACKEND=marlin` — correct kernel for NVFP4 on GB10 |
+| MoE routing | **Cutlass fallback** | `VLLM_USE_FLASHINFER_MOE_FP4=0` — stability on current vLLM |
+
+**Why NVFP4 for Nano?** Speed is the only thing that matters for the sub-agent role. NVFP4 on GB10's dedicated FP4 cores gives 56–70 tok/s — roughly 4x faster than Brain. The Nemotron Nano NVFP4 checkpoint was validated specifically for GB10 single-Spark deployment by NVIDIA.
+
+**Why not INT4/GPTQ for either?** GPTQ uses symmetric quantization with row-level scales. NVFP4 and FP8 use block-scaled quantization with hardware-native support — substantially better quality at the same or smaller memory footprint on Blackwell.
 
 ---
 
-## Model Stack (verified March 27, 2026)
+## Model Stack (March 2026)
 
-| Component | Model | RAM | Port |
+| Component | Model | Size | Port |
 |---|---|---|---|
-| Brain / Vision / Deep tasks | RedHatAI/Qwen3.5-122B-A10B-NVFP4 | 75.6 GB | 8000 |
-| Sub-agents / Speed / Chat | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | ~20 GB | 8001 |
+| Brain / Vision / Deep tasks | Qwen/Qwen3-VL-32B-Instruct-FP8 | 35.5 GB | 8000 |
+| Sub-agents / Speed / Chat | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | ~23 GB | 8001 |
 | Voice in (ASR) | nvidia/nemotron-speech-streaming-en-0.6b | ~2.4 GB | 8002 |
 | Voice out (TTS) | nvidia/magpie_tts_multilingual_357m | ~1.4 GB | 8003 |
 | Embeddings (RAG/memory) | nomic-ai/nomic-embed-text-v1.5 | ~0.4 GB | 8004 |
 | Vector DB | pgvector 0.8.2 on PostgreSQL 17 | ~2 GB | 5432 |
-| Web search | SearXNG latest | <1 GB | 8080 |
+| Web search | SearXNG latest | <1 GB | 8088 |
 | Agent runtime | NemoClaw + OpenClaw | ~1 GB | 18789 |
-| **Total** | | **~107 GB** | |
-| KV cache headroom | | **~21 GB** ✅ | |
+| **Total** | | **~67 GB** | |
+| **Headroom** | | **~61 GB** ✅ | |
 
 ---
 
@@ -264,6 +327,7 @@ spark-sovereign/
 │   ├── 06_searxng.sh       ← Start SearXNG web search
 │   ├── 07_nemoclaw.sh      ← Install + start NemoClaw agent runtime
 │   ├── 08_aider.sh         ← Install aider config
+│   ├── start_brain_ad_hoc.sh ← Restart Brain only (leaves Nano running)
 │   └── check_stack.sh      ← Health check for all services
 ├── agent/
 │   ├── memory.py           ← Continuous learning layer (store/recall/curate)
@@ -372,8 +436,8 @@ nano .env   # set HF_TOKEN at minimum
 ```bash
 bash scripts/00_first_boot.sh      # Tailscale on Spark + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, NVMe dirs, Python deps
-bash scripts/02_download_models.sh # ~100GB downloads — run overnight
-bash scripts/03_vllm_servers.sh    # Brain (8000) + Nano (8001) — 5-10 min to load
+bash scripts/02_download_models.sh # ~75GB downloads — run overnight
+bash scripts/03_vllm_servers.sh    # Brain (8000) + Nano (8001) — 3-5 min to load
 bash scripts/04_voice_pipeline.sh  # ASR (8002) + TTS (8003)
 bash scripts/05_pgvector.sh        # Vector DB + schema
 bash scripts/06_searxng.sh         # Local web search
@@ -419,12 +483,13 @@ Or from Telegram/Slack once tokens are set in `.env` and Phase 7 is re-run.
 
 3. Restart the relevant server:
    ```bash
-   # Brain
-   docker restart qwen-brain
-   # Or full restart with new settings:
+   # Brain only (leaves Nano running)
+   bash scripts/start_brain_ad_hoc.sh
+
+   # Full restart of both
    bash scripts/03_vllm_servers.sh
 
-   # Sub-agent
+   # Sub-agent only
    docker restart nemotron-nano
    ```
 
@@ -498,7 +563,7 @@ python3 agent/memory.py stats
 
 ```bash
 cd ~/projects/my-saas
-aider                                    # interactive TUI, uses 122B brain
+aider                                    # interactive TUI, uses Brain
 
 # Inline commands
 aider --message "Add Stripe webhook handler for subscription.updated"
@@ -557,8 +622,8 @@ Shows:
 ```
 128GB DGX Spark Unified Memory
 ═══════════════════════════════════════════════════════════════
- Qwen3.5-122B NVFP4            75.6 GB    0.60 util
- Nemotron Nano NVFP4           20.0 GB    0.18 util
+ Qwen3-VL-32B FP8              51.2 GB    0.40 util (35.5GB weights + 15.7GB KV)
+ Nemotron Nano NVFP4           23.1 GB    0.18 util
  ASR (nemotron-speech)          2.4 GB    always-on
  TTS (magpie_tts)               1.4 GB    always-on
  Embeddings (nomic)             0.4 GB    always-on
@@ -567,8 +632,8 @@ Shows:
  NemoClaw + OpenClaw            1.0 GB    always-on
  OS + Docker + vLLM             6.0 GB    always-on
 ───────────────────────────────────────────────────────────────
- TOTAL ALLOCATED               109.3 GB
- KV CACHE HEADROOM              18.7 GB   ✅ safe
+ TOTAL ALLOCATED               88.0 GB
+ HEADROOM                      40.0 GB   ✅ safe — no OOM risk
 ═══════════════════════════════════════════════════════════════
 ```
 
@@ -580,6 +645,7 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 Common fixes:
 - OOM → reduce `gpu_memory_utilization` in `config/models.yml`
-- Model not loading → check `docker logs qwen-brain --tail 50`
+- Model not loading → check `docker logs brain --tail 50` or `docker logs nemotron-nano --tail 50`
 - Swap model → edit `config/models.yml`, re-run download + server scripts
 - pgvector errors → check `docker logs pgvector --tail 30`
+- Brain only needs restart → `bash scripts/start_brain_ad_hoc.sh`
