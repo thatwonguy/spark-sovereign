@@ -71,5 +71,61 @@ echo ">>> Installing agent Python requirements..."
 pip install -r "${REPO_ROOT}/agent/requirements.txt" \
     --break-system-packages --quiet
 
+# 7. Install sequenced startup service — starts lightweight containers on boot,
+#    then waits for Nano to be ready before starting Brain.
+#    Prevents simultaneous startup OOM on 128GB unified memory.
+echo ">>> Installing spark-sovereign startup service..."
+SPARK_REPO="${REPO_ROOT}"
+sudo tee /etc/systemd/system/spark-sovereign.service > /dev/null << EOF
+[Unit]
+Description=spark-sovereign sequenced startup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$(whoami)
+ExecStart=${SPARK_REPO}/scripts/boot_sequence.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > "${SPARK_REPO}/scripts/boot_sequence.sh" << 'BOOT'
+#!/usr/bin/env bash
+# Sequenced boot — lightweight services first, Brain last after Nano is ready.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+log() { echo "[spark-boot] $*"; }
+
+log "Starting lightweight containers..."
+for name in nemotron-nano pgvector searxng asr-server tts-server; do
+    docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
+done
+
+log "Waiting for Nano to be ready (port 8001)..."
+for i in $(seq 1 40); do
+    sleep 15
+    if curl -sf http://localhost:8001/v1/models >/dev/null 2>&1; then
+        log "Nano ready after $((i * 15))s"
+        break
+    fi
+    log "  [${i}/40] Nano still loading..."
+done
+
+log "Starting Brain..."
+bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
+log "Brain started. Stack is up."
+BOOT
+
+chmod +x "${SPARK_REPO}/scripts/boot_sequence.sh"
+sudo systemctl daemon-reload
+sudo systemctl enable spark-sovereign.service
+echo "    Startup service installed and enabled."
+
 echo ""
 echo "Phase 1 complete. Proceed to: scripts/02_download_models.sh"

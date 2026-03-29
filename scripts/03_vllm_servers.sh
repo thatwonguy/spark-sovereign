@@ -63,7 +63,7 @@ docker rm -f brain qwen-brain 2>/dev/null || true
 # shellcheck disable=SC2086
 docker run -d --name brain \
     --gpus all --ipc host --network host \
-    --restart unless-stopped \
+    --restart no \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
