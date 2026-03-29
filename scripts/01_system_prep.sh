@@ -96,14 +96,33 @@ EOF
 
 cat > "${SPARK_REPO}/scripts/boot_sequence.sh" << 'BOOT'
 #!/usr/bin/env bash
-# Sequenced boot — lightweight services first, Brain last after Nano is ready.
+# Sequenced boot — Brain first (needs max GPU headroom for VL profiling),
+# then Nano + ASR/TTS after Brain has settled.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log() { echo "[spark-boot] $*"; }
 
-log "Starting lightweight containers..."
-for name in nemotron-nano pgvector searxng asr-server tts-server; do
+log "Starting CPU-only services..."
+for name in pgvector searxng; do
+    docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
+done
+
+log "Starting Brain (needs maximum free GPU memory for VL profiling)..."
+bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
+
+log "Waiting for Brain to be ready (port 8000)..."
+for i in $(seq 1 60); do
+    sleep 15
+    if curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; then
+        log "Brain ready after $((i * 15))s"
+        break
+    fi
+    log "  [${i}/60] Brain still loading..."
+done
+
+log "Starting Nano and voice services..."
+for name in nemotron-nano asr-server tts-server; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
@@ -117,9 +136,7 @@ for i in $(seq 1 40); do
     log "  [${i}/40] Nano still loading..."
 done
 
-log "Starting Brain..."
-bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
-log "Brain started. Stack is up."
+log "Stack is up."
 BOOT
 
 chmod +x "${SPARK_REPO}/scripts/boot_sequence.sh"
