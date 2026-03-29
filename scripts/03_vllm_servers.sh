@@ -59,15 +59,18 @@ echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
 docker rm -f qwen-brain 2>/dev/null || true
 
+# The avarok image entrypoint ignores all CLI flags and hardcodes its own
+# port/utilization values. Bypass it entirely with --entrypoint "" and call
+# vllm directly so our settings from models.yml actually take effect.
 # shellcheck disable=SC2086
 docker run -d --name qwen-brain \
     --gpus all --ipc host --network host \
     --restart unless-stopped \
+    --entrypoint "" \
     ${BRAIN_EXTRA_ENV} \
-    -e MODEL="/models/$(basename "${BRAIN_PATH}")" \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-    serve \
+    /opt/venv/bin/vllm serve "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
