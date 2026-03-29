@@ -28,7 +28,11 @@
       "WebFetch(domain:awesomeagents.ai)",
       "WebFetch(domain:forums.developer.nvidia.com)",
       "Bash(bash -n scripts/00_first_boot.sh)",
-      "Bash(grep -n \"PORT\\\\|port\\\\|8[0-9][0-9][0-9]\\\\|:80\\\\|:443\\\\|:22\\\\|:443\\\\|:5000\\\\|:7860\\\\|:3000\\\\|:11434\\\\|:8080\" scripts/*.sh)"
+      "Bash(grep -n \"PORT\\\\|port\\\\|8[0-9][0-9][0-9]\\\\|:80\\\\|:443\\\\|:22\\\\|:443\\\\|:5000\\\\|:7860\\\\|:3000\\\\|:11434\\\\|:8080\" scripts/*.sh)",
+      "WebFetch(domain:docs.vllm.ai)",
+      "WebFetch(domain:qwenlm.github.io)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:ai.meta.com)"
     ]
   }
 }
