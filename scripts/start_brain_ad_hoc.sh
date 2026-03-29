@@ -50,7 +50,7 @@ BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 # Stop all GPU model containers before Brain to ensure maximum free memory.
 # Brain's VL profiling peak requires ~80GiB free; other models must be down first.
 echo ">>> Stopping GPU model containers..."
-for name in nemotron-nano asr-server tts-server brain qwen-brain; do
+for name in brain qwen-brain asr-server tts-server; do
     if docker ps -q --filter "name=^${name}$" | grep -q .; then
         docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
     fi
@@ -81,4 +81,4 @@ docker run -d --name brain \
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
-echo "    After Brain is ready, start Nano: docker start nemotron-nano"
+echo "    After Brain is ready, start voice: docker start asr-server tts-server"
