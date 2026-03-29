@@ -3,11 +3,18 @@
 # PHASE 7 — NemoClaw Agent Runtime
 # =============================================================================
 # Installs NemoClaw (NVIDIA's OpenClaw wrapper with OpenShell sandboxing).
-# Sets up TWO sandboxes:
-#   deep  — Brain model (Qwen3.5-122B, port 8000) — vision, reasoning, coding
-#   fast  — Nano model (Nemotron-Nano, port 8001)  — quick replies, sub-agents
 #
-# Docs: https://docs.nvidia.com/nemoclaw/latest/index.html
+# CRITICAL ORDER on DGX Spark:
+#   1. nemoclaw setup-spark   ← MUST run FIRST (fixes cgroup v2 for Ubuntu 24.04)
+#   2. curl installer         ← standard install
+#   3. nemoclaw onboard       ← interactive wizard (cannot be skipped)
+#
+# Sets up TWO sandboxes after onboarding:
+#   deep  — Brain (Qwen3.5-122B, port 8000) — vision, reasoning, coding
+#   fast  — Nano  (Nemotron-Nano, port 8001) — quick replies, sub-agents
+#
+# Docs: https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html
+# DGX Spark specific: https://docs.nvidia.com/nemoclaw/latest/get-started/dgx-spark.html
 # =============================================================================
 
 set -euo pipefail
@@ -23,45 +30,86 @@ echo "========================================================"
 if ! command -v uvx &>/dev/null; then
     echo ">>> Installing uv (required for Python MCP servers)..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
+    export PATH="${HOME}/.cargo/bin:${PATH}"
     echo "    uv installed."
 else
-    echo "    uv already installed: $(uvx --version 2>/dev/null || echo 'ok')"
+    echo "    uv already installed."
 fi
 
-# 1. Install NemoClaw
+# 1. Docker group check
+if ! groups | grep -q docker; then
+    echo ">>> Adding ${USER} to docker group..."
+    sudo usermod -aG docker "${USER}"
+    newgrp docker
+fi
+
+# 2. DGX Spark cgroup v2 fix — MUST run before installer
+#    Ubuntu 24.04 uses cgroup v2. Without this, Docker defaults break
+#    the OpenShell k3s sandbox and onboarding fails silently.
+echo ""
+echo ">>> Applying DGX Spark cgroup v2 fix (required on Ubuntu 24.04)..."
+if command -v nemoclaw &>/dev/null; then
+    sudo nemoclaw setup-spark || echo "    setup-spark already applied."
+else
+    # Pre-install: apply the Docker daemon config manually
+    echo "    NemoClaw not yet installed — applying cgroup fix manually..."
+    sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+    sudo python3 -c "
+import json, os
+p = '/etc/docker/daemon.json'
+d = json.load(open(p)) if os.path.exists(p) else {}
+d['default-cgroupns-mode'] = 'host'
+json.dump(d, open(p,'w'), indent=2)
+print('    daemon.json updated.')
+"
+    sudo systemctl restart docker
+    echo "    Docker restarted with cgroup v2 fix."
+fi
+
+# 3. Install NemoClaw
+echo ""
 if ! command -v nemoclaw &>/dev/null; then
     echo ">>> Installing NemoClaw..."
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-    echo "    NemoClaw installed."
+
+    # Reload PATH — installer uses nvm/fnm which modifies PATH in .bashrc
+    # shellcheck source=/dev/null
+    source "${HOME}/.bashrc" 2>/dev/null || true
+    export PATH="${HOME}/.nvm/versions/node/$(ls "${HOME}/.nvm/versions/node/" 2>/dev/null | tail -1)/bin:${PATH}" 2>/dev/null || true
+
+    if ! command -v nemoclaw &>/dev/null; then
+        echo ""
+        echo "  nemoclaw command not found after install."
+        echo "  This is a known PATH issue with nvm/fnm."
+        echo "  Fix: run 'source ~/.bashrc' then re-run this script."
+        exit 1
+    fi
+    echo "    NemoClaw installed: $(nemoclaw --version 2>/dev/null || echo 'ok')"
 else
-    echo "    NemoClaw already installed: $(nemoclaw --version 2>/dev/null || echo 'ok')"
+    echo "    NemoClaw already installed."
 fi
 
-# 2. DGX Spark-specific setup (cgroup v2 — must run after Docker restart in Phase 1)
-echo ">>> Running NemoClaw DGX Spark setup..."
-nemoclaw setup-spark || echo "    setup-spark already done or not needed."
+# 4. Run setup-spark now that nemoclaw is installed (idempotent)
+echo ""
+echo ">>> Running nemoclaw setup-spark..."
+sudo nemoclaw setup-spark || echo "    Already applied."
 
-# 3. Install openclaw.json
-# NemoClaw onboard writes ~/.nemoclaw/config.json separately (inference endpoint).
-# ~/.openclaw/openclaw.json is OpenClaw's config — MCP servers, model routing.
+# 5. Install openclaw.json with env var substitution
+echo ""
 echo ">>> Installing ~/.openclaw/openclaw.json..."
 mkdir -p ~/.openclaw
 
-python3 - << PYEOF
+python3 - <<PYEOF
 import json, os, re
 
-repo_root = os.environ.get('REPO_ROOT', '.')
+repo_root = '${REPO_ROOT}'
 with open(f'{repo_root}/config/openclaw.json', encoding='utf-8') as f:
     content = f.read()
 
-# Substitute \${ENV_VAR} placeholders from environment
 def replace_env(m):
     return os.environ.get(m.group(1), m.group(0))
 content = re.sub(r'\\\$\{([A-Z_]+)\}', replace_env, content)
 
-# Strip _comment / _note / _docs fields
-cfg = json.loads(content)
 def strip_meta(obj):
     if isinstance(obj, dict):
         return {k: strip_meta(v) for k, v in obj.items() if not k.startswith('_')}
@@ -69,69 +117,73 @@ def strip_meta(obj):
         return [strip_meta(i) for i in obj]
     return obj
 
-cfg = strip_meta(cfg)
-
+cfg = strip_meta(json.loads(content))
 dest = os.path.expanduser('~/.openclaw/openclaw.json')
 with open(dest, 'w') as f:
     json.dump(cfg, f, indent=2)
 print(f'    Written: {dest}')
 PYEOF
 
-# 4. Set up sandboxes via NemoClaw onboard
-# "deep" sandbox → Brain (Qwen3.5-122B, port 8000) — vision + reasoning
-# "fast" sandbox → Nano (port 8001) — quick tasks, sub-agents
-
+# 6. Interactive onboarding
+#    NemoClaw onboard is interactive — it cannot be skipped or automated.
+#    The wizard sets up the first sandbox and inference endpoint.
 echo ""
-echo ">>> Setting up 'deep' sandbox (Brain — Qwen3.5-122B, port 8000)..."
-echo "    (vision + deep reasoning + coding)"
-nemoclaw onboard \
-    --name deep \
-    --inference-url http://localhost:8000/v1 \
-    --model qwen35-122b \
-    --non-interactive 2>/dev/null \
-    || echo "    'deep' sandbox already exists or onboard requires interactive mode — run: nemoclaw onboard --name deep"
-
+echo "========================================================"
+echo " NemoClaw ONBOARDING — interactive wizard"
 echo ""
-echo ">>> Setting up 'fast' sandbox (Nano — Nemotron-Nano, port 8001)..."
-echo "    (quick replies, sub-agents, Telegram/Slack fast responses)"
-nemoclaw onboard \
-    --name fast \
-    --inference-url http://localhost:8001/v1 \
-    --model nemotron-nano \
-    --non-interactive 2>/dev/null \
-    || echo "    'fast' sandbox already exists or onboard requires interactive mode — run: nemoclaw onboard --name fast"
-
-# 5. Apply Telegram and Slack policy presets (allows outbound to those services from sandbox)
+echo " When prompted:"
+echo "   • Quickstart vs Manual    → Quickstart"
+echo "   • Model provider          → Skip for now"
+echo "     (we use our own vLLM, not NVIDIA Endpoints)"
+echo "   • Communication channel   → Skip for now"
+echo "     (configure Telegram/Slack in .env later)"
+echo "   • Hooks                   → Enable all three"
+echo "   • Sandbox name            → deep"
 echo ""
-echo ">>> Applying channel policy presets..."
-if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+echo " After onboarding completes, this script will set up"
+echo " the second sandbox (fast) automatically."
+echo "========================================================"
+echo ""
+read -rp "Press Enter to start onboarding, or Ctrl+C to exit..."
+
+nemoclaw onboard
+
+# 7. Set up second (fast) sandbox pointing to Nano
+echo ""
+echo ">>> Setting up 'fast' sandbox (Nano — port 8001)..."
+nemoclaw onboard --name fast \
+    2>/dev/null \
+    || echo "    Run 'nemoclaw onboard --name fast' manually if needed."
+
+# 8. Apply channel policy presets
+echo ""
+echo ">>> Applying policy presets..."
+if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
     nemoclaw deep policy-add telegram 2>/dev/null || true
     nemoclaw fast policy-add telegram 2>/dev/null || true
-    echo "    Telegram policy applied to both sandboxes."
+    echo "    Telegram policy applied."
 fi
-if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+if [[ -n "${SLACK_BOT_TOKEN:-}" ]]; then
     nemoclaw deep policy-add slack 2>/dev/null || true
     nemoclaw fast policy-add slack 2>/dev/null || true
-    echo "    Slack policy applied to both sandboxes."
+    echo "    Slack policy applied."
 fi
 
-# 6. Start both sandboxes
+# 9. Start
 echo ""
-echo ">>> Starting sandboxes..."
 nemoclaw start 2>/dev/null || true
-nemoclaw deep status 2>/dev/null || true
-nemoclaw fast status 2>/dev/null || true
 
 echo ""
 echo "========================================================"
 echo " NemoClaw ready."
 echo ""
-echo " Switch between sandboxes:"
+echo " Usage:"
 echo "   nemoclaw deep connect    # Brain — vision, coding, reasoning"
-echo "   nemoclaw fast connect    # Nano  — quick replies, sub-agents"
-echo ""
-echo " List all sandboxes:  nemoclaw list"
-echo " Monitor:             openshell term"
+echo "   nemoclaw fast connect    # Nano  — daily driver (default)"
+echo "   openclaw tui             # interactive chat inside sandbox"
+echo "   nemoclaw list            # all sandboxes"
+echo "   nemoclaw <name> logs --follow"
+echo "   openshell term           # real-time sandbox monitor"
 echo "========================================================"
 echo ""
 echo "Phase 7 complete. Proceed to: scripts/08_aider.sh"

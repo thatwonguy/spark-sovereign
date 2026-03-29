@@ -267,6 +267,8 @@ spark-sovereign/
 │   └── check_stack.sh      ← Health check for all services
 ├── agent/
 │   ├── memory.py           ← Continuous learning layer (store/recall/curate)
+│   ├── router.py           ← Model router (fast/deep, auto-classify, vision pipeline)
+│   ├── log.py              ← Shared logger (console + rotating file)
 │   └── requirements.txt
 ├── docs/
 │   └── TROUBLESHOOTING.md
@@ -276,45 +278,130 @@ spark-sovereign/
 
 ---
 
-## Quick Start (from scratch)
+## Setup — Box Open to Running
 
-### Prerequisites
+There are three layers to this setup. They are **sequential, not alternatives**. You cannot skip to Layer 3 without completing Layers 1 and 2.
 
-- NVIDIA DGX Spark, first boot complete (see Phase 0)
-- SSH access via NVIDIA Sync or `ssh user@spark-XXXX.local`
-- Hugging Face account + token (for model downloads)
+```
+Layer 1: First boot wizard        — physical, one time, ~15 min
+Layer 2: NVIDIA Sync + SSH        — on your laptop, one time, ~10 min
+Layer 3: spark-sovereign scripts  — on the Spark, via SSH
+```
 
-### 1. Clone this repo onto your Spark
+---
 
+### Layer 1 — First Boot (Physical, No Script)
+
+**Before you plug anything in:**
+- There is **no power button** — plugging in power = immediate boot
+- Connect all peripherals **before** plugging in power
+- Plug in wired Ethernet if you have it (easier than WiFi)
+- Keep the Quick Start Guide from the box — the hostname and hotspot credentials are on a sticker inside it
+
+**Two options — choose one:**
+
+**Option A — Headless (no monitor):**
+1. Power on — Spark broadcasts a WiFi hotspot
+2. Connect your laptop to that SSID (credentials on sticker)
+3. Browser captive portal opens automatically — if not, navigate to the URL on the sticker
+4. Follow wizard: language → accept terms → create username + password → select your home WiFi
+
+**Option B — Monitor attached:**
+1. Power on — wizard appears on display
+2. Same sequence as above
+
+**⚠ WPA2-Enterprise / 802.1X networks** (common in offices) are not supported at first boot. Use a phone hotspot for initial setup, then configure your enterprise network via NetworkManager afterward.
+
+**After WiFi connects:**
+- Device downloads and installs software automatically (~10 min)
+- **Do not power off or reboot during this step** — cannot be resumed, may require factory reset
+- Device reboots when done
+- Spark is now at `spark-XXXX.local` on your network (XXXX from sticker)
+
+---
+
+### Layer 2 — NVIDIA Sync + SSH (On Your Laptop)
+
+**Install NVIDIA Sync on your laptop:**
+Download from: `https://build.nvidia.com/spark/connect-to-your-spark/sync`
+Available for macOS, Windows, and Ubuntu/Debian.
+
+**Add your Spark:**
+1. Open NVIDIA Sync from system tray
+2. Settings (gear icon) → Devices → Add Device
+3. Enter hostname (`spark-XXXX.local`), your username, your password
+4. Click Add — wait 3–4 minutes for Spark to become available
+5. Password is used once to set up SSH keys, then discarded
+
+**Connect:**
+- NVIDIA Sync tray → select device → **Terminal** — gives you an SSH shell on the Spark
+
+**For access from anywhere (Tailscale):**
+- In NVIDIA Sync: Settings → Tailscale → Enable Tailscale → Add a Device
+- **Do NOT install the Tailscale app on your laptop separately** — NVIDIA Sync is the Tailscale node on the laptop side
+- Install Tailscale on your phone/other devices normally — sign in to the same account
+
+**Verify SSH works:**
+```bash
+ssh <username>@spark-XXXX.local
+nvidia-smi   # "Memory-Usage: Not Supported" is normal on Spark — not an error
+```
+
+---
+
+### Layer 3 — spark-sovereign Scripts (Run on the Spark via SSH)
+
+All scripts run **on the Spark**, not on your laptop. SSH in first.
+
+**One-time setup before anything else:**
+```bash
+# Add yourself to docker group (no more sudo on every docker command)
+sudo usermod -aG docker $USER && newgrp docker
+```
+
+**Clone this repo onto the Spark:**
 ```bash
 git clone https://github.com/YOUR_ORG/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
-```
-
-### 2. Configure secrets
-
-```bash
 cp .env.example .env
-# Edit .env — at minimum set HF_TOKEN
-nano .env
+nano .env   # set HF_TOKEN at minimum
 ```
 
-### 3. Run phases in order
-
-Each script is idempotent — safe to re-run.
+**Run phases in order** — each script is idempotent, safe to re-run:
 
 ```bash
-bash scripts/00_first_boot.sh    # Tailscale + NVIDIA Sync (once)
-bash scripts/01_system_prep.sh   # Docker cgroup, dirs, Python deps
-bash scripts/02_download_models.sh  # ~100GB — run overnight
-bash scripts/03_vllm_servers.sh  # Brain + Nano (~5-10 min to load)
-bash scripts/04_voice_pipeline.sh   # ASR + TTS
-bash scripts/05_pgvector.sh      # pgvector DB + schema
-bash scripts/06_searxng.sh       # Web search
-bash scripts/07_nemoclaw.sh      # Agent runtime
-bash scripts/08_aider.sh         # Aider CLI config
-bash scripts/check_stack.sh      # Verify everything is up
+bash scripts/00_first_boot.sh      # Tailscale on Spark + confirms setup
+bash scripts/01_system_prep.sh     # Docker config, NVMe dirs, Python deps
+bash scripts/02_download_models.sh # ~100GB downloads — run overnight
+bash scripts/03_vllm_servers.sh    # Brain (8000) + Nano (8001) — 5-10 min to load
+bash scripts/04_voice_pipeline.sh  # ASR (8002) + TTS (8003)
+bash scripts/05_pgvector.sh        # Vector DB + schema
+bash scripts/06_searxng.sh         # Local web search
+bash scripts/07_nemoclaw.sh        # NemoClaw — interactive onboarding wizard
+bash scripts/08_aider.sh           # Aider CLI config
+bash scripts/check_stack.sh        # Verify everything is up
 ```
+
+**NemoClaw onboarding (Phase 7) is interactive.** When the wizard runs:
+- Quickstart vs Manual → **Quickstart**
+- Model provider → **Skip for now** (we use our own vLLM)
+- Communication channel → **Skip for now** (configure in `.env`)
+- Hooks → **Enable all three**
+- Sandbox name → **deep**
+
+The script then sets up the second `fast` sandbox automatically.
+
+---
+
+### After Setup — Connect and Use
+
+```bash
+nemoclaw deep connect    # Brain sandbox — vision, coding, reasoning
+nemoclaw fast connect    # Nano sandbox  — daily driver (default)
+openclaw tui             # interactive chat inside active sandbox
+```
+
+Or from Telegram/Slack once tokens are set in `.env` and Phase 7 is re-run.
 
 ---
 
