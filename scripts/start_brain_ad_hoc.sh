@@ -67,6 +67,7 @@ docker run -d --name qwen-brain \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         --trust-remote-code \
+        --tokenizer-mode auto \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
