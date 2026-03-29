@@ -116,7 +116,7 @@ fi
 
 docker run -d --name nemotron-nano \
     --gpus all --ipc host --network host \
-    --restart unless-stopped \
+    --restart no \
     -v "${MODELS_DIR}:/models" \
     ${PLUGIN_MOUNT} \
     "${NANO_IMAGE}" \

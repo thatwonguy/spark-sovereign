@@ -20,7 +20,7 @@ brain:
   port: 8000
   served_name: qwen3-vl-32b
   docker_image: nvcr.io/nvidia/vllm:26.02-py3
-  gpu_memory_utilization: 0.75        # ~91GB on 128GB Spark — covers 33GB weights + VL profiling peak + ~11GB KV cache
+  gpu_memory_utilization: 0.67        # ~85.8GB on 128GB Spark — covers 33GB weights + VL profiling peak (~82GB min) + ~14GB KV cache headroom; keeps settled total ≤115GB with Nano
   max_model_len: 131072               # 128K context
   kv_cache_dtype: fp8
   max_num_seqs: 8
@@ -129,7 +129,7 @@ infrastructure:
 # MEMORY MAP (128GB unified — March 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3-VL-32B FP8            91.3 GB   0.75 util (33GB weights + VL peak + ~11GB KV)
+# Qwen3-VL-32B FP8            85.8 GB   0.67 util (33GB weights + VL peak + ~14GB KV)
 # Nemotron Nano NVFP4         23.1 GB   0.18 util
 # ASR (nemotron-speech)        2.4 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
@@ -139,5 +139,5 @@ infrastructure:
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                      120.7 GB
-# HEADROOM                     7.3 GB   ✅ safe
+# TOTAL                      114.8 GB
+# HEADROOM                    13.2 GB   ✅ safe
