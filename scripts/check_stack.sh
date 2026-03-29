@@ -76,7 +76,7 @@ echo ""
 
 # ── Docker containers ─────────────────────────────────────────────────────────
 echo "── Containers ──────────────────────────────────────────────"
-for name in qwen-brain nemotron-nano pgvector searxng asr-server tts-server; do
+for name in brain nemotron-nano pgvector searxng asr-server tts-server; do
     status=$(docker inspect -f '{{.State.Status}}' "${name}" 2>/dev/null || echo "not found")
     uptime=$(docker inspect -f '{{.State.StartedAt}}' "${name}" 2>/dev/null \
         | python3 -c "

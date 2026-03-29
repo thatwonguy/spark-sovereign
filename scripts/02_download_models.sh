@@ -68,7 +68,7 @@ echo "========================================================"
 echo "  HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER}"
 echo ""
 
-download_model "Brain (Qwen3.5-122B NVFP4)"    brain
+download_model "Brain (Qwen3-VL-32B FP8)"       brain
 download_model "Sub-agents (Nemotron Nano NVFP4)" subagent
 download_model "ASR (Nemotron Speech)"           asr
 download_model "TTS (Magpie TTS)"                tts

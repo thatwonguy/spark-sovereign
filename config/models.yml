@@ -14,32 +14,34 @@
 # BRAIN — primary reasoning, coding, vision, deep tasks
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen35-122b
-  hf_repo: RedHatAI/Qwen3.5-122B-A10B-NVFP4
-  local_path: /opt/models/qwen35-122b
+  name: qwen3-vl-32b
+  hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
+  local_path: /opt/models/qwen3-vl-32b
   port: 8000
-  served_name: qwen35-122b
-  docker_image: avarok/dgx-vllm-nvfp4-kernel:v23      # GB10 SM121 NVFP4 optimized
-  gpu_memory_utilization: 0.59                          # ~72GB on 128GB Spark (leaves room for Nano already loaded)
-  max_model_len: 65536                                  # 64K context
+  served_name: qwen3-vl-32b
+  docker_image: nvcr.io/nvidia/vllm:26.02-py3
+  gpu_memory_utilization: 0.40        # ~51GB on 128GB Spark (35.5GB weights + 15.5GB KV cache)
+  max_model_len: 131072               # 128K context
   kv_cache_dtype: fp8
-  max_num_seqs: 4
-  max_num_batched_tokens: 8192                          # must be >= block_size (4176) for Mamba align mode
+  max_num_seqs: 8
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  extra_env:
-    VLLM_NVFP4_GEMM_BACKEND: marlin
-    VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
-    VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
-    VLLM_USE_FLASHINFER_MOE_FP4: "0"
-    VLLM_MARLIN_USE_ATOMIC_ADD: "1"
-  # --- SWAP EXAMPLE ---
-  # To use a different brain, comment the above and uncomment:
-  # name: llama4-scout-109b
-  # hf_repo: meta-llama/Llama-4-Scout-17B-16E-Instruct
-  # local_path: /opt/models/llama4-scout
-  # docker_image: nvcr.io/nvidia/vllm:26.02-py3
-  # gpu_memory_utilization: 0.58
+  # --- SWAP EXAMPLE (heavy — OOM risk on 128GB unified) ---
+  # name: qwen35-122b
+  # hf_repo: RedHatAI/Qwen3.5-122B-A10B-NVFP4
+  # local_path: /opt/models/qwen35-122b
+  # docker_image: avarok/dgx-vllm-nvfp4-kernel:v23
+  # gpu_memory_utilization: 0.59
+  # max_model_len: 65536
+  # max_num_batched_tokens: 8192
+  # tool_call_parser: qwen3_coder
+  # reasoning_parser: qwen3
+  # extra_env:
+  #   VLLM_NVFP4_GEMM_BACKEND: marlin
+  #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+  #   VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
+  #   VLLM_USE_FLASHINFER_MOE_FP4: "0"
+  #   VLLM_MARLIN_USE_ATOMIC_ADD: "1"
 
 # -----------------------------------------------------------------------------
 # SUB-AGENTS — fast chat, tool calls, parallel agent tasks
@@ -124,18 +126,18 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified — verified March 2026)
+# MEMORY MAP (128GB unified — March 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.5-122B NVFP4         71.8 GB    0.59 util
-# Nemotron Nano NVFP4        20.0 GB    0.18 util
-# ASR (nemotron-speech)       2.4 GB    always-on
-# TTS (magpie_tts)            1.4 GB    always-on
-# Embeddings (nomic)          0.4 GB    always-on
-# pgvector + PostgreSQL       2.0 GB    always-on
-# SearXNG                     0.5 GB    always-on
-# NemoClaw + OpenClaw         1.0 GB    always-on
-# OS + Docker + vLLM          6.0 GB    always-on
-# ─────────────────────────────────────────
-# TOTAL                     109.3 GB
-# KV CACHE HEADROOM          18.7 GB    ✅ safe
+# Qwen3-VL-32B FP8            51.2 GB   0.40 util (35.5GB weights + 15.7GB KV)
+# Nemotron Nano NVFP4         23.1 GB   0.18 util
+# ASR (nemotron-speech)        2.4 GB   always-on
+# TTS (magpie_tts)             1.4 GB   always-on
+# Embeddings (nomic)           0.4 GB   always-on
+# pgvector + PostgreSQL        2.0 GB   always-on
+# SearXNG                      0.5 GB   always-on
+# NemoClaw + OpenClaw          1.0 GB   always-on
+# OS + Docker + vLLM           6.0 GB   always-on
+# ─────────────────────────────────────────────────
+# TOTAL                       88.0 GB
+# HEADROOM                    40.0 GB   ✅ safe — no OOM risk
