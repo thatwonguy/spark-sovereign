@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Ad-hoc Brain restart — restarts brain only, leaves all other
-# containers (nemotron-nano, pgvector, searxng, etc.) untouched.
+# Ad-hoc Brain restart — stops all GPU model containers first to free memory,
+# then starts Brain with maximum GPU headroom for VL profiling.
 #
-# Use this when Brain needs fixing without waiting for Nano to reload.
-# For a full stack restart use scripts/03_vllm_servers.sh instead.
+# Called by: boot_sequence.sh (which then handles Nano/ASR/TTS after Brain ready)
+# Manual use: run this, wait for Brain ready, then `docker start nemotron-nano`
 # =============================================================================
 
 set -euo pipefail
@@ -47,9 +47,17 @@ BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
-echo ">>> Restarting Brain only: ${BRAIN_NAME} on port ${BRAIN_PORT}"
+# Stop all GPU model containers before Brain to ensure maximum free memory.
+# Brain's VL profiling peak requires ~80GiB free; other models must be down first.
+echo ">>> Stopping GPU model containers..."
+for name in nemotron-nano asr-server tts-server brain qwen-brain; do
+    if docker ps -q --filter "name=^${name}$" | grep -q .; then
+        docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
+    fi
+    docker rm -f "${name}" 2>/dev/null || true
+done
 
-docker rm -f brain qwen-brain 2>/dev/null || true
+echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
 # shellcheck disable=SC2086
 docker run -d --name brain \
@@ -73,3 +81,4 @@ docker run -d --name brain \
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
+echo "    After Brain is ready, start Nano: docker start nemotron-nano"

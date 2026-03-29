@@ -41,6 +41,15 @@ echo "========================================================"
 echo " spark-sovereign — Phase 3: vLLM Inference Servers"
 echo "========================================================"
 
+# Stop all GPU model containers first to free memory before re-creating them.
+echo ">>> Stopping existing GPU model containers..."
+for name in brain qwen-brain nemotron-nano asr-server tts-server; do
+    if docker ps -q --filter "name=^${name}$" | grep -q .; then
+        docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
+    fi
+    docker rm -f "${name}" 2>/dev/null || true
+done
+
 # ── Brain model ──────────────────────────────────────────────────────────────
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
@@ -56,9 +65,6 @@ BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
-
-# Remove current and any legacy container names from previous model swaps
-docker rm -f brain qwen-brain 2>/dev/null || true
 
 # shellcheck disable=SC2086
 docker run -d --name brain \
@@ -97,8 +103,6 @@ NANO_PLUGIN=$(get_field subagent reasoning_parser_plugin)
 
 echo ""
 echo ">>> Starting Sub-agent: ${NANO_NAME} on port ${NANO_PORT}"
-
-docker rm -f nemotron-nano 2>/dev/null || true
 
 # Mount plugin file if it exists in the model directory
 PLUGIN_MOUNT=""
