@@ -36,46 +36,77 @@ Everything this stack can do — across all interfaces and modalities.
 | **Photo to text** | Handwritten notes, whiteboard photos, documents — OCR-level extraction with semantic understanding |
 | **Vision via Telegram** | Send any photo to the Telegram bot → Brain analyzes it and responds. Same UX as GPT-4o on mobile |
 
-### Deep vs Fast — Two Sandboxes, One Command to Switch
+### Default: Nano. Switch to Brain on demand.
 
-NemoClaw runs **sandboxes** — each sandbox is an isolated OpenShell environment with its own model endpoint. We run two:
+**Nano is the daily driver — 90% of tasks, 4x faster.** Brain is there when you need it.
 
-| Sandbox | Model | Use for |
-|---|---|---|
-| `deep` | Qwen3.5-122B (port 8000) | Vision, multimodal, coding, complex reasoning, long tasks |
-| `fast` | Nemotron-Nano (port 8001) | Quick replies, Telegram/Slack chat, sub-agent execution, iteration |
+| Model | Speed | Use for | Vision |
+|---|---|---|---|
+| Nemotron-Nano (default) | 56–70 tok/s | Chat, email, Slack, coding tasks, sub-agents, most things | No |
+| Qwen3.5-122B (Brain) | ~16 tok/s | Vision, large codebase architecture, overnight builds, frontier reasoning | **Yes** |
+
+**Mode locks for the session — set once, stays until you change it:**
+
+| Trigger | What happens |
+|---|---|
+| `/deep` or `deep mode` | Locks Brain for entire session. No auto-switching. |
+| `/thinking` or `thinking mode` | Same as `/deep` |
+| `/fast` or `fast mode` | Locks Nano for entire session |
+| Any trigger mid-session | Overrides current lock immediately |
+| `/auto` or `auto mode` | Releases lock, auto-classify resumes per message |
+
+**Default (no lock): auto-classify.** Nano judges each message with a single token (`fast`/`deep`) before routing. ~200ms overhead. Once you set `/deep` or `/fast`, this is suppressed for the session — your choice holds.
+
+```
+/deep  (session start)
+  "Write the Stripe billing module"  -> Brain  (locked, no re-classify)
+  "Now write tests"                  -> Brain  (still locked)
+  "Quick — what time is it"          -> Brain  (locked, no auto-switch to Nano)
+  [image sent]                       -> Brain direct (deep mode, no two-step)
+
+fast mode  (mid-session switch)
+  "Quick reply"                      -> Nano   (locked)
+  [image sent]                       -> Brain extracts -> Nano responds (two-step)
+```
+
+**Vision depends on current mode:**
+- **Fast mode + image** — Brain extracts image to text description, Nano answers. Stays Nano.
+- **Deep mode + image** — Brain handles image directly. Stays Brain.
+
+The router lives at `agent/router.py`. Call `reset_session()` at the start of each new conversation to clear any previous lock.
+
+### Agentic Orchestration — Nano Spawns Nano
+
+Sub-agent spawning is an **OpenClaw capability** (`sessions_spawn` API) — not a model capability. Nano can orchestrate parallel Nano workers. All running at 56–70 tok/s each.
+
+```
+"Tonight, build the Stripe billing module, write tests, push to GitHub"
+        ↓
+Nano (orchestrator) — decomposes the goal
+        ↓
+sessions_spawn × 3 (parallel):
+  Nano worker 1 → writes billing code      (filesystem + git MCP)
+  Nano worker 2 → writes tests             (filesystem MCP)
+  Nano worker 3 → writes docs + README     (filesystem MCP)
+        ↓
+Nano reviews, commits via git MCP, opens PR via github MCP
+        ↓
+Sends you Telegram summary
+```
+
+Switch to Brain for overnight work only when the task needs vision or genuine frontier-level reasoning across a very large codebase. Everything else: Nano is fast enough and more than capable.
+
+NemoClaw sandboxes isolate each agent run:
+- Network namespace — only explicitly allowed outbound endpoints
+- Filesystem access — scoped to your projects directory
+- MCP tools — available as callable functions inside the sandbox
 
 ```bash
-nemoclaw deep connect    # switch to Brain — vision + deep reasoning
-nemoclaw fast connect    # switch to Nano — fast replies, sub-agents
-nemoclaw list            # see all sandboxes and their status
-openshell term           # monitor sandbox activity in real-time
+nemoclaw deep connect    # Brain — vision, hard reasoning
+nemoclaw fast connect    # Nano  — daily driver (default)
+nemoclaw list            # all sandboxes + status
+openshell term           # real-time monitor
 ```
-
-**Vision is Brain-only.** Qwen3.5-122B is multimodal — it accepts images alongside text. Nemotron-Nano is text-only. Any image sent via Telegram or the API routes to the `deep` sandbox automatically.
-
-### Agentic Orchestration (the core engine)
-
-NemoClaw uses **OpenShell** for sandboxed execution. Each agent run gets:
-- A network namespace with only explicitly allowed outbound endpoints
-- Filesystem access scoped to your projects directory
-- MCP tools available as callable functions inside the sandbox
-
-```
-You give a goal → NemoClaw sandbox (deep or fast)
-                        │
-                        ├─ Calls MCP tools in parallel as needed:
-                        │    filesystem → read relevant files
-                        │    github     → check issues / PRs
-                        │    fetch      → call external APIs
-                        │    git        → inspect history
-                        │    puppeteer  → automate browser tasks
-                        │    postgres   → query memory DB
-                        │
-                        └─ Synthesizes results, applies changes, reports back
-```
-
-The `deep` sandbox (Brain) is used for planning and synthesis. The `fast` sandbox (Nano) handles parallel sub-tasks and quick tool calls. NemoClaw coordinates between them via its sub-agent spawning — Brain decomposes the goal, Nano instances execute the sub-tasks concurrently, Brain assembles the final result.
 
 ### Remote Access — Work From Anywhere
 
