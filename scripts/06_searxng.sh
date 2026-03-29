@@ -39,7 +39,7 @@ sudo chown -R "$(whoami):$(whoami)" "${SEARXNG_CONFIG}"
 docker rm -f searxng 2>/dev/null || true
 
 docker run -d --name searxng \
-    --network host \
+    -p "${SEARXNG_PORT}:8080" \
     --restart unless-stopped \
     -v "${SEARXNG_CONFIG}:/etc/searxng" \
     -e SEARXNG_SECRET_KEY="${SECRET_KEY}" \
