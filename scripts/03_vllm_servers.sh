@@ -64,9 +64,10 @@ docker run -d --name qwen-brain \
     --gpus all --ipc host --network host \
     --restart unless-stopped \
     ${BRAIN_EXTRA_ENV} \
+    -e MODEL="/models/$(basename "${BRAIN_PATH}")" \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-    serve "/models/$(basename "${BRAIN_PATH}")" \
+    serve \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
@@ -98,15 +99,25 @@ echo ">>> Starting Sub-agent: ${NANO_NAME} on port ${NANO_PORT}"
 
 docker rm -f nemotron-nano 2>/dev/null || true
 
+# Mount plugin file if it exists in the model directory
+PLUGIN_MOUNT=""
 PLUGIN_FLAG=""
 if [ -n "${NANO_PLUGIN}" ]; then
-    PLUGIN_FLAG="--reasoning-parser-plugin ${NANO_PLUGIN}"
+    PLUGIN_SRC="${MODELS_DIR}/$(basename "${NANO_PATH}")/${NANO_PLUGIN}"
+    if [ -f "${PLUGIN_SRC}" ]; then
+        PLUGIN_MOUNT="-v ${PLUGIN_SRC}:/workspace/${NANO_PLUGIN}"
+        PLUGIN_FLAG="--reasoning-parser-plugin /workspace/${NANO_PLUGIN}"
+        echo "    Plugin found: ${PLUGIN_SRC}"
+    else
+        echo "    Plugin ${NANO_PLUGIN} not found in model dir — skipping reasoning-parser-plugin"
+    fi
 fi
 
 docker run -d --name nemotron-nano \
     --gpus all --ipc host --network host \
     --restart unless-stopped \
     -v "${MODELS_DIR}:/models" \
+    ${PLUGIN_MOUNT} \
     "${NANO_IMAGE}" \
     vllm serve "/models/$(basename "${NANO_PATH}")" \
         --served-model-name "${NANO_NAME}" \
@@ -114,6 +125,7 @@ docker run -d --name nemotron-nano \
         --gpu-memory-utilization "${NANO_UTIL}" \
         --max-model-len "${NANO_CTX}" \
         --kv-cache-dtype "${NANO_KV}" \
+        --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${NANO_TOOL}" \
         --reasoning-parser "${NANO_REASON}" \
