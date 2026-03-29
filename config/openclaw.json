@@ -2,7 +2,8 @@
   "_docs": "https://docs.nvidia.com/nemoclaw/latest/index.html",
   "_note": "OpenClaw config. NemoClaw wraps this. Keep close to defaults — NemoClaw onboard wizard writes ~/.nemoclaw/config.json separately. This file lives at ~/.openclaw/openclaw.json",
 
-  "model": "http://localhost:8000/v1/qwen35-122b",
+  "_model_note": "Default is Nano (daily driver). Router switches to Brain on trigger words or image input. See agent/router.py.",
+  "model": "http://localhost:8001/v1/nemotron-nano",
 
   "mcpServers": {
     "_note": "See config/mcp_servers.json for full catalog. Add/remove servers here. npm packages use npx. Python packages use uvx.",
