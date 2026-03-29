@@ -79,7 +79,7 @@ COMMON_FLAGS=(
     --gpus all
     --ipc host
     --network host
-    --restart unless-stopped
+    --restart no
     -v "${MODELS_DIR}:/models"
     -v "${HF_CACHE}:/root/.cache/huggingface"
     -e HF_TOKEN="${HF_TOKEN:-}"

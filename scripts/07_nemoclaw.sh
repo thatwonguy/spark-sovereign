@@ -10,7 +10,7 @@
 #   3. nemoclaw onboard       ← interactive wizard (cannot be skipped)
 #
 # Sets up TWO sandboxes after onboarding:
-#   deep  — Brain (Qwen3.5-122B, port 8000) — vision, reasoning, coding
+#   deep  — Brain (Qwen3-VL-32B, port 8000) — vision, reasoning, coding
 #   fast  — Nano  (Nemotron-Nano, port 8001) — quick replies, sub-agents
 #
 # Docs: https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html
