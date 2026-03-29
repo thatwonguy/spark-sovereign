@@ -24,6 +24,7 @@ brain:
   max_model_len: 65536                                  # 64K context
   kv_cache_dtype: fp8
   max_num_seqs: 4
+  max_num_batched_tokens: 8192                          # must be >= block_size (4176) for Mamba align mode
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   extra_env:
