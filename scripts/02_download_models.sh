@@ -12,6 +12,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/.env" 2>/dev/null || true
 
+# Ensure user-local Python CLI tools are available (huggingface-cli, aider, etc.)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Optional early check so failures are obvious
+if ! command -v huggingface-cli >/dev/null 2>&1; then
+    echo "ERROR: huggingface-cli not found in PATH"
+    echo "PATH=${PATH}"
+    echo "Try: python3 -m pip install --user huggingface_hub[hf_transfer]"
+    exit 1
+fi
+
 export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
 export HF_TOKEN="${HF_TOKEN:-}"
 
