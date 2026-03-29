@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Ad-hoc Brain restart — restarts qwen-brain only, leaves all other
+# Ad-hoc Brain restart — restarts brain only, leaves all other
 # containers (nemotron-nano, pgvector, searxng, etc.) untouched.
 #
 # Use this when Brain needs fixing without waiting for Nano to reload.
@@ -45,35 +45,31 @@ BRAIN_KV=$(get_field brain kv_cache_dtype)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
-BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ">>> Restarting Brain only: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
-docker rm -f qwen-brain 2>/dev/null || true
+docker rm -f brain 2>/dev/null || true
 
 # shellcheck disable=SC2086
-docker run -d --name qwen-brain \
+docker run -d --name brain \
     --gpus all --ipc host --network host \
     --restart unless-stopped \
-    --entrypoint "" \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-    /opt/venv/bin/vllm serve "/models/$(basename "${BRAIN_PATH}")" \
+    vllm serve "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         --trust-remote-code \
-        --tokenizer-mode auto \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
-        --max-num-batched-tokens "${BRAIN_BATCHED}" \
         --max-num-seqs "${BRAIN_SEQS}"
 
-echo "    qwen-brain started → http://localhost:${BRAIN_PORT}/v1"
-echo "    Watch: docker logs qwen-brain -f"
+echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
+echo "    Watch: docker logs brain -f"

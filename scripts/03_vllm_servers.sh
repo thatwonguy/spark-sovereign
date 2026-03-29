@@ -52,41 +52,34 @@ BRAIN_KV=$(get_field brain kv_cache_dtype)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
-BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
-docker rm -f qwen-brain 2>/dev/null || true
+docker rm -f brain 2>/dev/null || true
 
-# The avarok image entrypoint ignores all CLI flags and hardcodes its own
-# port/utilization values. Bypass it entirely with --entrypoint "" and call
-# vllm directly so our settings from models.yml actually take effect.
 # shellcheck disable=SC2086
-docker run -d --name qwen-brain \
+docker run -d --name brain \
     --gpus all --ipc host --network host \
     --restart unless-stopped \
-    --entrypoint "" \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-    /opt/venv/bin/vllm serve "/models/$(basename "${BRAIN_PATH}")" \
+    vllm serve "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         --trust-remote-code \
-        --tokenizer-mode auto \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
-        --max-num-batched-tokens "${BRAIN_BATCHED}" \
         --max-num-seqs "${BRAIN_SEQS}"
 
-echo "    Container 'qwen-brain' started → http://localhost:${BRAIN_PORT}/v1"
+echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
 
 # ── Sub-agent model ───────────────────────────────────────────────────────────
 NANO_IMAGE=$(get_field subagent docker_image)
@@ -166,7 +159,7 @@ print(round(128 * util))
 PY
 )"
 
-echo "  Brain   util=${BRAIN_UTIL:-0.60} → ~${brain_gb} GB"
+echo "  Brain   util=${BRAIN_UTIL:-0.40} → ~${brain_gb} GB"
 echo "  Nano    util=${NANO_UTIL:-0.18} → ~${nano_gb} GB"
 echo ""
 echo "Waiting for models to load (checking every 15s)..."
