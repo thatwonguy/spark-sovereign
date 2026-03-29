@@ -49,7 +49,7 @@ BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ">>> Restarting Brain only: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
-docker rm -f brain 2>/dev/null || true
+docker rm -f brain qwen-brain 2>/dev/null || true
 
 # shellcheck disable=SC2086
 docker run -d --name brain \

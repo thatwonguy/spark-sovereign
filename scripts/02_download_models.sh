@@ -4,7 +4,7 @@
 # =============================================================================
 # Sources model HF repos + local paths from config/models.yml.
 # To swap a model: edit config/models.yml, re-run this script.
-# Idempotent — skips already-downloaded models.
+# Idempotent — skips already-downloaded models, removes unused ones.
 # =============================================================================
 
 set -euo pipefail
@@ -66,6 +66,30 @@ echo "========================================================"
 echo " spark-sovereign — Phase 2: Download Models"
 echo "========================================================"
 echo "  HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER}"
+echo ""
+
+# ── Prune model directories no longer in models.yml ──────────────────────────
+echo ">>> Checking for unused model directories in /opt/models..."
+ACTIVE_PATHS=$(python3 -c "
+import yaml
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+keys = ['brain', 'subagent', 'asr', 'tts', 'embeddings']
+for k in keys:
+    p = cfg.get(k, {}).get('local_path', '')
+    if p:
+        print(p)
+")
+
+if [ -d /opt/models ]; then
+    for dir in /opt/models/*/; do
+        dir="${dir%/}"
+        if ! echo "${ACTIVE_PATHS}" | grep -qxF "${dir}"; then
+            echo "  REMOVE unused model: ${dir}"
+            sudo rm -rf "${dir}"
+        fi
+    done
+fi
 echo ""
 
 download_model "Brain (Qwen3-VL-32B FP8)"       brain
