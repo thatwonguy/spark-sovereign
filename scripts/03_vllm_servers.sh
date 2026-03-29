@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# PHASE 3 — vLLM Inference Servers
+# PHASE 3 — vLLM Inference Server
 # =============================================================================
-# Starts Brain (port 8000) and Sub-agent (port 8001) containers.
-# All settings driven from config/models.yml.
-# To swap a model: edit models.yml → restart with this script.
+# Starts Brain (port 8000). All settings driven from config/models.yml.
+# To swap the model: edit models.yml → re-run this script.
 # =============================================================================
 
 set -euo pipefail
@@ -14,7 +13,6 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 
 MODELS_DIR="${MODELS_DIR:-/opt/models}"
 
-# Helper: read field from models.yml
 get_field() {
     python3 -c "
 import yaml
@@ -25,7 +23,6 @@ print(val if val is not None else '')
 "
 }
 
-# Build --env flags from models.yml extra_env dict
 get_extra_env_flags() {
     python3 -c "
 import yaml
@@ -38,10 +35,10 @@ for k, v in env.items():
 }
 
 echo "========================================================"
-echo " spark-sovereign — Phase 3: vLLM Inference Servers"
+echo " spark-sovereign — Phase 3: vLLM Inference Server"
 echo "========================================================"
 
-# Stop all GPU model containers first to free memory before re-creating them.
+# Stop all GPU model containers first to free memory before starting.
 echo ">>> Stopping existing GPU model containers..."
 for name in brain qwen-brain nemotron-nano asr-server tts-server; do
     if docker ps -q --filter "name=^${name}$" | grep -q .; then
@@ -50,7 +47,7 @@ for name in brain qwen-brain nemotron-nano asr-server tts-server; do
     docker rm -f "${name}" 2>/dev/null || true
 done
 
-# ── Brain model ──────────────────────────────────────────────────────────────
+# ── Brain ─────────────────────────────────────────────────────────────────────
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
 BRAIN_NAME=$(get_field brain served_name)
@@ -87,11 +84,9 @@ docker run -d --name brain \
         --max-num-seqs "${BRAIN_SEQS}"
 
 echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
-
-# Wait for Brain to be ready before starting Nano.
-# Brain's VL profiling peak must complete and GPU memory must settle first.
+echo "    Watch: docker logs brain -f"
 echo ""
-echo "Waiting for Brain to be ready before starting Nano..."
+echo "Waiting for Brain to be ready..."
 until curl -sf "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
     if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
         echo "ERROR: brain container exited. Check: docker logs brain"
@@ -99,97 +94,9 @@ until curl -sf "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
     fi
     sleep 5
 done
-echo "  Brain ready. Starting Nano..."
-
-# ── Sub-agent model ───────────────────────────────────────────────────────────
-NANO_IMAGE=$(get_field subagent docker_image)
-NANO_PATH=$(get_field subagent local_path)
-NANO_NAME=$(get_field subagent served_name)
-NANO_PORT=$(get_field subagent port)
-NANO_UTIL=$(get_field subagent gpu_memory_utilization)
-NANO_CTX=$(get_field subagent max_model_len)
-NANO_KV=$(get_field subagent kv_cache_dtype)
-NANO_SEQS=$(get_field subagent max_num_seqs)
-NANO_TOOL=$(get_field subagent tool_call_parser)
-NANO_REASON=$(get_field subagent reasoning_parser)
-NANO_PLUGIN=$(get_field subagent reasoning_parser_plugin)
 
 echo ""
-echo ">>> Starting Sub-agent: ${NANO_NAME} on port ${NANO_PORT}"
-
-# Mount plugin file if it exists in the model directory
-PLUGIN_MOUNT=""
-PLUGIN_FLAG=""
-if [ -n "${NANO_PLUGIN}" ]; then
-    PLUGIN_SRC="${MODELS_DIR}/$(basename "${NANO_PATH}")/${NANO_PLUGIN}"
-    if [ -f "${PLUGIN_SRC}" ]; then
-        PLUGIN_MOUNT="-v ${PLUGIN_SRC}:/workspace/${NANO_PLUGIN}"
-        PLUGIN_FLAG="--reasoning-parser-plugin /workspace/${NANO_PLUGIN}"
-        echo "    Plugin found: ${PLUGIN_SRC}"
-    else
-        echo "    Plugin ${NANO_PLUGIN} not found in model dir — skipping reasoning-parser-plugin"
-    fi
-fi
-
-docker run -d --name nemotron-nano \
-    --gpus all --ipc host --network host \
-    --restart no \
-    -v "${MODELS_DIR}:/models" \
-    ${PLUGIN_MOUNT} \
-    "${NANO_IMAGE}" \
-    vllm serve "/models/$(basename "${NANO_PATH}")" \
-        --served-model-name "${NANO_NAME}" \
-        --host 0.0.0.0 --port "${NANO_PORT}" \
-        --gpu-memory-utilization "${NANO_UTIL}" \
-        --max-model-len "${NANO_CTX}" \
-        --kv-cache-dtype "${NANO_KV}" \
-        --trust-remote-code \
-        --enable-auto-tool-choice \
-        --tool-call-parser "${NANO_TOOL}" \
-        --reasoning-parser "${NANO_REASON}" \
-        ${PLUGIN_FLAG} \
-        --enable-prefix-caching \
-        --max-num-seqs "${NANO_SEQS}"
-
-echo "    Container 'nemotron-nano' started → http://localhost:${NANO_PORT}/v1"
-
-# ── Memory summary ────────────────────────────────────────────────────────────
-echo ""
-echo "Memory allocation:"
-
-brain_gb="$(python3 - "${BRAIN_UTIL:-0.60}" <<'PY'
-import sys
-try:
-    util = float(sys.argv[1])
-except Exception:
-    util = 0.60
-print(round(128 * util))
-PY
-)"
-
-nano_gb="$(python3 - "${NANO_UTIL:-0.18}" <<'PY'
-import sys
-try:
-    util = float(sys.argv[1])
-except Exception:
-    util = 0.18
-print(round(128 * util))
-PY
-)"
-
-echo "  Brain   util=${BRAIN_UTIL:-0.40} → ~${brain_gb} GB"
-echo "  Nano    util=${NANO_UTIL:-0.18} → ~${nano_gb} GB"
-echo ""
-echo "Waiting for Nano to load (Brain already ready)..."
-until curl -sf "http://localhost:${NANO_PORT}/v1/models" >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^nemotron-nano$" --filter "status=running" | grep -q .; then
-        echo "ERROR: nemotron-nano container exited. Check: docker logs nemotron-nano"
-        exit 1
-    fi
-    sleep 5
-done
-echo ""
-echo "Both models loaded and serving."
-
+echo "Brain loaded and serving."
+echo "  util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB allocated"
 echo ""
 echo "Phase 3 complete. Proceed to: scripts/04_voice_pipeline.sh"

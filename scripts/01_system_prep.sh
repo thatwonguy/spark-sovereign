@@ -96,8 +96,7 @@ EOF
 
 cat > "${SPARK_REPO}/scripts/boot_sequence.sh" << 'BOOT'
 #!/usr/bin/env bash
-# Sequenced boot — Brain first (needs max GPU headroom for VL profiling),
-# then Nano + ASR/TTS after Brain has settled.
+# Sequenced boot — CPU services first, then Brain, then voice.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -108,7 +107,7 @@ for name in pgvector searxng; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
-log "Starting Brain (needs maximum free GPU memory for VL profiling)..."
+log "Starting Brain..."
 bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
 
 log "Waiting for Brain to be ready (port 8000)..."
@@ -121,20 +120,10 @@ until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
 done
 log "Brain ready."
 
-log "Starting Nano and voice services..."
-for name in nemotron-nano asr-server tts-server; do
+log "Starting voice services..."
+for name in asr-server tts-server; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
-
-log "Waiting for Nano to be ready (port 8001)..."
-until curl -sf http://localhost:8001/v1/models >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^nemotron-nano$" --filter "status=running" | grep -q .; then
-        log "ERROR: nemotron-nano container exited. Check: docker logs nemotron-nano"
-        exit 1
-    fi
-    sleep 5
-done
-log "Nano ready."
 
 log "Stack is up."
 BOOT
