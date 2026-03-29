@@ -45,6 +45,7 @@ BRAIN_KV=$(get_field brain kv_cache_dtype)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
+BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ">>> Restarting Brain only: ${BRAIN_NAME} on port ${BRAIN_PORT}"
@@ -70,6 +71,7 @@ docker run -d --name qwen-brain \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
+        --max-num-batched-tokens "${BRAIN_BATCHED}" \
         --max-num-seqs "${BRAIN_SEQS}"
 
 echo "    qwen-brain started → http://localhost:${BRAIN_PORT}/v1"
