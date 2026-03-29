@@ -37,7 +37,7 @@ echo "  TTS model: ${TTS_PATH} → ws://localhost:${TTS_PORT}"
 echo ""
 
 # Clone pipecat if not already present
-PIPECAT_DIR="/opt/nemotron-voice"
+PIPECAT_DIR="${PIPECAT_DIR:-$HOME/nemotron-voice}"
 if [ ! -d "${PIPECAT_DIR}" ]; then
     echo ">>> Cloning pipecat voice pipeline..."
     git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
@@ -53,6 +53,15 @@ if ! docker image inspect nemotron-voice:cuda13 &>/dev/null; then
 else
     echo "    Image nemotron-voice:cuda13 already exists — skipping build."
 fi
+
+# Preflight: make sure ports are free before using host networking
+for port in "${ASR_PORT}" "${TTS_PORT}"; do
+    if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
+        echo "ERROR: port ${port} is already in use on the host"
+        echo "Run: ss -ltnp | grep :${port}"
+        exit 1
+    fi
+done
 
 # Start voice pipeline container
 echo ""
