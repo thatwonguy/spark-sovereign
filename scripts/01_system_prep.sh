@@ -112,14 +112,14 @@ log "Starting Brain (needs maximum free GPU memory for VL profiling)..."
 bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
 
 log "Waiting for Brain to be ready (port 8000)..."
-for i in $(seq 1 60); do
-    sleep 15
-    if curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; then
-        log "Brain ready after $((i * 15))s"
-        break
+until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
+    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
+        log "ERROR: brain container exited. Check: docker logs brain"
+        exit 1
     fi
-    log "  [${i}/60] Brain still loading..."
+    sleep 5
 done
+log "Brain ready."
 
 log "Starting Nano and voice services..."
 for name in nemotron-nano asr-server tts-server; do
@@ -127,14 +127,14 @@ for name in nemotron-nano asr-server tts-server; do
 done
 
 log "Waiting for Nano to be ready (port 8001)..."
-for i in $(seq 1 40); do
-    sleep 15
-    if curl -sf http://localhost:8001/v1/models >/dev/null 2>&1; then
-        log "Nano ready after $((i * 15))s"
-        break
+until curl -sf http://localhost:8001/v1/models >/dev/null 2>&1; do
+    if ! docker ps -q --filter "name=^nemotron-nano$" --filter "status=running" | grep -q .; then
+        log "ERROR: nemotron-nano container exited. Check: docker logs nemotron-nano"
+        exit 1
     fi
-    log "  [${i}/40] Nano still loading..."
+    sleep 5
 done
+log "Nano ready."
 
 log "Stack is up."
 BOOT

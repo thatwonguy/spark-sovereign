@@ -92,17 +92,14 @@ echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
 # Brain's VL profiling peak must complete and GPU memory must settle first.
 echo ""
 echo "Waiting for Brain to be ready before starting Nano..."
-for i in $(seq 1 60); do
-    sleep 15
-    B_STATUS=$(curl -sf "http://localhost:${BRAIN_PORT}/v1/models" | python3 -c \
-        "import sys,json; d=json.load(sys.stdin); print('OK' if d['data'] else 'LOADING')" \
-        2>/dev/null || echo "LOADING")
-    echo "  [${i}/60] Brain=${B_STATUS}"
-    if [ "${B_STATUS}" = "OK" ]; then
-        echo "  Brain ready. Starting Nano..."
-        break
+until curl -sf "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
+    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
+        echo "ERROR: brain container exited. Check: docker logs brain"
+        exit 1
     fi
+    sleep 5
 done
+echo "  Brain ready. Starting Nano..."
 
 # ── Sub-agent model ───────────────────────────────────────────────────────────
 NANO_IMAGE=$(get_field subagent docker_image)
@@ -184,19 +181,15 @@ echo "  Brain   util=${BRAIN_UTIL:-0.40} → ~${brain_gb} GB"
 echo "  Nano    util=${NANO_UTIL:-0.18} → ~${nano_gb} GB"
 echo ""
 echo "Waiting for Nano to load (Brain already ready)..."
-
-for i in $(seq 1 40); do
-    sleep 15
-    N_STATUS=$(curl -sf "http://localhost:${NANO_PORT}/v1/models" | python3 -c \
-        "import sys,json; d=json.load(sys.stdin); print('OK' if d['data'] else 'LOADING')" \
-        2>/dev/null || echo "LOADING")
-    echo "  [${i}/40] Nano=${N_STATUS}"
-    if [ "${N_STATUS}" = "OK" ]; then
-        echo ""
-        echo "Both models loaded and serving."
-        break
+until curl -sf "http://localhost:${NANO_PORT}/v1/models" >/dev/null 2>&1; do
+    if ! docker ps -q --filter "name=^nemotron-nano$" --filter "status=running" | grep -q .; then
+        echo "ERROR: nemotron-nano container exited. Check: docker logs nemotron-nano"
+        exit 1
     fi
+    sleep 5
 done
+echo ""
+echo "Both models loaded and serving."
 
 echo ""
 echo "Phase 3 complete. Proceed to: scripts/04_voice_pipeline.sh"

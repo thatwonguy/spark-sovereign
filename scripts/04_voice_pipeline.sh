@@ -123,21 +123,20 @@ echo "Waiting for models to load (first run downloads from HuggingFace — may t
 echo "Watch logs: docker logs -f asr-server | docker logs -f tts-server"
 echo ""
 
-for i in $(seq 1 20); do
-    sleep 15
-    ASR_OK=$(curl -sf "http://localhost:${ASR_PORT}/health" \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK' if d.get('model_loaded') else 'LOADING')" \
-        2>/dev/null || echo "LOADING")
-    TTS_OK=$(curl -sf "http://localhost:${TTS_PORT}/health" \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK' if d.get('model_loaded') else 'LOADING')" \
-        2>/dev/null || echo "LOADING")
-    echo "  [${i}/20] ASR=${ASR_OK}  TTS=${TTS_OK}"
-    if [ "${ASR_OK}" = "OK" ] && [ "${TTS_OK}" = "OK" ]; then
-        echo ""
-        echo "Both voice servers loaded and ready."
-        break
+until curl -sf "http://localhost:${ASR_PORT}/health" >/dev/null 2>&1 && \
+      curl -sf "http://localhost:${TTS_PORT}/health" >/dev/null 2>&1; do
+    if ! docker ps -q --filter "name=^asr-server$" --filter "status=running" | grep -q .; then
+        echo "ERROR: asr-server container exited. Check: docker logs asr-server"
+        exit 1
     fi
+    if ! docker ps -q --filter "name=^tts-server$" --filter "status=running" | grep -q .; then
+        echo "ERROR: tts-server container exited. Check: docker logs tts-server"
+        exit 1
+    fi
+    sleep 5
 done
+echo ""
+echo "Both voice servers loaded and ready."
 
 echo ""
 echo "Phase 4 complete. Proceed to: scripts/05_pgvector.sh"
