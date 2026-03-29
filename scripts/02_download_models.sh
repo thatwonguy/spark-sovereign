@@ -92,8 +92,7 @@ if [ -d /opt/models ]; then
 fi
 echo ""
 
-download_model "Brain (Qwen3-VL-32B FP8)"       brain
-download_model "Sub-agents (Nemotron Nano NVFP4)" subagent
+download_model "Brain" brain
 download_model "ASR (Nemotron Speech)"           asr
 download_model "TTS (Magpie TTS)"                tts
 download_model "Embeddings (Nomic Embed)"        embeddings
