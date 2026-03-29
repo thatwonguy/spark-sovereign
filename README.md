@@ -4,8 +4,7 @@ Private local AI supercomputer stack on **NVIDIA DGX Spark** (128GB unified memo
 
 **Zero cloud. Zero API cost. Gets smarter every session.**
 
-- Qwen3-VL-32B FP8 brain — vision, coding, deep reasoning, 128K context
-- Nemotron Nano 30B NVFP4 sub-agents — 56–70 tok/s daily driver
+- Qwen3.5-35B-A3B FP8 brain — native multimodal, coding, agentic, 262K context, **50+ tok/s**
 - Streaming voice I/O (ASR + TTS)
 - pgvector continuous learning memory + SearXNG web search RAG
 - NemoClaw agentic orchestration via Telegram / Slack
@@ -22,80 +21,55 @@ Everything this stack can do — across all interfaces and modalities.
 
 | Capability | How |
 |---|---|
-| **Speech to text** | Nemotron ASR (port 8002) — streaming WebSocket, sub-second latency, trained on large English corpora (March 2026 checkpoint) |
+| **Speech to text** | Nemotron ASR (port 8002) — streaming WebSocket, sub-second latency, March 2026 checkpoint |
 | **Text to speech** | Magpie TTS (port 8003) — 7 languages, 5 voices, multilingual 357M model |
-| **Voice on phone** | Send a Telegram voice note → ASR transcribes → Brain/Nano answers → TTS speaks back. Full voice conversation from your phone, no app install |
+| **Voice on phone** | Send a Telegram voice note → ASR transcribes → Brain answers → TTS speaks back |
 | **Wake word / always-on** | Configure Pipecat pipeline with a wake-word detector; Spark listens on your LAN microphone |
 
 ### Vision (image → understand → act)
 
 | Capability | How |
 |---|---|
-| **Image understanding** | Qwen3-VL-32B is a native vision-language model — send images via `/v1/chat/completions` with base64 image content |
+| **Image understanding** | Qwen3.5-35B-A3B is a native multimodal model — send images via `/v1/chat/completions` with base64 content |
 | **Screenshot analysis** | Send a screenshot from your phone or laptop; Brain describes, debugs, or acts on what it sees |
-| **Diagram / chart reading** | Architecture diagrams, database ERDs, whiteboards — top-tier ChartQA and spatial reasoning |
-| **Photo to text** | Handwritten notes, whiteboard photos, documents — Qwen3-VL leads on OCR across 32 languages |
-| **Vision via Telegram** | Send any photo to the Telegram bot → Brain analyzes it and responds. Same UX as GPT-4o on mobile |
+| **Diagram / chart reading** | Architecture diagrams, ERDs, whiteboards — top-tier spatial reasoning |
+| **Photo to text** | Handwritten notes, whiteboard photos, documents — OCR across multiple languages |
+| **Vision via Telegram** | Send any photo to the Telegram bot → Brain analyzes and responds |
 
-### Default: Nano. Switch to Brain on demand.
+### Single Model — Full Capability at 50+ tok/s
 
-**Nano is the daily driver — 90% of tasks, 4x faster.** Brain is there when you need it.
+Brain handles everything: vision, coding, agentic tool calls, reasoning, chat — all at **50+ tok/s** on the DGX Spark GB10 with 262K context.
 
-| Model | Speed | Use for | Vision |
-|---|---|---|---|
-| Nemotron-Nano (default) | 56–70 tok/s | Chat, email, Slack, coding tasks, sub-agents, most things | No |
-| Qwen3-VL-32B (Brain) | ~40–55 tok/s | Vision, large codebase architecture, deep reasoning, complex multi-step tasks | **Yes** |
+| Model | Speed | Capabilities |
+|---|---|---|
+| **Qwen3.5-35B-A3B FP8 (Brain)** | **50+ tok/s** | Vision, coding, agentic, reasoning, chat, tool calls, 262K context |
 
-**Mode locks for the session — set once, stays until you change it:**
+Mode control still works exactly as before:
 
 | Trigger | What happens |
 |---|---|
-| `/deep` or `deep mode` | Locks Brain for entire session. No auto-switching. |
-| `/thinking` or `thinking mode` | Same as `/deep` |
-| `/fast` or `fast mode` | Locks Nano for entire session |
-| Any trigger mid-session | Overrides current lock immediately |
-| `/auto` or `auto mode` | Releases lock, auto-classify resumes per message |
+| `/deep` or `deep mode` | Deep reasoning mode — extended thinking budget |
+| `/fast` or `fast mode` | Fast response mode — reduced thinking |
+| `/auto` or `auto mode` | Auto-classify per message |
 
-**Default (no lock): auto-classify.** Nano judges each message with a single token (`fast`/`deep`) before routing. ~200ms overhead. Once you set `/deep` or `/fast`, this is suppressed for the session — your choice holds.
+### Agentic Orchestration — Brain Spawns Workers
 
-```
-/deep  (session start)
-  "Write the Stripe billing module"  -> Brain  (locked, no re-classify)
-  "Now write tests"                  -> Brain  (still locked)
-  "Quick — what time is it"          -> Brain  (locked, no auto-switch to Nano)
-  [image sent]                       -> Brain direct (deep mode, no two-step)
-
-fast mode  (mid-session switch)
-  "Quick reply"                      -> Nano   (locked)
-  [image sent]                       -> Brain extracts -> Nano responds (two-step)
-```
-
-**Vision depends on current mode:**
-- **Fast mode + image** — Brain extracts image to text description, Nano answers. Stays Nano.
-- **Deep mode + image** — Brain handles image directly. Stays Brain.
-
-The router lives at `agent/router.py`. Call `reset_session()` at the start of each new conversation to clear any previous lock.
-
-### Agentic Orchestration — Nano Spawns Nano
-
-Sub-agent spawning is an **OpenClaw capability** (`sessions_spawn` API) — not a model capability. Nano can orchestrate parallel Nano workers. All running at 56–70 tok/s each.
+Sub-agent spawning is an **OpenClaw capability** (`sessions_spawn` API). Brain orchestrates parallel workers, all running the same model concurrently at 50+ tok/s.
 
 ```
 "Tonight, build the Stripe billing module, write tests, push to GitHub"
         ↓
-Nano (orchestrator) — decomposes the goal
+Brain (orchestrator) — decomposes the goal
         ↓
 sessions_spawn × 3 (parallel):
-  Nano worker 1 → writes billing code      (filesystem + git MCP)
-  Nano worker 2 → writes tests             (filesystem MCP)
-  Nano worker 3 → writes docs + README     (filesystem MCP)
+  Brain worker 1 → writes billing code      (filesystem + git MCP)
+  Brain worker 2 → writes tests             (filesystem MCP)
+  Brain worker 3 → writes docs + README     (filesystem MCP)
         ↓
-Nano reviews, commits via git MCP, opens PR via github MCP
+Brain reviews, commits via git MCP, opens PR via github MCP
         ↓
 Sends you Telegram summary
 ```
-
-Switch to Brain for work requiring vision or deep multi-step reasoning across a large codebase. Everything else: Nano is fast enough and more than capable.
 
 NemoClaw sandboxes isolate each agent run:
 - Network namespace — only explicitly allowed outbound endpoints
@@ -103,8 +77,7 @@ NemoClaw sandboxes isolate each agent run:
 - MCP tools — available as callable functions inside the sandbox
 
 ```bash
-nemoclaw deep connect    # Brain — vision, hard reasoning
-nemoclaw fast connect    # Nano  — daily driver (default)
+nemoclaw deep connect    # Brain — vision, coding, reasoning, agents
 nemoclaw list            # all sandboxes + status
 openshell term           # real-time monitor
 ```
@@ -113,22 +86,20 @@ openshell term           # real-time monitor
 
 | Method | How |
 |---|---|
-| **SSH from anywhere** | Tailscale gives your Spark a persistent encrypted IP. `ssh user@<tailscale-ip>` from any network — coffee shop, phone hotspot, another country |
-| **NVIDIA Sync** | One-click SSH + VS Code from the system tray app on macOS/Windows. Auto-manages SSH keys |
-| **VS Code Remote** | Full IDE running on Spark's hardware. Edit, debug, run — your laptop is just a screen |
-| **Aider coding** | `aider --message "..."` from any SSH session. Brain writes the code, Nano applies diffs. No tokens billed |
+| **SSH from anywhere** | Tailscale gives your Spark a persistent encrypted IP |
+| **NVIDIA Sync** | One-click SSH + VS Code from the system tray app on macOS/Windows |
+| **VS Code Remote** | Full IDE running on Spark's hardware |
+| **Aider coding** | `aider --message "..."` from any SSH session. Brain writes the code. No tokens billed |
 | **GitHub workflows** | Agent handles PR creation, code review, branch management, CI monitoring via GitHub MCP |
 | **Terminal everywhere** | SSH → tmux → leave long-running agent tasks running, reconnect from anywhere |
 
 ### Mobile — Full ChatGPT-on-Phone Experience via Telegram/Slack
 
-Everything you get with ChatGPT Plus on your phone, plus real agentic capability:
-
 | Feature | ChatGPT App | spark-sovereign (Telegram/Slack) |
 |---|---|---|
-| Text conversation | Yes | Yes — Nano responds in seconds |
+| Text conversation | Yes | Yes — Brain responds in seconds |
 | Voice notes | Yes | Yes — ASR transcribes, TTS responds |
-| Image analysis | Yes | Yes — Brain vision model |
+| Image analysis | Yes | Yes — Brain native multimodal |
 | Web search | Yes (limited) | Yes — SearXNG, full results, stored in your DB |
 | Memory | Basic (opt-in) | Full — every session builds the vector DB |
 | Run code | No | Yes — shell MCP executes on Spark |
@@ -137,11 +108,7 @@ Everything you get with ChatGPT Plus on your phone, plus real agentic capability
 | Bill per message | Yes ($20+/mo) | No — $0 per message |
 | Private | No | Yes — never leaves your hardware |
 
-**Routing:** Text and voice notes → `fast` sandbox (Nano, instant). Images → `deep` sandbox (Brain, vision-capable). For complex tasks from Telegram, switch your active sandbox first: `nemoclaw deep connect`, then send your message.
-
 ### What the Agent Can Control via MCP
-
-MCP (Model Context Protocol) gives agents direct tool access to real systems. Every tool below can be called autonomously by the Brain or any Nano sub-agent from inside the NemoClaw sandbox:
 
 | Category | Package | What the agent can do |
 |---|---|---|
@@ -157,67 +124,49 @@ MCP (Model Context Protocol) gives agents direct tool access to real systems. Ev
 | **Stripe** | `@stripe/mcp` (npm — official) | Customers, subscriptions, invoices, refunds |
 | **Slack** | `@modelcontextprotocol/server-slack` (npm) | Send messages, read channels, search history |
 
-> **Shell/Docker:** There are no official MCP packages for shell execution or Docker. NemoClaw's OpenShell sandbox handles safe command execution natively — the agent can run commands within the sandbox's allowed policy without a separate MCP server.
+> **Shell/Docker:** NemoClaw's OpenShell sandbox handles safe command execution natively — no separate MCP server needed.
 
-See `config/mcp_servers.json` for the full catalog. Add any server to the `mcpServers` block in `config/openclaw.json` to enable it.
+See `config/mcp_servers.json` for the full catalog.
 
 ---
 
 ## What This Is — and Why It Compounds
 
-Most AI setups are stateless: every session starts from zero, every token costs money, everything you type leaves your network. spark-sovereign is the opposite. It runs a 32B vision-language brain and a fast 30B sub-agent stack entirely on local hardware, with a pgvector memory layer that accumulates verified knowledge across every session. Web search results that prove correct get stored permanently. Failures get tagged and avoided. At the end of each session, the Nano model curates durable lessons from what happened and writes them to the DB. The system gets materially smarter with every use — not through retraining, but through growing, queryable, domain-specific memory. After six months of daily use, your Spark knows your codebase, your preferences, your infrastructure, and your failure patterns in a way no cloud model ever will. After a year, you have a proprietary dataset of verified, outcome-tagged interactions that can be used to fine-tune a permanently improved custom model — one that no one else has, that lives entirely on hardware you own, and that can never be deprecated, rate-limited, or changed under you.
+Most AI setups are stateless: every session starts from zero, every token costs money, everything you type leaves your network. spark-sovereign is the opposite. It runs a 35B native multimodal brain entirely on local hardware, with a pgvector memory layer that accumulates verified knowledge across every session. Web search results that prove correct get stored permanently. Failures get tagged and avoided. At the end of each session, the model curates durable lessons from what happened and writes them to the DB. The system gets materially smarter with every use — not through retraining, but through growing, queryable, domain-specific memory. After six months of daily use, your Spark knows your codebase, your preferences, your infrastructure, and your failure patterns in a way no cloud model ever will.
 
 ---
 
 ## Model Benchmarks
 
-### Brain — Qwen3-VL-32B-Instruct-FP8
+### Brain — Qwen3.5-35B-A3B-FP8
 
-Official FP8 quantization from Qwen. Near-BF16 quality on standard benchmarks.
+Native multimodal MoE: 35B total parameters, 3B active per token. Official FP8 from Qwen.
+
+#### Performance on DGX Spark GB10
+
+| Metric | Result |
+|---|---|
+| **Throughput** | **50+ tok/s** sustained (standard vLLM FP8) |
+| **Context window** | **262K tokens** |
+| **Architecture** | MoE — 35B total / 3B active per token |
+| **Vision** | Native multimodal (early fusion — no separate encoder) |
 
 #### Vision & Multimodal
 
-| Benchmark | Qwen3-VL-32B | Qwen2.5-VL-72B | GPT-4o |
+| Benchmark | Qwen3.5-35B-A3B | Qwen3-VL-32B | Notes |
 |---|---|---|---|
-| **MMMU val** | **>70.2** | 70.2 | 69.1 |
-| **DocVQA** | **≥96.4** | 96.4 | 91.1 |
-| **ChartQA** | **≥89.5** | 89.5 | 85.7 |
-| **MMBench EN** | **≥88.0** | 88.0 | 83.4 |
-| **MathVista** | **≥74.8** | 74.8 | 63.8 |
-| **OCR (multilingual)** | 32 languages | — | Limited |
-
-> Qwen3-VL-32B matches or exceeds Qwen2.5-VL-72B across multimodal benchmarks despite being less than half the parameter count — the Qwen3 architecture generation makes the difference. Source: Qwen official model card comparisons.
-
-#### Reasoning & Coding
-
-| Benchmark | Qwen3-VL-32B | Notes |
-|---|---|---|
-| **MMLU** | ~82–85% | Qwen3 architecture backbone |
-| **GPQA Diamond** | Competitive | Strong STEM reasoning |
-| **HumanEval** | ~85–88% | Coding capability from Qwen3 base |
-| **Context window** | **128K tokens** | 256K native (capped at 128K in config) |
+| **Visual reasoning** | **Exceeds** | Baseline | Outperforms Qwen3-VL across all benchmarks |
+| **Coding** | **Exceeds** | Baseline | Better on HumanEval, coding agents |
+| **Agents** | **Exceeds** | Baseline | Cross-generational improvement |
+| **Context** | **262K** | 128K | 2× longer context |
+| **Speed** | **50+ tok/s** | ~20-30 tok/s | ~2× faster |
 
 #### Memory Footprint
 
-| Precision | Size on disk | GPU allocated (util 0.40) |
+| Precision | Weights | GPU allocated (util 0.40) |
 |---|---|---|
-| BF16 (base) | ~65 GB | — |
-| **FP8 (deployed)** | **35.5 GB** | **~51 GB** |
-
----
-
-### Sub-agent — Nemotron-Nano-30B-A3B-NVFP4
-
-| Benchmark | Score | Notes |
-|---|---|---|
-| **Throughput** | 56–70 tok/s | On GB10, single-user |
-| **HumanEval** | ~82% | Strong for 3B active params |
-| **MMLU** | ~75% | Competitive at this size |
-| **Context window** | 128K tokens | Full context active |
-| **Tool calling** | Native | qwen3_coder parser |
-| **Parallel workers** | Up to 8 | Via NemoClaw sessions_spawn |
-
-NVFP4 quantized — uses native GB10 FP4 tensor cores. 3B active parameters (30B total MoE) means inference is extremely fast with full model quality on most tasks.
+| **FP8 (deployed)** | **~35 GB** | **~49 GB** |
+| BF16 (base) | ~70 GB | — |
 
 ---
 
@@ -227,66 +176,16 @@ NVFP4 quantized — uses native GB10 FP4 tensor cores. 3B active parameters (30B
 
 | Capability | GPT-5.4 (OpenAI Cloud) | Claude Sonnet 4.6 (Anthropic Cloud) | spark-sovereign (Local) |
 |---|---|---|---|
-| **Raw reasoning** | Best-in-class | Best-in-class | ~82–87% parity (Qwen3-VL-32B) |
-| **Vision / multimodal** | Best-in-class | Best-in-class | **Competitive** — DocVQA 96+, ChartQA 89+ |
-| **Context window** | 1M tokens | 200K tokens | 128K brain / 128K Nano |
-| **Cost per session** | $5–50+ | $2–20+ | **$0** (hardware sunk cost) |
-| **Privacy** | Data sent to OpenAI | Data sent to Anthropic | **100% local, never leaves hardware** |
+| **Raw reasoning** | Best-in-class | Best-in-class | ~85–90% parity (Qwen3.5-35B-A3B) |
+| **Vision / multimodal** | Best-in-class | Best-in-class | **Competitive** — native multimodal MoE |
+| **Context window** | 1M tokens | 200K tokens | **262K** |
+| **Speed** | Fast | Fast | **50+ tok/s** |
+| **Cost per session** | $5–50+ | $2–20+ | **$0** |
+| **Privacy** | Data sent to OpenAI | Data sent to Anthropic | **100% local** |
 | **Memory across sessions** | Optional (limited) | None by default | **Full pgvector — grows every session** |
-| **Learns from your sessions** | No | No | **Yes — lessons DB + verified RAG** |
 | **Voice I/O** | API only | API only | **Native ASR + TTS streaming** |
-| **Model swappability** | None | None | **Edit one YAML, restart** |
-| **Fine-tuning on your data** | Expensive, restricted | Not available | **Full dataset ownership at 1 year** |
-| **Works offline** | No | No | **Yes — full stack, no internet required** |
-| **Telegram/Slack agent** | Requires integration work | Requires integration work | **Built-in via NemoClaw** |
-| **Agentic coding (Aider)** | Via API ($$$) | Via API ($$$) | **Local, unlimited** |
-| **Uptime dependency** | OpenAI infrastructure | Anthropic infrastructure | **Your hardware** |
-
----
-
-### Performance trajectory — the compounding advantage
-
-The gap to frontier cloud models narrows continuously as the vector DB accumulates verified, domain-specific knowledge.
-
-| Timeframe | Domain task performance (vs. GPT-5.4 baseline) | What's driving the change |
-|---|---|---|
-| **Day 1** | ~75–80% | Raw model capability — Qwen3-VL-32B competitive on vision + coding + reasoning |
-| **1 month** | ~83–87% | First lessons stored, common failure patterns avoided, web search results cached |
-| **3 months** | ~88–92% | Deep domain recall — verified answers surface before any web search; agent skips redundant lookups entirely |
-| **6 months** | ~93–97% | Near-parity on your specific domains; Spark knows your stack, preferences, prior decisions; cloud models still start from zero every session |
-| **12 months** | **Exceeds GPT-5.4 on your domains** | ~50K+ verified interactions available for fine-tuning; custom model trained on your exact workflows surpasses general-purpose frontier models on tasks you actually do |
-
-> Note: "performance" here means task completion quality on your real workloads — the domains you use daily. General benchmark parity with GPT-5.4 on MMLU/HumanEval is not the goal. Outperforming it on *your* problems is.
-
----
-
-## Precision Architecture — Why FP8 for Brain, NVFP4 for Nano
-
-The GB10 Superchip has **dedicated FP4 tensor cores** in its Blackwell architecture. The Brain and Nano use different precision strategies optimized for their respective roles.
-
-### Brain — Qwen3-VL-32B FP8
-
-| Layer | Precision | Why |
-|---|---|---|
-| Model weights | **FP8** | Official Qwen FP8 — near-BF16 quality, 35.5GB footprint, no custom kernel |
-| KV cache | **FP8** | Halves KV memory vs FP16; `--kv-cache-dtype fp8` |
-| Inference runtime | **Standard vLLM** | `nvcr.io/nvidia/vllm:26.02-py3` — no custom image required |
-| Attention backend | **FlashInfer** | Auto-selected by vLLM for Blackwell |
-
-**Why FP8 over NVFP4 for Brain?** The official Qwen FP8 checkpoint was released by Qwen directly with validated quality. On 128GB unified memory, 35.5GB weights leave 40GB+ headroom — no need to push to FP4 and introduce a custom kernel dependency. FP8 on GB10 is fast, stable, and uses the standard vLLM image.
-
-### Sub-agent — Nemotron Nano NVFP4
-
-| Layer | Precision | Why |
-|---|---|---|
-| Model weights | **NVFP4** | Native GB10 FP4 tensor cores — maximum throughput for 56–70 tok/s |
-| KV cache | **FP8** | `--kv-cache-dtype fp8` |
-| GEMM kernels | **Marlin** | `VLLM_NVFP4_GEMM_BACKEND=marlin` — correct kernel for NVFP4 on GB10 |
-| MoE routing | **Cutlass fallback** | `VLLM_USE_FLASHINFER_MOE_FP4=0` — stability on current vLLM |
-
-**Why NVFP4 for Nano?** Speed is the only thing that matters for the sub-agent role. NVFP4 on GB10's dedicated FP4 cores gives 56–70 tok/s — roughly 4x faster than Brain. The Nemotron Nano NVFP4 checkpoint was validated specifically for GB10 single-Spark deployment by NVIDIA.
-
-**Why not INT4/GPTQ for either?** GPTQ uses symmetric quantization with row-level scales. NVFP4 and FP8 use block-scaled quantization with hardware-native support — substantially better quality at the same or smaller memory footprint on Blackwell.
+| **Works offline** | No | No | **Yes** |
+| **Fine-tuning on your data** | Expensive, restricted | Not available | **Full dataset ownership** |
 
 ---
 
@@ -294,16 +193,15 @@ The GB10 Superchip has **dedicated FP4 tensor cores** in its Blackwell architect
 
 | Component | Model | Size | Port |
 |---|---|---|---|
-| Brain / Vision / Deep tasks | Qwen/Qwen3-VL-32B-Instruct-FP8 | 35.5 GB | 8000 |
-| Sub-agents / Speed / Chat | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | ~23 GB | 8001 |
+| **Brain** (coding, vision, agentic, chat) | Qwen/Qwen3.5-35B-A3B-FP8 | ~35 GB | 8000 |
 | Voice in (ASR) | nvidia/nemotron-speech-streaming-en-0.6b | ~2.4 GB | 8002 |
 | Voice out (TTS) | nvidia/magpie_tts_multilingual_357m | ~1.4 GB | 8003 |
 | Embeddings (RAG/memory) | nomic-ai/nomic-embed-text-v1.5 | ~0.4 GB | 8004 |
 | Vector DB | pgvector 0.8.2 on PostgreSQL 17 | ~2 GB | 5432 |
 | Web search | SearXNG latest | <1 GB | 8088 |
 | Agent runtime | NemoClaw + OpenClaw | ~1 GB | 18789 |
-| **Total** | | **~67 GB** | |
-| **Headroom** | | **~61 GB** ✅ | |
+| **Total** | | **~42 GB** | |
+| **Headroom** | | **~80 GB** ✅ | |
 
 ---
 
@@ -318,20 +216,20 @@ spark-sovereign/
 │   └── pgvector/
 │       └── init.sql        ← pgvector schema (lessons + rag_cache)
 ├── scripts/
-│   ├── 00_first_boot.sh    ← WiFi setup + NVIDIA Sync + Tailscale
-│   ├── 01_system_prep.sh   ← Docker cgroup, directories, Python deps
-│   ├── 02_download_models.sh ← Download all HF models
-│   ├── 03_vllm_servers.sh  ← Start Brain (8000) + Nano (8001)
-│   ├── 04_voice_pipeline.sh ← Start ASR (8002) + TTS (8003)
-│   ├── 05_pgvector.sh      ← Start pgvector + apply schema
-│   ├── 06_searxng.sh       ← Start SearXNG web search
-│   ├── 07_nemoclaw.sh      ← Install + start NemoClaw agent runtime
-│   ├── 08_aider.sh         ← Install aider config
-│   ├── start_brain_ad_hoc.sh ← Restart Brain only (leaves Nano running)
-│   └── check_stack.sh      ← Health check for all services
+│   ├── 00_first_boot.sh       ← WiFi setup + NVIDIA Sync + Tailscale
+│   ├── 01_system_prep.sh      ← Docker cgroup, directories, Python deps, boot service
+│   ├── 02_download_models.sh  ← Download all HF models, prune unused
+│   ├── 03_vllm_servers.sh     ← Start Brain (8000)
+│   ├── 04_voice_pipeline.sh   ← Start ASR (8002) + TTS (8003)
+│   ├── 05_pgvector.sh         ← Start pgvector + apply schema
+│   ├── 06_searxng.sh          ← Start SearXNG web search
+│   ├── 07_nemoclaw.sh         ← Install + start NemoClaw agent runtime
+│   ├── 08_aider.sh            ← Install aider config
+│   ├── start_brain_ad_hoc.sh  ← Restart Brain (stops GPU consumers first)
+│   └── check_stack.sh         ← Health check for all services
 ├── agent/
 │   ├── memory.py           ← Continuous learning layer (store/recall/curate)
-│   ├── router.py           ← Model router (fast/deep, auto-classify, vision pipeline)
+│   ├── router.py           ← Model router (fast/deep/auto mode)
 │   ├── log.py              ← Shared logger (console + rotating file)
 │   └── requirements.txt
 ├── docs/
@@ -344,7 +242,7 @@ spark-sovereign/
 
 ## Setup — Box Open to Running
 
-There are three layers to this setup. They are **sequential, not alternatives**. You cannot skip to Layer 3 without completing Layers 1 and 2.
+Three sequential layers — cannot skip any.
 
 ```
 Layer 1: First boot wizard        — physical, one time, ~15 min
@@ -359,71 +257,42 @@ Layer 3: spark-sovereign scripts  — on the Spark, via SSH
 **Before you plug anything in:**
 - There is **no power button** — plugging in power = immediate boot
 - Connect all peripherals **before** plugging in power
-- Plug in wired Ethernet if you have it (easier than WiFi)
-- Keep the Quick Start Guide from the box — the hostname and hotspot credentials are on a sticker inside it
+- Keep the Quick Start Guide — hostname and hotspot credentials are on a sticker inside
 
-**Two options — choose one:**
-
-**Option A — Headless (no monitor):**
-1. Power on — Spark broadcasts a WiFi hotspot
+**Option A — Headless:**
+1. Power on → Spark broadcasts a WiFi hotspot
 2. Connect your laptop to that SSID (credentials on sticker)
-3. Browser captive portal opens automatically — if not, navigate to the URL on the sticker
-4. Follow wizard: language → accept terms → create username + password → select your home WiFi
+3. Browser captive portal opens — follow wizard: language → terms → username/password → home WiFi
 
 **Option B — Monitor attached:**
-1. Power on — wizard appears on display
-2. Same sequence as above
+1. Power on → wizard appears on display, same sequence
 
-**⚠ WPA2-Enterprise / 802.1X networks** (common in offices) are not supported at first boot. Use a phone hotspot for initial setup, then configure your enterprise network via NetworkManager afterward.
-
-**After WiFi connects:**
-- Device downloads and installs software automatically (~10 min)
-- **Do not power off or reboot during this step** — cannot be resumed, may require factory reset
-- Device reboots when done
-- Spark is now at `spark-XXXX.local` on your network (XXXX from sticker)
+After WiFi connects, Spark downloads updates (~10 min) and reboots. It's then at `spark-XXXX.local`.
 
 ---
 
 ### Layer 2 — NVIDIA Sync + SSH (On Your Laptop)
 
-**Install NVIDIA Sync on your laptop:**
-Download from: `https://build.nvidia.com/spark/connect-to-your-spark/sync`
-Available for macOS, Windows, and Ubuntu/Debian.
+Download NVIDIA Sync: `https://build.nvidia.com/spark/connect-to-your-spark/sync`
 
-**Add your Spark:**
-1. Open NVIDIA Sync from system tray
-2. Settings (gear icon) → Devices → Add Device
-3. Enter hostname (`spark-XXXX.local`), your username, your password
-4. Click Add — wait 3–4 minutes for Spark to become available
-5. Password is used once to set up SSH keys, then discarded
+1. Open NVIDIA Sync → Settings → Devices → Add Device
+2. Enter hostname (`spark-XXXX.local`), username, password → Add
+3. Tray → select device → **Terminal**
 
-**Connect:**
-- NVIDIA Sync tray → select device → **Terminal** — gives you an SSH shell on the Spark
-
-**For access from anywhere (Tailscale):**
-- In NVIDIA Sync: Settings → Tailscale → Enable Tailscale → Add a Device
-- **Do NOT install the Tailscale app on your laptop separately** — NVIDIA Sync is the Tailscale node on the laptop side
-- Install Tailscale on your phone/other devices normally — sign in to the same account
-
-**Verify SSH works:**
-```bash
-ssh <username>@spark-XXXX.local
-nvidia-smi   # "Memory-Usage: Not Supported" is normal on Spark — not an error
-```
+**Tailscale (remote access from anywhere):**
+- NVIDIA Sync → Settings → Tailscale → Enable → Add a Device
+- Do NOT install the Tailscale app separately on your laptop
 
 ---
 
 ### Layer 3 — spark-sovereign Scripts (Run on the Spark via SSH)
 
-All scripts run **on the Spark**, not on your laptop. SSH in first.
-
-**One-time setup before anything else:**
+**One-time setup:**
 ```bash
-# Add yourself to docker group (no more sudo on every docker command)
 sudo usermod -aG docker $USER && newgrp docker
 ```
 
-**Clone this repo onto the Spark:**
+**Clone and configure:**
 ```bash
 git clone https://github.com/YOUR_ORG/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
@@ -434,11 +303,11 @@ nano .env   # set HF_TOKEN at minimum
 **Run phases in order** — each script is idempotent, safe to re-run:
 
 ```bash
-bash scripts/00_first_boot.sh      # Tailscale on Spark + confirms setup
-bash scripts/01_system_prep.sh     # Docker config, NVMe dirs, Python deps
-bash scripts/02_download_models.sh # ~75GB downloads — run overnight
-bash scripts/03_vllm_servers.sh    # Brain (8000) + Nano (8001) — 3-5 min to load
-bash scripts/04_voice_pipeline.sh  # ASR (8002) + TTS (8003)
+bash scripts/00_first_boot.sh      # Tailscale + confirms setup
+bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, boot service
+bash scripts/02_download_models.sh # ~37GB download — prunes unused models automatically
+bash scripts/03_vllm_servers.sh    # Brain (8000) — waits until ready
+bash scripts/04_voice_pipeline.sh  # ASR (8002) + TTS (8003) — first run builds image (~2-3hrs)
 bash scripts/05_pgvector.sh        # Vector DB + schema
 bash scripts/06_searxng.sh         # Local web search
 bash scripts/07_nemoclaw.sh        # NemoClaw — interactive onboarding wizard
@@ -446,114 +315,72 @@ bash scripts/08_aider.sh           # Aider CLI config
 bash scripts/check_stack.sh        # Verify everything is up
 ```
 
-**NemoClaw onboarding (Phase 7) is interactive.** When the wizard runs:
+> **Script 02 automatically prunes old models.** If you previously downloaded Qwen3-VL-32B or Nemotron-Nano, they will be deleted from `/opt/models` before the new model is downloaded. Disk space is freed automatically.
+
+**NemoClaw onboarding (Phase 7) is interactive:**
 - Quickstart vs Manual → **Quickstart**
-- Model provider → **Skip for now** (we use our own vLLM)
-- Communication channel → **Skip for now** (configure in `.env`)
+- Model provider → **Skip for now**
+- Communication channel → **Skip for now**
 - Hooks → **Enable all three**
 - Sandbox name → **deep**
 
-The script then sets up the second `fast` sandbox automatically.
-
 ---
 
-### After Setup — Connect and Use
+### After Setup
 
 ```bash
-nemoclaw deep connect    # Brain sandbox — vision, coding, reasoning
-nemoclaw fast connect    # Nano sandbox  — daily driver (default)
+nemoclaw deep connect    # Brain sandbox — vision, coding, reasoning, agents
 openclaw tui             # interactive chat inside active sandbox
 ```
 
-Or from Telegram/Slack once tokens are set in `.env` and Phase 7 is re-run.
+Or from Telegram/Slack once tokens are set in `.env`.
 
 ---
 
 ## Swapping a Model
 
-**All model configuration lives in `config/models.yml`.** To swap any model:
+All model config lives in `config/models.yml`. To swap:
 
-1. Edit `config/models.yml` — change `hf_repo`, `local_path`, `docker_image`, GPU util, etc.
-   Each section has a commented `SWAP EXAMPLE` showing an alternative.
+1. Edit `config/models.yml` — change `hf_repo`, `local_path`, GPU util, etc. Each section has a commented `SWAP EXAMPLE`.
 
-2. Download the new model:
+2. Download and prune:
    ```bash
-   bash scripts/02_download_models.sh
+   bash scripts/02_download_models.sh   # downloads new, deletes old automatically
    ```
 
-3. Restart the relevant server:
+3. Restart:
    ```bash
-   # Brain only (leaves Nano running)
-   bash scripts/start_brain_ad_hoc.sh
-
-   # Full restart of both
-   bash scripts/03_vllm_servers.sh
-
-   # Sub-agent only
-   docker restart nemotron-nano
+   bash scripts/start_brain_ad_hoc.sh   # or: bash scripts/03_vllm_servers.sh
    ```
 
-4. Run health check:
+4. Verify:
    ```bash
    bash scripts/check_stack.sh
    ```
-
-That's it. No hardcoded model names anywhere else in the stack.
 
 ---
 
 ## Memory Architecture — How the System Gets Smarter
 
-Every session, the agent:
+Every session:
 
-1. **Checks pgvector first** — any relevant lessons or verified web results? Uses them directly (faster, works offline).
-2. **Falls back to SearXNG** if no local knowledge — results stored in `rag_cache` with `verified=FALSE`.
-3. **Confirms correct results** — when an answer works, `confirm_web_result()` marks it `verified=TRUE, confidence=1.0`. Ranks highest in future recall.
-4. **Curates at session end** — `curate_session()` sends the session summary to Nano, which extracts durable lessons and stores them in the `lessons` table.
+1. **Checks pgvector first** — relevant lessons or verified results? Uses them directly.
+2. **Falls back to SearXNG** if no local knowledge — stores results in `rag_cache`.
+3. **Confirms correct results** — `confirm_web_result()` marks `verified=TRUE, confidence=1.0`.
+4. **Curates at session end** — `curate_session()` sends summary to Brain, which extracts durable lessons into the `lessons` table.
 5. **Failures ranked highest** (`importance=1.0`) — never repeat the same mistake.
-
-```
-Query → pgvector recall → hit? → answer (no web search)
-                       → miss? → SearXNG → store result
-                                          → answer works? → confirm (verified=TRUE)
-                                                         → curate_session() → Nano extracts lessons
-                                                                            → store in lessons table
-```
-
-### Using the memory layer in your agent code
 
 ```python
 from agent.memory import recall_as_context, store_web_result, confirm_web_result, curate_session
 
-# Before calling the LLM — inject relevant context
 context = recall_as_context("stripe webhook subscription.updated", domain="stripe")
-# context is a formatted string ready to inject into your system prompt
-
-# After a SearXNG search — store the result
-result_id = store_web_result(
-    query="stripe webhook signature verification python",
-    result="Use stripe.Webhook.construct_event() with the signing secret...",
-    url="https://stripe.com/docs/...",
-)
-
-# After confirming the answer worked
+result_id = store_web_result(query="...", result="...", url="...")
 confirm_web_result(result_id)
-
-# At end of session
 lessons = curate_session(session_summary_text, domain="stripe")
 ```
 
-### Memory CLI
-
 ```bash
-# Recall memories for a query
 python3 agent/memory.py recall "how to handle stripe webhooks"
-
-# Store a lesson manually
-python3 agent/memory.py lesson "Always verify Stripe webhook signatures before processing" \
-    --outcome success --domain stripe --importance 0.9
-
-# Print DB stats
 python3 agent/memory.py stats
 ```
 
@@ -563,15 +390,9 @@ python3 agent/memory.py stats
 
 ```bash
 cd ~/projects/my-saas
-aider                                    # interactive TUI, uses Brain
-
-# Inline commands
+aider                                    # interactive TUI
 aider --message "Add Stripe webhook handler for subscription.updated"
 aider --message "Add tests for the auth middleware"
-
-# Use Nano for fast simple edits
-aider --model openai/nemotron-nano --message "fix typo in README"
-aider --model openai/nemotron-nano --message "reformat this file with black"
 ```
 
 Config at `~/.aider.conf.yml` (installed by `scripts/08_aider.sh`).
@@ -580,10 +401,7 @@ Config at `~/.aider.conf.yml` (installed by `scripts/08_aider.sh`).
 
 ## VS Code Remote
 
-Via NVIDIA Sync (recommended):
-1. Open NVIDIA Sync → your Spark is listed
-2. Click "VS Code" → auto-launches VS Code connected to Spark
-3. Full CUDA stack as backend, edit files directly
+Via NVIDIA Sync: Tray → your Spark → **VS Code**
 
 Manually:
 ```
@@ -596,9 +414,7 @@ VS Code → Remote Explorer → + New Remote → ssh user@spark-XXXX.local
 
 UI at `http://localhost:18789` after `scripts/07_nemoclaw.sh`.
 
-Configure Telegram/Slack tokens in `.env` before running the script. The `config/openclaw.json` file uses `${ENV_VAR}` placeholders — the install script substitutes them from `.env`.
-
-Main agent uses the Brain (8000). Sub-agents use Nano (8001) with up to 8 concurrent, 2-level spawn depth.
+Configure Telegram/Slack tokens in `.env` before running the script. Brain handles all tasks — vision, coding, reasoning, sub-agents — at 50+ tok/s.
 
 ---
 
@@ -608,22 +424,14 @@ Main agent uses the Brain (8000). Sub-agents use Nano (8001) with up to 8 concur
 bash scripts/check_stack.sh
 ```
 
-Shows:
-- System memory + GPU utilization
-- Model endpoint status (which models are loaded and serving)
-- Docker container status + uptime
-- SearXNG + NemoClaw UI reachability
-- pgvector lesson + web cache counts
-
 ---
 
 ## Memory Map
 
 ```
-128GB DGX Spark Unified Memory
+128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ═══════════════════════════════════════════════════════════════
- Qwen3-VL-32B FP8              51.2 GB    0.40 util (35.5GB weights + 15.7GB KV)
- Nemotron Nano NVFP4           23.1 GB    0.18 util
+ Qwen3.5-35B-A3B FP8           48.7 GB    0.40 util (~35GB weights + ~13GB KV)
  ASR (nemotron-speech)          2.4 GB    always-on
  TTS (magpie_tts)               1.4 GB    always-on
  Embeddings (nomic)             0.4 GB    always-on
@@ -632,8 +440,8 @@ Shows:
  NemoClaw + OpenClaw            1.0 GB    always-on
  OS + Docker + vLLM             6.0 GB    always-on
 ───────────────────────────────────────────────────────────────
- TOTAL ALLOCATED               88.0 GB
- HEADROOM                      40.0 GB   ✅ safe — no OOM risk
+ TOTAL ALLOCATED                62.4 GB
+ HEADROOM                       59.3 GB   ✅ very safe
 ═══════════════════════════════════════════════════════════════
 ```
 
@@ -644,8 +452,8 @@ Shows:
 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 Common fixes:
+- Brain not loading → `docker logs brain --tail 50`
 - OOM → reduce `gpu_memory_utilization` in `config/models.yml`
-- Model not loading → check `docker logs brain --tail 50` or `docker logs nemotron-nano --tail 50`
-- Swap model → edit `config/models.yml`, re-run download + server scripts
-- pgvector errors → check `docker logs pgvector --tail 30`
-- Brain only needs restart → `bash scripts/start_brain_ad_hoc.sh`
+- Swap model → edit `config/models.yml`, re-run `02_download_models.sh` + `start_brain_ad_hoc.sh`
+- pgvector errors → `docker logs pgvector --tail 30`
+- Restart Brain → `bash scripts/start_brain_ad_hoc.sh`
