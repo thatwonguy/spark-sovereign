@@ -117,7 +117,7 @@ infrastructure:
     data_path: /opt/pgvector
   searxng:
     image: searxng/searxng:latest
-    port: 8080
+    port: 8088                        # 8080 reserved for NemoClaw OpenShell gateway
     config_path: /opt/searxng
   nemoclaw:
     ui_port: 18789
