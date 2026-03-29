@@ -24,6 +24,10 @@ import requests
 import yaml
 from sentence_transformers import SentenceTransformer
 
+from agent.log import get_logger
+
+log = get_logger(__name__)
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -52,16 +56,16 @@ _conn: Optional[psycopg2.extensions.connection] = None
 def _get_embed_model() -> SentenceTransformer:
     global _embed_model
     if _embed_model is None:
-        _embed_model = SentenceTransformer(
-            _embed_path,
-            trust_remote_code=True,
-        )
+        log.info("loading embed model: %s", _embed_path)
+        _embed_model = SentenceTransformer(_embed_path, trust_remote_code=True)
+        log.info("embed model ready (dim=%d)", _embed_dims)
     return _embed_model
 
 
 def _get_conn() -> psycopg2.extensions.connection:
     global _conn
     if _conn is None or _conn.closed:
+        log.debug("opening pgvector connection: %s", _pg_dsn.split("@")[-1])
         _conn = psycopg2.connect(_pg_dsn)
     return _conn
 
@@ -100,6 +104,8 @@ def store_lesson(
     )
     lesson_id = cur.fetchone()[0]
     conn.commit()
+    log.info("lesson stored id=%d outcome=%s domain=%s importance=%.1f source=%s",
+             lesson_id, outcome, domain, importance, source)
     return lesson_id
 
 
@@ -123,6 +129,8 @@ def store_web_result(
     )
     entry_id = cur.fetchone()[0]
     conn.commit()
+    log.info("web result stored id=%d verified=%s confidence=%.1f url=%s",
+             entry_id, verified, confidence, url or "(none)")
     return entry_id
 
 
@@ -142,6 +150,7 @@ def confirm_web_result(result_id: int) -> None:
         (result_id,),
     )
     conn.commit()
+    log.info("web result confirmed id=%d -> verified=True confidence=1.0", result_id)
 
 
 # ---------------------------------------------------------------------------
@@ -194,12 +203,14 @@ def recall(
     )
     web_results = cur.fetchall()
 
-    # Update last_used + use_count for retrieved lessons
+    log.debug("recall: %d lessons, %d web results | query=%.50s domain=%s",
+              len(lessons), len(web_results), query, domain)
     if lessons:
-        ids_placeholder = ",".join(["%s"] * len(lessons))
-        # We don't have IDs here — a future enhancement would return them.
-        # For now, bump use_count via content match.
-        pass
+        for content, outcome, importance, source, score in lessons:
+            log.debug("  lesson score=%.3f outcome=%s | %.60s", score, outcome, content)
+    if web_results:
+        for q, result, url, confidence, score in web_results:
+            log.debug("  web score=%.3f verified_conf=%.1f | %.60s", score, confidence, result)
 
     return lessons, web_results
 
@@ -257,6 +268,7 @@ Session summary:
 
 Return JSON only. No markdown fences, no explanation."""
 
+    log.info("curating session | domain=%s summary_len=%d", domain, len(session_summary))
     try:
         resp = requests.post(
             f"http://localhost:{_nano_port}/v1/chat/completions",
@@ -276,6 +288,7 @@ Return JSON only. No markdown fences, no explanation."""
         raw = re.sub(r"\n?```$", "", raw)
 
         lesson_list = json.loads(raw)
+        log.info("curation extracted %d lessons for domain=%s", len(lesson_list), domain)
         stored = []
         for item in lesson_list:
             lesson_id = store_lesson(
@@ -290,7 +303,7 @@ Return JSON only. No markdown fences, no explanation."""
         return stored
 
     except Exception as e:
-        print(f"[memory.curate_session] error: {e}", file=sys.stderr)
+        log.error("curate_session failed: %s", e, exc_info=True)
         return []
 
 

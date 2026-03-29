@@ -26,6 +26,9 @@ Explicit triggers:
 """
 
 import requests
+from agent.log import get_logger
+
+log = get_logger(__name__)
 
 MODELS = {
     "nano": "http://localhost:8001/v1/nemotron-nano",
@@ -92,9 +95,11 @@ def _classify(message: str) -> str:
         )
         resp.raise_for_status()
         answer = resp.json()["choices"][0]["message"]["content"].strip().lower()
-        return "deep" if answer.startswith("deep") else "fast"
-    except Exception:
-        # If classification fails for any reason, stay on current mode
+        result = "deep" if answer.startswith("deep") else "fast"
+        log.debug("classify -> %s | msg: %.60s", result.upper(), message)
+        return result
+    except Exception as e:
+        log.warning("classify failed (%s), falling back to %s", e, _mode)
         return _mode
 
 
@@ -117,58 +122,65 @@ def route(message: str, has_image: bool = False) -> dict:
             _user_locked = False
             _mode = "nano"
             clean = msg_lower.replace(trigger, "").strip()
+            log.info("lock released -> auto-classify enabled")
             return _decision("nano", clean or message, classified=False,
                              has_image=has_image)
 
     # ── 2. Explicit mode triggers — lock session to this mode ────────────────
-    #    /deep at session start -> stays deep all session until user changes it
     for trigger in DEEP_TRIGGERS:
         if trigger in msg_lower:
             _mode = "deep"
-            _user_locked = True          # suppress auto-classify for session
+            _user_locked = True
             clean = msg_lower.replace(trigger, "").strip()
+            log.info("session locked -> DEEP (trigger=%r)", trigger)
             return _decision("deep", clean or message, classified=False,
                              has_image=has_image)
 
     for trigger in FAST_TRIGGERS:
         if trigger in msg_lower:
             _mode = "nano"
-            _user_locked = True          # explicit fast lock — no auto-switching
+            _user_locked = True
             clean = msg_lower.replace(trigger, "").strip()
+            log.info("session locked -> FAST (trigger=%r)", trigger)
             return _decision("nano", clean or message, classified=False,
                              has_image=has_image)
 
     # ── 3. Auto-classification — only if user hasn't locked a mode ───────────
     if AUTO_ROUTE and not _user_locked:
         decided = _classify(message)
-        # Note: auto-classify does NOT set _user_locked — it floats per message
         return _decision(decided, message, classified=True, has_image=has_image)
 
     # ── 4. Fallback — honour locked session mode ─────────────────────────────
+    log.debug("locked %s | img=%s | %.60s", _mode.upper(), has_image, message)
     return _decision(_mode, message, classified=False, has_image=has_image)
 
 
 def _decision(mode: str, clean_msg: str, classified: bool,
               has_image: bool) -> dict:
-    """Build the routing decision dict."""
+    """Build the routing decision dict and log the final dispatch."""
     if mode == "deep":
-        # Deep mode: Brain handles everything directly (images too)
-        return {
+        d = {
             "mode": "deep",
             "classified": classified,
             "clean_msg": clean_msg,
             "vision_step": False,
             "model_url": MODELS["deep"],
         }
+        log.info("-> BRAIN | classified=%s vision_step=False img=%s | %.60s",
+                 classified, has_image, clean_msg)
+        return d
     else:
-        # Fast mode: Nano responds. Images go through two-step pipeline.
-        return {
+        vision = has_image
+        d = {
             "mode": "nano",
             "classified": classified,
             "clean_msg": clean_msg,
-            "vision_step": has_image,
+            "vision_step": vision,
             "model_url": MODELS["nano"],
         }
+        log.info("-> NANO  | classified=%s vision_step=%s img=%s | %.60s",
+                 classified, vision, has_image, clean_msg)
+        return d
 
 
 def handle_vision(image_b64: str, user_question: str) -> str:

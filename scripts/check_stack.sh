@@ -129,6 +129,21 @@ else
 fi
 echo ""
 
+echo "── Logs ────────────────────────────────────────────────────"
+LOG_FILE="${HOME}/.spark-sovereign/logs/spark.log"
+if [ -f "${LOG_FILE}" ]; then
+    SIZE=$(du -sh "${LOG_FILE}" | cut -f1)
+    echo "  ${LOG_FILE} (${SIZE})"
+    echo "  Last 5 lines:"
+    tail -5 "${LOG_FILE}" | sed 's/^/    /'
+    echo "  Full log: tail -f ${LOG_FILE}"
+    echo "  Debug:    LOG_LEVEL=DEBUG python3 agent/router.py"
+else
+    echo "  No log file yet — written on first agent/router.py or memory.py call"
+    echo "  Expected: ${LOG_FILE}"
+fi
+echo ""
+
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║  Done. See docs/TROUBLESHOOTING.md for common fixes.     ║"
 echo "╚══════════════════════════════════════════════════════════╝"
