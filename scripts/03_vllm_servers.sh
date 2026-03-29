@@ -126,8 +126,29 @@ echo "    Container 'nemotron-nano' started → http://localhost:${NANO_PORT}/v1
 # ── Memory summary ────────────────────────────────────────────────────────────
 echo ""
 echo "Memory allocation:"
-echo "  Brain   util=${BRAIN_UTIL} → ~$(python3 -c "print(f'{128*${BRAIN_UTIL:.2f}:.0f}')") GB"
-echo "  Nano    util=${NANO_UTIL} → ~$(python3 -c "print(f'{128*${NANO_UTIL:.2f}:.0f}')") GB"
+
+brain_gb="$(python3 - "${BRAIN_UTIL:-0.60}" <<'PY'
+import sys
+try:
+    util = float(sys.argv[1])
+except Exception:
+    util = 0.60
+print(round(128 * util))
+PY
+)"
+
+nano_gb="$(python3 - "${NANO_UTIL:-0.18}" <<'PY'
+import sys
+try:
+    util = float(sys.argv[1])
+except Exception:
+    util = 0.18
+print(round(128 * util))
+PY
+)"
+
+echo "  Brain   util=${BRAIN_UTIL:-0.60} → ~${brain_gb} GB"
+echo "  Nano    util=${NANO_UTIL:-0.18} → ~${nano_gb} GB"
 echo ""
 echo "Waiting for models to load (checking every 15s)..."
 
