@@ -22,7 +22,8 @@
       "Bash(python3 -c \"import json; json.load\\(open\\(''config/mcp_servers.json'', encoding=''utf-8''\\)\\); print\\(''mcp_servers.json: OK''\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\(''agent/router.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''router.py: syntax OK''\\)\")",
       "Bash(python3 agent/router.py)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(bash -n scripts/check_stack.sh)"
     ]
   }
 }
