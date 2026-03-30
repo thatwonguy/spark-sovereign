@@ -70,7 +70,7 @@ docker run -d --name brain \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-    vllm serve "/models/$(basename "${BRAIN_PATH}")" \
+    serve "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
