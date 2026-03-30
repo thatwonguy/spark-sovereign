@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -35,6 +36,14 @@ BRAIN_MODEL = os.environ.get("BRAIN_MODEL", "qwen35-35b-a3b")
 ASR_WS      = os.environ.get("ASR_WS",      "ws://localhost:8002")
 TTS_URL     = os.environ.get("TTS_URL",     "http://localhost:8003/v1/audio/speech")
 TTS_VOICE   = os.environ.get("TTS_VOICE",   "alloy")
+
+SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", (
+    "You are a private AI assistant running entirely on local hardware — "
+    "a DGX Spark with a 35B parameter brain. You are direct, capable, and concise. "
+    "You can reason, write code, analyze images, search the web, and execute tasks. "
+    "You never apologize unnecessarily. When you don't know something, say so briefly "
+    "and offer to find out. Keep responses focused — no filler, no disclaimers."
+))
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
@@ -86,10 +95,11 @@ async def send_typing(session: aiohttp.ClientSession, chat_id: int):
 # ── Brain ─────────────────────────────────────────────────────────────────────
 
 async def call_brain(messages: list, timeout: int = 120) -> str:
+    full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     async with aiohttp.ClientSession() as session:
         payload = {
             "model": BRAIN_MODEL,
-            "messages": messages,
+            "messages": full_messages,
             "stream": False,
         }
         async with session.post(
@@ -103,14 +113,39 @@ async def call_brain(messages: list, timeout: int = 120) -> str:
 
 # ── ASR ───────────────────────────────────────────────────────────────────────
 
+def ogg_to_pcm(ogg_bytes: bytes) -> bytes:
+    """Convert OGG/Opus (Telegram voice) to 16kHz mono 16-bit PCM using ffmpeg."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", "pipe:0",
+            "-ar", "16000",
+            "-ac", "1",
+            "-f", "s16le",
+            "pipe:1",
+        ],
+        input=ogg_bytes,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {result.stderr.decode()[:200]}")
+    return result.stdout
+
+
 async def transcribe(audio_bytes: bytes) -> str:
-    """Send audio to local ASR WebSocket, return transcript."""
+    """Convert OGG→PCM then send to local ASR WebSocket, return transcript."""
+    try:
+        pcm = await asyncio.to_thread(ogg_to_pcm, audio_bytes)
+    except Exception as e:
+        log.warning(f"Audio conversion failed: {e}")
+        return ""
+
     try:
         import websockets
         async with websockets.connect(ASR_WS, ping_interval=None) as ws:
             chunk = 4096
-            for i in range(0, len(audio_bytes), chunk):
-                await ws.send(audio_bytes[i : i + chunk])
+            for i in range(0, len(pcm), chunk):
+                await ws.send(pcm[i : i + chunk])
             await ws.send(b"")          # EOF signal
 
             transcript = ""
@@ -123,7 +158,7 @@ async def transcribe(audio_bytes: bytes) -> str:
                     break
             return transcript.strip()
     except Exception as e:
-        log.warning(f"ASR failed: {e}")
+        log.warning(f"ASR WebSocket failed: {e}")
         return ""
 
 
