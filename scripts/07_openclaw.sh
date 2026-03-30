@@ -119,18 +119,38 @@ else
     echo "    Start it with: bash scripts/start_brain_ad_hoc.sh"
 fi
 
-# 6. Start OpenClaw gateway
+# 6. Add Telegram bot token (stored in OpenClaw secrets, not env var)
+echo ""
+if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+    echo ">>> Registering Telegram bot token with OpenClaw..."
+    openclaw channels add --channel telegram --token "${TELEGRAM_BOT_TOKEN}" 2>/dev/null \
+        && echo "    Telegram token registered." \
+        || echo "    WARNING: channels add failed — run manually: openclaw channels add --channel telegram --token <token>"
+else
+    echo "    TELEGRAM_BOT_TOKEN not set in .env — skipping channel registration."
+    echo "    Run manually: openclaw channels add --channel telegram --token <token>"
+fi
+
+# 7. Add MCP servers
+echo ""
+echo ">>> Registering MCP servers..."
+openclaw mcp set filesystem '{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/home/'"${USER}"'/projects"]}' 2>/dev/null && echo "    filesystem" || true
+openclaw mcp set fetch      '{"command":"uvx","args":["mcp-server-fetch"]}' 2>/dev/null && echo "    fetch" || true
+openclaw mcp set memory     '{"command":"npx","args":["-y","@modelcontextprotocol/server-memory"]}' 2>/dev/null && echo "    memory" || true
+openclaw mcp set postgres   '{"command":"npx","args":["-y","@modelcontextprotocol/server-postgres","postgresql://postgres:localonly@localhost/agent_memory"]}' 2>/dev/null && echo "    postgres" || true
+if [[ -n "${GITHUB_PAT:-}" ]]; then
+    openclaw mcp set github '{"command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_PERSONAL_ACCESS_TOKEN":"'"${GITHUB_PAT}"'"}}' 2>/dev/null && echo "    github" || true
+fi
+
+# 8. Start OpenClaw gateway
 echo ""
 echo ">>> Starting OpenClaw gateway..."
 openclaw gateway start 2>/dev/null || openclaw gateway restart 2>/dev/null || true
-sleep 2
+sleep 3
 
-# Verify gateway is up
-if curl -sf http://localhost:18789/api/status >/dev/null 2>&1; then
-    echo "    Gateway running at http://localhost:18789"
-else
-    echo "    Gateway may still be starting — check: openclaw gateway status"
-fi
+echo ""
+echo ">>> Gateway status:"
+openclaw gateway status 2>/dev/null | grep -E "Runtime:|Telegram|RPC probe|Config invalid" || true
 
 echo ""
 echo "========================================================"
@@ -138,15 +158,13 @@ echo " OpenClaw ready."
 echo ""
 echo " Usage:"
 echo "   openclaw tui              # interactive chat (terminal UI)"
+echo "   openclaw channels status  # check Telegram connection"
 echo "   openclaw gateway status   # check gateway"
-echo "   openclaw gateway logs     # view logs"
-echo "   openclaw gateway restart  # restart after config changes"
+echo "   openclaw mcp list         # list MCP servers"
 echo ""
-echo " API endpoint:"
-echo "   POST http://localhost:18789/v1/responses"
-echo ""
-echo " Config: ~/.openclaw/openclaw.json"
-echo " Identity: ~/.openclaw/workspace/SOUL.md"
+echo " Dashboard (SSH tunnel to access from your Mac):"
+echo "   ssh -N -L 18789:127.0.0.1:18789 ${USER}@<spark-ip>"
+echo "   Then open: http://localhost:18789"
 echo "========================================================"
 echo ""
 echo "Phase 7 complete. Proceed to: scripts/08_aider.sh"
