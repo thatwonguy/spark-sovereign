@@ -125,6 +125,10 @@ for name in asr-server tts-server; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
+log "Starting NemoClaw gateway + sandbox forward..."
+nemoclaw start 2>/dev/null || true
+openshell forward 18789 deep 2>/dev/null &
+
 log "Stack is up."
 BOOT
 
