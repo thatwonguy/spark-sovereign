@@ -93,7 +93,7 @@ echo ""
 echo ">>> Running nemoclaw setup-spark..."
 sudo nemoclaw setup-spark || echo "    Already applied."
 
-# 5. Install openclaw.json with env var substitution
+# 5. Install openclaw.json + workspace identity files
 echo ""
 echo ">>> Installing ~/.openclaw/openclaw.json..."
 mkdir -p ~/.openclaw
@@ -122,6 +122,15 @@ with open(dest, 'w') as f:
     json.dump(cfg, f, indent=2)
 print(f'    Written: {dest}')
 PYEOF
+
+# Install workspace identity files (IDENTITY.md + SOUL.md → ~/.openclaw/workspace/)
+mkdir -p ~/.openclaw/workspace
+for f in IDENTITY.md SOUL.md; do
+    if [ -f "${REPO_ROOT}/config/workspace/${f}" ]; then
+        cp "${REPO_ROOT}/config/workspace/${f}" ~/.openclaw/workspace/"${f}"
+        echo "    Written: ~/.openclaw/workspace/${f}"
+    fi
+done
 
 # 6. Interactive onboarding
 #    NemoClaw onboard is interactive — it cannot be skipped or automated.
