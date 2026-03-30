@@ -63,51 +63,52 @@
     }
   },
 
-  "mcpServers": {
-    "_note": "All MCP servers use stdio transport. npm packages via npx, Python via uvx.",
+  "provider": {
+    "_note": "MCP servers — stdio transport only. npm packages via npx, Python via uvx.",
+    "mcpServers": {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/thatwonguy/projects"],
+        "transport": "stdio"
+      },
 
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/thatwonguy/projects"],
-      "transport": "stdio"
-    },
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PAT}" },
+        "transport": "stdio"
+      },
 
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PAT}" },
-      "transport": "stdio"
-    },
+      "git": {
+        "command": "uvx",
+        "args": ["mcp-server-git", "--repository", "/home/thatwonguy/projects"],
+        "transport": "stdio"
+      },
 
-    "git": {
-      "command": "uvx",
-      "args": ["mcp-server-git", "--repository", "/home/thatwonguy/projects"],
-      "transport": "stdio"
-    },
+      "fetch": {
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "transport": "stdio"
+      },
 
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch"],
-      "transport": "stdio"
-    },
+      "postgres": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres",
+                 "postgresql://postgres:localonly@localhost/agent_memory"],
+        "transport": "stdio"
+      },
 
-    "postgres": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://postgres:localonly@localhost/agent_memory"],
-      "transport": "stdio"
-    },
+      "puppeteer": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+        "transport": "stdio"
+      },
 
-    "puppeteer": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
-      "transport": "stdio"
-    },
-
-    "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "transport": "stdio"
+      "memory": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"],
+        "transport": "stdio"
+      }
     }
   }
 }
