@@ -27,7 +27,6 @@ print(node if isinstance(node, (str,int)) else '')
 }
 
 BRAIN_PORT=$(get_port brain.port)
-NANO_PORT=$(get_port subagent.port)
 ASR_PORT=$(get_port asr.port)
 TTS_PORT=$(get_port tts.port)
 PG_PORT=$(get_port infrastructure.pgvector.port)
@@ -70,13 +69,12 @@ check_vllm() {
 }
 
 check_vllm "Brain (8000)" "${BRAIN_PORT}"
-check_vllm "Nano  (8001)" "${NANO_PORT}"
 
 echo ""
 
 # ── Docker containers ─────────────────────────────────────────────────────────
 echo "── Containers ──────────────────────────────────────────────"
-for name in brain nemotron-nano pgvector searxng asr-server tts-server; do
+for name in brain pgvector searxng asr-server tts-server; do
     status=$(docker inspect -f '{{.State.Status}}' "${name}" 2>/dev/null || echo "not found")
     uptime=$(docker inspect -f '{{.State.StartedAt}}' "${name}" 2>/dev/null \
         | python3 -c "
