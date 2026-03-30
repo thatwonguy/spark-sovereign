@@ -38,6 +38,39 @@ sudo chown -R "$(whoami):$(whoami)" "${SEARXNG_CONFIG}"
 
 docker rm -f searxng 2>/dev/null || true
 
+# Start briefly to generate default settings.yml (if not already present)
+if [ ! -f "${SEARXNG_CONFIG}/settings.yml" ]; then
+    echo "    Generating default settings.yml..."
+    docker run --rm \
+        -v "${SEARXNG_CONFIG}:/etc/searxng" \
+        -e SEARXNG_SECRET_KEY="${SECRET_KEY}" \
+        "${SEARXNG_IMAGE}" \
+        sh -c "cp /etc/searxng/settings.yml /etc/searxng/settings.yml.bak 2>/dev/null; cat /usr/local/searxng/searx/settings.yml > /etc/searxng/settings.yml" \
+        2>/dev/null || true
+    sleep 2
+fi
+
+# Enable JSON format (required for agent/memory.py RAG queries)
+SETTINGS="${SEARXNG_CONFIG}/settings.yml"
+if [ -f "${SETTINGS}" ]; then
+    python3 - <<PYEOF
+import re
+with open('${SETTINGS}') as f:
+    txt = f.read()
+# Add json to formats list if not already present
+if '- json' not in txt:
+    txt = re.sub(r'(formats:\s*\n(\s+- html\b.*\n?))', r'\1\2  - json\n', txt)
+    # fallback: append formats block if pattern didn't match
+    if '- json' not in txt:
+        txt = txt.rstrip() + '\nsearch:\n  formats:\n    - html\n    - json\n'
+    with open('${SETTINGS}', 'w') as f:
+        f.write(txt)
+    print('    JSON format enabled in settings.yml')
+else:
+    print('    JSON format already enabled.')
+PYEOF
+fi
+
 docker run -d --name searxng \
     -p "${SEARXNG_PORT}:8080" \
     --restart unless-stopped \
@@ -46,7 +79,12 @@ docker run -d --name searxng \
     "${SEARXNG_IMAGE}"
 
 echo "    Container searxng started."
-sleep 5
+
+# Wait for it to be ready
+echo "    Waiting for SearXNG to be ready..."
+until curl -sf "http://localhost:${SEARXNG_PORT}/" >/dev/null 2>&1; do
+    sleep 3
+done
 
 # Smoke test
 echo ""

@@ -108,6 +108,10 @@ check_http() {
 }
 
 check_http "SearXNG"         "http://localhost:${SEARXNG_PORT}/search?q=test&format=json"
+
+# Ensure NemoClaw port forward is running before checking
+openshell forward 18789 deep 2>/dev/null &
+sleep 2
 check_http "NemoClaw UI"     "http://localhost:${UI_PORT}"
 echo ""
 
