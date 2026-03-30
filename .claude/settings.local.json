@@ -32,7 +32,8 @@
       "WebFetch(domain:docs.vllm.ai)",
       "WebFetch(domain:qwenlm.github.io)",
       "WebFetch(domain:arxiv.org)",
-      "WebFetch(domain:ai.meta.com)"
+      "WebFetch(domain:ai.meta.com)",
+      "WebFetch(domain:medium.com)"
     ]
   }
 }

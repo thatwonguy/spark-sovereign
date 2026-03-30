@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# PHASE 9 — Telegram Bot (direct vLLM bridge, no NVIDIA relay)
+# PHASE 9 — Telegram Bot (routes through OpenClaw, no NVIDIA relay)
 # =============================================================================
 # Installs agent/telegram_bot.py as a systemd service.
 # Reads TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USER_IDS from .env.
-# Messages go: Telegram → this bot → Brain (vLLM port 8000) → Telegram
-# Voice: Telegram → ASR (8002) → Brain → TTS (8003) → Telegram
+# Messages go: Telegram → this bot → OpenClaw (port 18789) → Brain + all MCP tools
+# Voice: Telegram OGG → ffmpeg → ASR (8002) → OpenClaw → TTS (8003) → Telegram
+# OpenClaw provides: tools, memory, web search, GitHub, SOUL.md, IDENTITY.md.
 # Zero cloud relay. Your token never touches NVIDIA or any third party.
 # =============================================================================
 
@@ -30,6 +31,44 @@ fi
 echo "  Bot token: ${TELEGRAM_BOT_TOKEN:0:12}..."
 echo "  Allowed users: ${TELEGRAM_ALLOWED_USER_IDS:-all}"
 
+# ── Extract OPENCLAW_TOKEN ─────────────────────────────────────────────────────
+# Try: 1) .env already has it  2) nemoclaw credentials file  3) ask user
+if [[ -z "${OPENCLAW_TOKEN:-}" ]]; then
+    # nemoclaw stores auth in ~/.nemoclaw/credentials.json
+    CREDS_FILE="${HOME}/.nemoclaw/credentials.json"
+    if [[ -f "${CREDS_FILE}" ]]; then
+        OPENCLAW_TOKEN=$(python3 -c "
+import json
+d = json.load(open('${CREDS_FILE}'))
+# Key may be 'token', 'api_key', or nested under 'deep'
+for key in ('token','api_key','apiKey'):
+    if key in d:
+        print(d[key]); exit()
+# Try first sandbox entry
+for v in d.values():
+    if isinstance(v, dict):
+        for key in ('token','api_key','apiKey'):
+            if key in v:
+                print(v[key]); exit()
+" 2>/dev/null || true)
+    fi
+fi
+
+if [[ -z "${OPENCLAW_TOKEN:-}" ]]; then
+    echo ""
+    echo "  OPENCLAW_TOKEN not found in .env or ~/.nemoclaw/credentials.json"
+    echo "  To find your token:"
+    echo "    cat ~/.nemoclaw/credentials.json"
+    echo "  or look at the onboarding URL — it contains #token=<value>"
+    echo "  Then add to .env:  OPENCLAW_TOKEN=<value>"
+    echo ""
+    echo "  Continuing without token (OpenClaw may reject unauthenticated requests)."
+fi
+
+if [[ -n "${OPENCLAW_TOKEN:-}" ]]; then
+    echo "  OpenClaw token: ${OPENCLAW_TOKEN:0:12}..."
+fi
+
 # ── Python deps ───────────────────────────────────────────────────────────────
 echo ""
 echo ">>> Installing Python dependencies..."
@@ -45,18 +84,19 @@ sudo mkdir -p /etc/spark-sovereign
 sudo tee /etc/spark-sovereign/telegram.env > /dev/null << EOF
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:-}
-BRAIN_URL=http://localhost:8000/v1
-BRAIN_MODEL=qwen35-35b-a3b
+# OpenClaw — all AI logic (tools, memory, web search, GitHub, SOUL.md) lives here
+OPENCLAW_URL=http://localhost:18789
+OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
+OPENCLAW_MODEL=openclaw/default
+# Voice pipeline (local, no cloud)
 ASR_WS=ws://localhost:8002
 TTS_URL=http://localhost:8003/v1/audio/speech
-# Edit SYSTEM_PROMPT here to change the bot's personality
-SYSTEM_PROMPT=You are a private AI assistant running entirely on local hardware — a DGX Spark with a 35B parameter brain. You are direct, capable, and concise. You can reason, write code, analyze images, search the web, and execute tasks. You never apologize unnecessarily. When you don't know something, say so briefly and offer to find out. Keep responses focused — no filler, no disclaimers.
 EOF
 sudo chmod 600 /etc/spark-sovereign/telegram.env
 
 sudo tee /etc/systemd/system/spark-telegram.service > /dev/null << EOF
 [Unit]
-Description=spark-sovereign Telegram bot (direct vLLM bridge)
+Description=spark-sovereign Telegram bot (OpenClaw bridge)
 After=network-online.target spark-sovereign.service
 Wants=network-online.target
 
@@ -86,13 +126,19 @@ sudo systemctl status spark-telegram.service --no-pager --lines 10
 
 echo ""
 echo "========================================================"
-echo " Telegram bot running."
+echo " Telegram bot running (routing through OpenClaw)."
 echo ""
 echo " Send a message to your bot on Telegram."
+echo " OpenClaw provides: tools, memory, web search, GitHub, SOUL.md."
 echo ""
 echo " Logs:    sudo journalctl -u spark-telegram -f"
 echo " Restart: sudo systemctl restart spark-telegram"
 echo " Stop:    sudo systemctl stop spark-telegram"
+echo ""
+echo " If the bot ignores messages, check OPENCLAW_TOKEN:"
+echo "   cat ~/.nemoclaw/credentials.json"
+echo "   sudo nano /etc/spark-sovereign/telegram.env"
+echo "   sudo systemctl restart spark-telegram"
 echo "========================================================"
 echo ""
 echo "Phase 9 complete."
