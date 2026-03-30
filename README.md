@@ -379,6 +379,29 @@ All commands work from any SSH session into your Spark.
 
 All model config lives in `config/models.yml`. To swap:
 
+## Model Swap Recommendations (2026-03)
+
+**Current model is optimal** — Qwen3.5-35B-A3B-FP8 is the best choice for now.
+
+| Model | Size | Speed | Vision | Context | Recommendation |
+|-------|------|-------|--------|---------|----------------|
+| **Qwen3.5-35B-A3B** (current) | ~35GB | 50+ tok/s | ✅ Native | 262K | ✅ Keep |
+| **Nemotron 3 Omni** (upcoming) | ~35GB | ~65 tok/s | ✅ Native | 200K+ | ⏳ Wait for NVIDIA GTC 2026 release |
+| **Nemotron 3 Nano 30B** | ~15GB | ~60 tok/s | ❌ Text | 131K | ➕ Add as sub-agent (dual-model) |
+| **DeepSeek R1 32B** | ~32GB | 45-50 tok/s | ❌ Text | 128K | 🔄 Only for reasoning focus |
+
+**My recommendation:** Stay with Qwen3.5. Nemotron 3 Omni (multimodal) is coming soon and will be the true successor.
+
+**Quick swap steps:**
+1. Edit `config/models.yml` — change `hf_repo`, `local_path`, GPU util
+2. Download: `bash scripts/02_download_models.sh` (auto-prunes old model)
+3. Restart: `bash scripts/start_brain_ad_hoc.sh`
+4. Verify: `bash scripts/check_stack.sh`
+
+---
+
+All model config lives in `config/models.yml`. To swap:
+
 1. Edit `config/models.yml` — change `hf_repo`, `local_path`, GPU util, etc. Each section has a commented `SWAP EXAMPLE`.
 
 2. Download and prune:
