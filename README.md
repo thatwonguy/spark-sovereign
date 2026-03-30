@@ -340,6 +340,41 @@ Or from Telegram/Slack once tokens are set in `.env`.
 
 ---
 
+## CLI — How to Communicate with Your AI
+
+OpenClaw provides multiple CLI interfaces for direct control:
+
+```bash
+# Interactive chat interface (recommended for ongoing work)
+openclaw tui
+
+# View logs in real-time
+openclaw logs --follow
+
+# Check gateway/connection status
+openclaw gateway status
+
+# Check all channel connections (Telegram, Discord, etc.)
+openclaw channels status --deep
+
+# List all MCP servers and their status
+openclaw mcp list
+
+# Check git status in your workspace
+git diff
+```
+
+**Quick reference:**
+- `openclaw tui` — Interactive terminal chat with the brain
+- `openclaw logs` — Follow activity logs
+- `openclaw gateway status` — Gateway connectivity
+- `openclaw channels status` — Communication channels
+- `openclaw mcp list` — MCP servers and capabilities
+
+All commands work from any SSH session into your Spark.
+
+---
+
 ## Swapping a Model
 
 All model config lives in `config/models.yml`. To swap:
