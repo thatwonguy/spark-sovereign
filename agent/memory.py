@@ -40,11 +40,12 @@ def _load_config() -> dict:
 _cfg = _load_config()
 _embed_path  = _cfg["embeddings"]["local_path"]
 _embed_dims  = _cfg["embeddings"]["dimensions"]
-_nano_port   = _cfg["subagent"]["port"]
-_nano_name   = _cfg["subagent"]["served_name"]
 _pg_password = os.environ.get("POSTGRES_PASSWORD", "localonly")
 _pg_db       = os.environ.get("POSTGRES_DB", "agent_memory")
 _pg_dsn      = f"postgresql://postgres:{_pg_password}@localhost/{_pg_db}"
+_nano_config = _cfg.get("subagent", {})
+_nano_port   = _nano_config.get("port")
+_nano_name   = _nano_config.get("served_name")
 
 # ---------------------------------------------------------------------------
 # Lazy singletons
@@ -251,6 +252,10 @@ def curate_session(session_summary: str, domain: str) -> list[dict]:
     Returns:
         List of stored lesson dicts.
     """
+    # Check if Nano is available
+    if not _nano_port or not _nano_name:
+        raise ValueError("Nano subagent not configured. Auto-curation disabled.")
+    
     prompt = f"""Extract ONLY durable lessons from this session. Return a JSON array.
 Each item must have:
   "content":   string — the lesson itself (1-2 sentences, specific and actionable)
@@ -303,8 +308,17 @@ Return JSON only. No markdown fences, no explanation."""
         return stored
 
     except Exception as e:
-        log.error("curate_session failed: %s", e, exc_info=True)
-        return []
+        log.warning("Nano unavailable for auto-curation: %s", e)
+        # Fallback: store session summary as a lesson
+        log.info("Storing session summary as lesson for domain=%s", domain)
+        lesson_id = store_lesson(
+            content=session_summary[:2000],  # Trim to fit
+            outcome="decision",
+            domain=domain,
+            importance=0.7,
+            source="agent",
+        )
+        return [{"id": lesson_id, "content": session_summary[:100], "domain": domain}]
 
 
 # ---------------------------------------------------------------------------
