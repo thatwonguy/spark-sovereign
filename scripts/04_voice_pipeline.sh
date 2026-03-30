@@ -53,15 +53,21 @@ else
     git -C "${PIPECAT_DIR}" pull --ff-only 2>/dev/null || echo "    (git pull skipped — local changes or detached HEAD)"
 fi
 
-if ! docker image inspect nemotron-voice:cuda13 &>/dev/null; then
+if ! docker image inspect nemotron-voice:cuda13-base &>/dev/null; then
     cd "${PIPECAT_DIR}"
-    echo ">>> Building nemotron-voice:cuda13 (~2-3 hours on first build)..."
-    docker build -f Dockerfile.unified -t nemotron-voice:cuda13 .
-    echo "    Build complete."
+    echo ">>> Building nemotron-voice:cuda13-base (~2-3 hours on first build)..."
+    docker build -f Dockerfile.unified -t nemotron-voice:cuda13-base .
+    echo "    Base build complete."
 else
-    echo "    Image nemotron-voice:cuda13 already exists — skipping build."
-    echo "    To force rebuild: docker rmi nemotron-voice:cuda13 && bash $0"
+    echo "    Image nemotron-voice:cuda13-base already exists — skipping base build."
 fi
+
+# Always apply the NeMo patch (HindiCharsTokenizer fix) on top of the base image.
+# The pipecat Dockerfile pins NeMo to Dec 2025; HindiCharsTokenizer was added Jan 2026.
+# This build takes ~30 seconds and is idempotent (Docker layer cache).
+echo ">>> Applying NeMo patch (HindiCharsTokenizer fix)..."
+docker build -f "${REPO_ROOT}/docker/Dockerfile.tts-patch" -t nemotron-voice:cuda13 "${REPO_ROOT}"
+echo "    Patch applied."
 
 # ── Stop existing containers first (frees ports before preflight check) ───────
 echo ""

@@ -1,0 +1,12 @@
+FROM nemotron-voice:cuda13
+# Patch: the pipecat base image pins NeMo to Dec 23 2025 (commit 6442018).
+# HindiCharsTokenizer was added to NeMo on Jan 26 2026 (merged in PR #15248,
+# released in nemo-toolkit v2.7.0 on Feb 26 2026).
+# magpie_tts_multilingual_357m requires it — without this patch the TTS server
+# crashes with: 'tts_tokenizers' is not a package
+#
+# This fetches just the one updated file from NeMo main; no dep changes needed.
+RUN cd /opt/nemo && \
+    git fetch --depth=1 origin main && \
+    git checkout origin/main -- \
+        nemo/collections/common/tokenizers/text_to_speech/tts_tokenizers.py
