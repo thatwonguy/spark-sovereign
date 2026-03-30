@@ -2,8 +2,8 @@
   "_docs": "https://docs.nvidia.com/nemoclaw/latest/index.html",
   "_note": "OpenClaw config. NemoClaw wraps this. Keep close to defaults — NemoClaw onboard wizard writes ~/.nemoclaw/config.json separately. This file lives at ~/.openclaw/openclaw.json",
 
-  "_model_note": "Default is Nano (daily driver). Router switches to Brain on trigger words or image input. See agent/router.py.",
-  "model": "http://localhost:8001/v1/nemotron-nano",
+  "_model_note": "Brain is the sole model — vision, coding, agentic, reasoning at 50+ tok/s.",
+  "model": "http://localhost:8000/v1/qwen35-35b-a3b",
 
   "mcpServers": {
     "_note": "See config/mcp_servers.json for full catalog. Add/remove servers here. npm packages use npx. Python packages use uvx.",
@@ -11,7 +11,7 @@
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem",
-               "/home/user/projects"]
+               "/home/thatwonguy/projects"]
     },
 
     "github": {
@@ -25,7 +25,7 @@
     "git": {
       "command": "uvx",
       "args": ["mcp-server-git",
-               "--repository", "/home/user/projects"]
+               "--repository", "/home/thatwonguy/projects"]
     },
 
     "fetch": {
