@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Telegram bot — thin wrapper over OpenClaw API.
-Zero NVIDIA relay. Messages go: Telegram → OpenClaw (local) → Telegram.
+Telegram bot — thin wrapper over OpenClaw /v1/responses API.
+Zero NVIDIA relay. Messages go: Telegram → OpenClaw (local, port 18789) → Telegram.
 
 OpenClaw handles everything: tools, memory, web search, GitHub, SOUL.md, IDENTITY.md.
 This bot only handles:
@@ -10,6 +10,7 @@ This bot only handles:
   - Photo: base64 encode + multimodal content into OpenClaw
 
 Sessions are stable per Telegram user ID so OpenClaw maintains conversation context.
+No auth token required — OpenClaw gateway runs in loopback/no-auth mode.
 """
 
 import asyncio
@@ -32,9 +33,9 @@ ALLOWED_IDS = {
 }
 
 # OpenClaw gateway — all AI logic lives here (tools, memory, system prompt)
+# Gateway runs in loopback/no-auth mode — no token needed
 OPENCLAW_URL   = os.environ.get("OPENCLAW_URL",   "http://localhost:18789")
-OPENCLAW_TOKEN = os.environ.get("OPENCLAW_TOKEN", "")
-OPENCLAW_MODEL = os.environ.get("OPENCLAW_MODEL", "openclaw/default")
+OPENCLAW_MODEL = os.environ.get("OPENCLAW_MODEL", "openclaw")
 
 # Voice pipeline (local, no cloud)
 ASR_WS  = os.environ.get("ASR_WS",  "ws://localhost:8002")
@@ -84,24 +85,38 @@ async def download_file(session: aiohttp.ClientSession, file_id: str) -> bytes:
 
 async def call_openclaw(messages: list, user_id: int, timeout: int = 120) -> str:
     """
-    Route messages through OpenClaw — gets tools, memory, SOUL.md, all MCP servers.
+    Route messages through OpenClaw /v1/responses — gets tools, memory, SOUL.md, all MCP servers.
     user_id gives each Telegram user a stable session (OpenClaw maintains context).
+
+    messages: list of dicts, either:
+      - text:  [{"role": "user", "content": "hello"}]
+      - image: [{"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "input_image", ...}]}]
     """
-    headers = {"Content-Type": "application/json"}
-    if OPENCLAW_TOKEN:
-        headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
+    # Build the input for OpenClaw's /v1/responses API
+    # Convert from OpenAI message format to OpenResponses format
+    if len(messages) == 1 and isinstance(messages[0].get("content"), str):
+        # Simple text — can pass as plain string
+        ocl_input = messages[0]["content"]
+    else:
+        # Structured (multimodal or multi-turn) — wrap as message objects
+        ocl_input = [
+            {"type": "message", "role": m["role"], "content": m["content"]
+             if isinstance(m["content"], list)
+             else [{"type": "text", "text": m["content"]}]}
+            for m in messages
+        ]
 
     payload = {
         "model": OPENCLAW_MODEL,
-        "messages": messages,
+        "input": ocl_input,
         "stream": False,
         "user": f"tg-{user_id}",   # stable session per Telegram user
     }
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{OPENCLAW_URL}/v1/chat/completions",
-            headers=headers,
+            f"{OPENCLAW_URL}/v1/responses",
+            headers={"Content-Type": "application/json"},
             json=payload,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as r:
@@ -110,7 +125,13 @@ async def call_openclaw(messages: list, user_id: int, timeout: int = 120) -> str
                 raise RuntimeError(f"OpenClaw HTTP {r.status}: {text[:200]}")
             data = await r.json()
 
-    return data["choices"][0]["message"]["content"]
+    # Extract text from OpenResponses output format
+    for item in data.get("output", []):
+        if item.get("type") == "message":
+            for part in item.get("content", []):
+                if part.get("type") == "text":
+                    return part["text"]
+    raise RuntimeError(f"No text in OpenClaw response: {data}")
 
 
 # ── ASR ───────────────────────────────────────────────────────────────────────
@@ -212,8 +233,12 @@ async def on_photo(session: aiohttp.ClientSession, msg: dict):
         messages = [{
             "role": "user",
             "content": [
-                {"type": "text",      "text": caption},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "text", "text": caption},
+                {"type": "input_image", "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": b64,
+                }},
             ],
         }]
         reply = await call_openclaw(messages, user_id)
@@ -273,38 +298,12 @@ async def dispatch(session: aiohttp.ClientSession, update: dict):
         await on_voice(session, msg)
 
 
-# ── Port forward watchdog ─────────────────────────────────────────────────────
-
-async def ensure_port_forward():
-    """Keep openshell forward 18789 deep alive — restarts if it dies."""
-    while True:
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"{OPENCLAW_URL}/", timeout=aiohttp.ClientTimeout(total=3)) as r:
-                    if r.status < 500:
-                        await asyncio.sleep(30)
-                        continue
-        except Exception:
-            pass
-        log.info("OpenClaw port forward down — restarting...")
-        subprocess.Popen(
-            ["openshell", "forward", "18789", "deep"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        await asyncio.sleep(10)
-
-
 # ── Polling loop ──────────────────────────────────────────────────────────────
 
 async def poll():
     if not TELEGRAM_BOT_TOKEN:
         log.error("TELEGRAM_BOT_TOKEN not set")
         sys.exit(1)
-    if not OPENCLAW_TOKEN:
-        log.warning("OPENCLAW_TOKEN not set — requests may be rejected by OpenClaw")
-
-    # Start port-forward watchdog
-    asyncio.create_task(ensure_port_forward())
 
     offset = 0
     async with aiohttp.ClientSession() as session:
