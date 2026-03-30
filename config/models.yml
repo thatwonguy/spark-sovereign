@@ -29,6 +29,7 @@ brain:
   max_model_len: 262144               # 262K context
   kv_cache_dtype: fp8
   max_num_seqs: 16
+  max_num_batched_tokens: 4096        # Mamba/GDN hybrid arch: block_size=2096, must be >= block_size
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   # --- SWAP EXAMPLES ---

@@ -58,6 +58,7 @@ BRAIN_KV=$(get_field brain kv_cache_dtype)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
+BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -76,6 +77,7 @@ docker run -d --name brain \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
+        ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
