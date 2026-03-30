@@ -117,7 +117,9 @@ else
 fi
 
 # ASR/TTS: check health endpoints
-for svc_label svc_port in "ASR (8002)" "${ASR_PORT}" "TTS (8003)" "${TTS_PORT}"; do
+for svc_info in "ASR (8002):${ASR_PORT}" "TTS (8003):${TTS_PORT}"; do
+    svc_label="${svc_info%%:*}"
+    svc_port="${svc_info##*:}"
     http_code=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
         "http://localhost:${svc_port}/health" 2>/dev/null || echo "000")
     if [ "${http_code}" = "200" ]; then
