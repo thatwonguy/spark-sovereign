@@ -9,9 +9,8 @@
 #   2. curl installer         ← standard install
 #   3. nemoclaw onboard       ← interactive wizard (cannot be skipped)
 #
-# Sets up TWO sandboxes after onboarding:
-#   deep  — Brain (Qwen3-VL-32B, port 8000) — vision, reasoning, coding
-#   fast  — Nano  (Nemotron-Nano, port 8001) — quick replies, sub-agents
+# Sets up ONE sandbox:
+#   deep  — Brain (Qwen3.5-35B-A3B, port 8000) — vision, reasoning, coding, tools
 #
 # Docs: https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html
 # DGX Spark specific: https://docs.nvidia.com/nemoclaw/latest/get-started/dgx-spark.html
@@ -133,43 +132,29 @@ echo " NemoClaw ONBOARDING — interactive wizard"
 echo ""
 echo " When prompted:"
 echo "   • Quickstart vs Manual    → Quickstart"
-echo "   • Model provider          → Skip for now"
-echo "     (we use our own vLLM, not NVIDIA Endpoints)"
+echo "   • Model provider          → Other OpenAI-compatible endpoint"
+echo "     URL:   http://localhost:8000/v1"
+echo "     Model: qwen35-35b-a3b"
 echo "   • Communication channel   → Skip for now"
-echo "     (configure Telegram/Slack in .env later)"
+echo "     (configure Telegram in .env later)"
 echo "   • Hooks                   → Enable all three"
 echo "   • Sandbox name            → deep"
-echo ""
-echo " After onboarding completes, this script will set up"
-echo " the second sandbox (fast) automatically."
+echo "   • Policy presets          → n  (skip — no NVIDIA API key needed)"
 echo "========================================================"
 echo ""
 read -rp "Press Enter to start onboarding, or Ctrl+C to exit..."
 
 nemoclaw onboard
 
-# 7. Set up second (fast) sandbox pointing to Nano
-echo ""
-echo ">>> Setting up 'fast' sandbox (Nano — port 8001)..."
-nemoclaw onboard --name fast \
-    2>/dev/null \
-    || echo "    Run 'nemoclaw onboard --name fast' manually if needed."
-
-# 8. Apply channel policy presets
+# 7. Apply channel policy presets (only if tokens are configured in .env)
 echo ""
 echo ">>> Applying policy presets..."
 if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
     nemoclaw deep policy-add telegram 2>/dev/null || true
-    nemoclaw fast policy-add telegram 2>/dev/null || true
     echo "    Telegram policy applied."
 fi
-if [[ -n "${SLACK_BOT_TOKEN:-}" ]]; then
-    nemoclaw deep policy-add slack 2>/dev/null || true
-    nemoclaw fast policy-add slack 2>/dev/null || true
-    echo "    Slack policy applied."
-fi
 
-# 9. Start
+# 8. Start
 echo ""
 nemoclaw start 2>/dev/null || true
 
@@ -178,12 +163,13 @@ echo "========================================================"
 echo " NemoClaw ready."
 echo ""
 echo " Usage:"
-echo "   nemoclaw deep connect    # Brain — vision, coding, reasoning"
-echo "   nemoclaw fast connect    # Nano  — daily driver (default)"
+echo "   nemoclaw deep connect    # connect to deep sandbox"
 echo "   openclaw tui             # interactive chat inside sandbox"
 echo "   nemoclaw list            # all sandboxes"
-echo "   nemoclaw <name> logs --follow"
+echo "   nemoclaw deep logs --follow"
 echo "   openshell term           # real-time sandbox monitor"
+echo ""
+echo " To enable Telegram: add TELEGRAM_BOT_TOKEN to .env, re-run script."
 echo "========================================================"
 echo ""
 echo "Phase 7 complete. Proceed to: scripts/08_aider.sh"
