@@ -43,19 +43,24 @@ echo "  TTS: ${TTS_HF} → http://localhost:${TTS_PORT}"
 echo "  HF cache: ${HF_CACHE}"
 echo ""
 
-# ── Build image (first time only) ─────────────────────────────────────────────
+# ── Build image (clone/pull latest, then build if image missing) ──────────────
 PIPECAT_DIR="${PIPECAT_DIR:-$HOME/nemotron-voice}"
+if [ ! -d "${PIPECAT_DIR}" ]; then
+    echo ">>> Cloning pipecat voice pipeline..."
+    git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
+else
+    echo ">>> Updating pipecat voice pipeline repo..."
+    git -C "${PIPECAT_DIR}" pull --ff-only 2>/dev/null || echo "    (git pull skipped — local changes or detached HEAD)"
+fi
+
 if ! docker image inspect nemotron-voice:cuda13 &>/dev/null; then
-    if [ ! -d "${PIPECAT_DIR}" ]; then
-        echo ">>> Cloning pipecat voice pipeline..."
-        git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
-    fi
     cd "${PIPECAT_DIR}"
-    echo ">>> Building nemotron-voice:cuda13 (first time: ~2-3 hours)..."
+    echo ">>> Building nemotron-voice:cuda13 (~2-3 hours on first build)..."
     docker build -f Dockerfile.unified -t nemotron-voice:cuda13 .
     echo "    Build complete."
 else
     echo "    Image nemotron-voice:cuda13 already exists — skipping build."
+    echo "    To force rebuild: docker rmi nemotron-voice:cuda13 && bash $0"
 fi
 
 # ── Stop existing containers first (frees ports before preflight check) ───────
