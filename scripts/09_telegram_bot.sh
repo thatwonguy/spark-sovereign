@@ -30,44 +30,7 @@ fi
 
 echo "  Bot token: ${TELEGRAM_BOT_TOKEN:0:12}..."
 echo "  Allowed users: ${TELEGRAM_ALLOWED_USER_IDS:-all}"
-
-# ── Extract OPENCLAW_TOKEN ─────────────────────────────────────────────────────
-# Try: 1) .env already has it  2) nemoclaw credentials file  3) ask user
-if [[ -z "${OPENCLAW_TOKEN:-}" ]]; then
-    # nemoclaw stores auth in ~/.nemoclaw/credentials.json
-    CREDS_FILE="${HOME}/.nemoclaw/credentials.json"
-    if [[ -f "${CREDS_FILE}" ]]; then
-        OPENCLAW_TOKEN=$(python3 -c "
-import json
-d = json.load(open('${CREDS_FILE}'))
-# Key may be 'token', 'api_key', or nested under 'deep'
-for key in ('token','api_key','apiKey'):
-    if key in d:
-        print(d[key]); exit()
-# Try first sandbox entry
-for v in d.values():
-    if isinstance(v, dict):
-        for key in ('token','api_key','apiKey'):
-            if key in v:
-                print(v[key]); exit()
-" 2>/dev/null || true)
-    fi
-fi
-
-if [[ -z "${OPENCLAW_TOKEN:-}" ]]; then
-    echo ""
-    echo "  OPENCLAW_TOKEN not found in .env or ~/.nemoclaw/credentials.json"
-    echo "  To find your token:"
-    echo "    cat ~/.nemoclaw/credentials.json"
-    echo "  or look at the onboarding URL — it contains #token=<value>"
-    echo "  Then add to .env:  OPENCLAW_TOKEN=<value>"
-    echo ""
-    echo "  Continuing without token (OpenClaw may reject unauthenticated requests)."
-fi
-
-if [[ -n "${OPENCLAW_TOKEN:-}" ]]; then
-    echo "  OpenClaw token: ${OPENCLAW_TOKEN:0:12}..."
-fi
+echo "  OpenClaw gateway: http://localhost:18789 (no auth — loopback mode)"
 
 # ── Python deps ───────────────────────────────────────────────────────────────
 echo ""
@@ -85,9 +48,9 @@ sudo tee /etc/spark-sovereign/telegram.env > /dev/null << EOF
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:-}
 # OpenClaw — all AI logic (tools, memory, web search, GitHub, SOUL.md) lives here
+# Gateway runs in loopback/no-auth mode — no token needed
 OPENCLAW_URL=http://localhost:18789
-OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
-OPENCLAW_MODEL=openclaw/default
+OPENCLAW_MODEL=openclaw
 # Voice pipeline (local, no cloud)
 ASR_WS=ws://localhost:8002
 TTS_URL=http://localhost:8003/v1/audio/speech

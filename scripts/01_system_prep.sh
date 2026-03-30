@@ -16,7 +16,7 @@ echo "========================================================"
 echo " spark-sovereign — Phase 1: System Prep"
 echo "========================================================"
 
-# 1. Configure Docker cgroup (required for NemoClaw/k3s on DGX OS)
+# 1. Configure Docker cgroup (required for k3s/Docker on DGX OS)
 echo ">>> Configuring Docker cgroup..."
 sudo nvidia-ctk runtime configure --runtime=docker
 
@@ -72,7 +72,7 @@ pip install -r "${REPO_ROOT}/agent/requirements.txt" \
     --break-system-packages --quiet
 
 # 7. Install sequenced startup service — starts lightweight containers on boot,
-#    then waits for Nano to be ready before starting Brain.
+#    then waits for Brain to be ready before starting voice services + OpenClaw.
 #    Prevents simultaneous startup OOM on 128GB unified memory.
 echo ">>> Installing spark-sovereign startup service..."
 SPARK_REPO="${REPO_ROOT}"
@@ -125,9 +125,8 @@ for name in asr-server tts-server; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
-log "Starting NemoClaw gateway + sandbox forward..."
-nemoclaw start 2>/dev/null || true
-openshell forward 18789 deep 2>/dev/null &
+log "Starting OpenClaw gateway..."
+openclaw gateway start 2>/dev/null || true
 
 log "Stack is up."
 BOOT
