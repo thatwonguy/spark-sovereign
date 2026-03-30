@@ -43,16 +43,19 @@ echo "── Memory ────────────────────
 free -h | grep -E "Mem|Swap"
 echo ""
 
-# ── GPU — GB10 uses unified memory; query utilization + allocated via MiB ─────
+# ── GPU — GB10 unified memory: show per-process allocation ────────────────────
 echo "── GPU ─────────────────────────────────────────────────────"
-nvidia-smi --query-gpu=name,utilization.gpu,memory.used \
-    --format=csv,noheader,nounits 2>/dev/null \
+nvidia-smi --query-gpu=name,utilization.gpu --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F',' '{gsub(/ /,"",$2); printf "  %-28s  Utilization: %s%%\n",$1,$2}'
+echo "  Process allocations:"
+nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv,noheader,nounits 2>/dev/null \
     | awk -F',' '{
-        name=$1; util=$2; used_mib=$3;
-        gsub(/ /,"",util); gsub(/ /,"",used_mib);
-        used_gb=used_mib/1024;
-        printf "  %-28s  GPU: %s%%   Allocated: %.1f GiB\n", name, util, used_gb
-    }' || echo "  nvidia-smi not available"
+        pid=$1; mib=$2;
+        gsub(/ /,"",pid); gsub(/ /,"",mib);
+        gb=mib/1024;
+        cmd="ps -p "pid" -o comm= 2>/dev/null"; cmd | getline name; close(cmd);
+        printf "    PID %-8s %-20s %.1f GiB\n", pid, name, gb
+    }' || echo "    (none)"
 echo ""
 
 # ── Model endpoints ───────────────────────────────────────────────────────────

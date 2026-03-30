@@ -146,12 +146,19 @@ read -rp "Press Enter to start onboarding, or Ctrl+C to exit..."
 
 nemoclaw onboard
 
-# 7. Apply channel policy presets (only if tokens are configured in .env)
+# 7. Apply Telegram policy (only if token configured in .env)
+# Note: nemoclaw policy-add requires an NVIDIA cloud account API key when prompted.
+# If you don't have one, the sandbox still works — Telegram messages route through
+# NemoClaw's own connector layer, not through the sandbox network namespace.
 echo ""
 echo ">>> Applying policy presets..."
 if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-    nemoclaw deep policy-add telegram 2>/dev/null || true
-    echo "    Telegram policy applied."
+    if nemoclaw deep policy-add telegram 2>&1 | grep -qv "NVIDIA API Key"; then
+        echo "    Telegram policy applied."
+    else
+        echo "    Telegram token set in .env — NemoClaw will use it for the bot connector."
+        echo "    (Sandbox network policy requires NVIDIA API key — skipped)"
+    fi
 fi
 
 # 8. Start
