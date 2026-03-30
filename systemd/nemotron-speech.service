@@ -1,0 +1,23 @@
+[Unit]
+Description=NVIDIA Nemotron Speech Servers (ASR + TTS)
+After=network.target
+
+[Service]
+Type=simple
+User=thatwonguy
+Group=docker
+WorkingDirectory=/home/thatwonguy/spark-sovereign
+Environment=PYTHONPATH=/home/thatwonguy/spark-sovereign/src
+ExecStart=/home/thatwonguy/spark-sovereign/scripts/start-speech-servers.sh
+ExecStop=/home/thatwonguy/spark-sovereign/scripts/stop-speech-servers.sh
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/thatwonguy/spark-sovereign/logs/nemotron.log
+StandardError=append:/home/thatwonguy/spark-sovereign/logs/nemotron.log
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
