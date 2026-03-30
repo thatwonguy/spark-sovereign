@@ -1,6 +1,6 @@
 {
   "_docs": "https://docs.openclaw.ai/gateway/configuration-reference",
-  "_note": "Standalone OpenClaw config — no NemoClaw/NVIDIA required. Lives at ~/.openclaw/openclaw.json. Installed by scripts/07_openclaw.sh.",
+  "_note": "OpenClaw standalone config. Lives at ~/.openclaw/openclaw.json. Installed by scripts/07_openclaw.sh.",
 
   "gateway": {
     "port": 18789,
@@ -15,7 +15,6 @@
   },
 
   "models": {
-    "_note": "Brain: Qwen3.5-35B-A3B running via vLLM on port 8000.",
     "mode": "merge",
     "providers": {
       "local-vllm": {
@@ -63,52 +62,13 @@
     }
   },
 
-  "provider": {
-    "_note": "MCP servers — stdio transport only. npm packages via npx, Python via uvx.",
-    "mcpServers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/thatwonguy/projects"],
-        "transport": "stdio"
-      },
-
-      "github": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PAT}" },
-        "transport": "stdio"
-      },
-
-      "git": {
-        "command": "uvx",
-        "args": ["mcp-server-git", "--repository", "/home/thatwonguy/projects"],
-        "transport": "stdio"
-      },
-
-      "fetch": {
-        "command": "uvx",
-        "args": ["mcp-server-fetch"],
-        "transport": "stdio"
-      },
-
-      "postgres": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-postgres",
-                 "postgresql://postgres:localonly@localhost/agent_memory"],
-        "transport": "stdio"
-      },
-
-      "puppeteer": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
-        "transport": "stdio"
-      },
-
-      "memory": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-memory"],
-        "transport": "stdio"
-      }
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "dmPolicy": "open",
+      "groupPolicy": "allowlist",
+      "streaming": "partial"
     }
   }
 }
