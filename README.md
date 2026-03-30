@@ -319,10 +319,13 @@ bash scripts/check_stack.sh        # Verify everything is up
 
 **NemoClaw onboarding (Phase 7) is interactive:**
 - Quickstart vs Manual → **Quickstart**
-- Model provider → **Skip for now**
+- Model provider → **Other OpenAI-compatible endpoint**
+  - URL: `http://localhost:8000/v1`
+  - Model: `qwen35-35b-a3b`
 - Communication channel → **Skip for now**
 - Hooks → **Enable all three**
 - Sandbox name → **deep**
+- Policy presets → **n** (skip — no NVIDIA API key needed for local stack)
 
 ---
 
@@ -410,11 +413,42 @@ VS Code → Remote Explorer → + New Remote → ssh user@spark-XXXX.local
 
 ---
 
-## NemoClaw — Agent Runtime + Telegram/Slack
+## NemoClaw — Agent Runtime + Telegram
 
-UI at `http://localhost:18789` after `scripts/07_nemoclaw.sh`.
+UI at `http://localhost:18789` (run `openshell forward 18789 deep` first to activate port forward).
 
-Configure Telegram/Slack tokens in `.env` before running the script. Brain handles all tasks — vision, coding, reasoning, sub-agents — at 50+ tok/s.
+Brain handles all tasks — vision, coding, reasoning, sub-agents — at 50+ tok/s.
+
+### Adding Telegram (talk from your phone)
+
+1. Message **@BotFather** on Telegram → `/newbot` → choose a name and username → copy the token (`7xxxxxxxxx:AAF...`)
+2. Message **@userinfobot** on Telegram → it replies with your numeric user ID
+3. Add both to `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=7xxxxxxxxx:AAFxxxxxxx
+   TELEGRAM_ALLOWED_USER_IDS=123456789
+   ```
+4. Re-run Phase 7 to apply the policy:
+   ```bash
+   bash scripts/07_nemoclaw.sh
+   ```
+
+That's it — message your bot on Telegram and Brain responds. Send voice notes, images, text.
+
+### Re-running NemoClaw / adding more channels
+
+`scripts/07_nemoclaw.sh` is fully re-runnable. It skips installs that are already done and just updates config + policies. Run it any time you:
+- Add a new communication channel token to `.env`
+- Need to reconfigure the inference endpoint
+- Want to reset the `deep` sandbox
+
+```bash
+# Re-onboard (reconfigures sandbox from scratch)
+bash scripts/07_nemoclaw.sh
+
+# Or just apply a policy to the existing sandbox
+nemoclaw deep policy-add telegram
+```
 
 ---
 
