@@ -17,7 +17,6 @@ get_port() {
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
-import sys
 keys = '$1'.split('.')
 node = cfg
 for k in keys:
@@ -44,12 +43,16 @@ echo "── Memory ────────────────────
 free -h | grep -E "Mem|Swap"
 echo ""
 
-# ── GPU ───────────────────────────────────────────────────────────────────────
+# ── GPU — GB10 uses unified memory; query utilization + allocated via MiB ─────
 echo "── GPU ─────────────────────────────────────────────────────"
-nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu \
-    --format=csv,noheader 2>/dev/null \
-    | awk -F, '{printf "  %-30s  Total:%-8s Used:%-8s Free:%-8s  GPU:%s\n",$1,$2,$3,$4,$5}' \
-    || echo "  nvidia-smi not available"
+nvidia-smi --query-gpu=name,utilization.gpu,memory.used \
+    --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F',' '{
+        name=$1; util=$2; used_mib=$3;
+        gsub(/ /,"",util); gsub(/ /,"",used_mib);
+        used_gb=used_mib/1024;
+        printf "  %-28s  GPU: %s%%   Allocated: %.1f GiB\n", name, util, used_gb
+    }' || echo "  nvidia-smi not available"
 echo ""
 
 # ── Model endpoints ───────────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ echo "── Model Endpoints ─────────────────
 check_vllm() {
     local label="$1" port="$2"
     local result
-    result=$(curl -sf "http://localhost:${port}/v1/models" \
+    result=$(curl -sf --max-time 5 "http://localhost:${port}/v1/models" \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" \
         2>/dev/null || echo "")
     if [ -n "${result}" ]; then
@@ -69,7 +72,6 @@ check_vllm() {
 }
 
 check_vllm "Brain (8000)" "${BRAIN_PORT}"
-
 echo ""
 
 # ── Docker containers ─────────────────────────────────────────────────────────
@@ -98,21 +100,41 @@ echo ""
 # ── Services ──────────────────────────────────────────────────────────────────
 echo "── Services ────────────────────────────────────────────────"
 
-check_http() {
-    local label="$1" url="$2"
-    if curl -sf --max-time 3 "${url}" > /dev/null 2>&1; then
-        printf "  ✅ %-22s %s\n" "${label}:" "${url}"
+# SearXNG: check base reachability, then JSON format specifically
+SEARXNG_BASE=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
+    "http://localhost:${SEARXNG_PORT}/" 2>/dev/null || echo "000")
+SEARXNG_JSON=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
+    "http://localhost:${SEARXNG_PORT}/search?q=test&format=json" 2>/dev/null || echo "000")
+
+if [ "${SEARXNG_BASE}" = "200" ] && [ "${SEARXNG_JSON}" = "200" ]; then
+    printf "  ✅ %-22s http://localhost:%s  (JSON enabled)\n" "SearXNG:" "${SEARXNG_PORT}"
+elif [ "${SEARXNG_BASE}" = "200" ]; then
+    printf "  ⚠️  %-22s running but JSON format disabled (HTTP %s)\n" "SearXNG:" "${SEARXNG_JSON}"
+    echo "      Fix: add '  - json' under 'formats:' in /opt/searxng/settings.yml"
+    echo "           then: docker restart searxng"
+else
+    printf "  ❌ %-22s not responding (HTTP %s)\n" "SearXNG:" "${SEARXNG_BASE}"
+fi
+
+# ASR/TTS: check health endpoints
+for svc_label svc_port in "ASR (8002)" "${ASR_PORT}" "TTS (8003)" "${TTS_PORT}"; do
+    http_code=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" \
+        "http://localhost:${svc_port}/health" 2>/dev/null || echo "000")
+    if [ "${http_code}" = "200" ]; then
+        printf "  ✅ %-22s http://localhost:%s/health\n" "${svc_label}:" "${svc_port}"
     else
-        printf "  ❌ %-22s %s\n" "${label}:" "${url}"
+        printf "  ❌ %-22s not responding (HTTP %s)\n" "${svc_label}:" "${svc_port}"
     fi
-}
+done
 
-check_http "SearXNG"         "http://localhost:${SEARXNG_PORT}/search?q=test&format=json"
-
-# Ensure NemoClaw port forward is running before checking
-openshell forward 18789 deep 2>/dev/null &
-sleep 2
-check_http "NemoClaw UI"     "http://localhost:${UI_PORT}"
+# NemoClaw: check sandbox status via CLI (not port forward)
+NEMOCLAW_STATUS=$(nemoclaw list 2>/dev/null | grep -E "deep" | head -1 || echo "")
+if [ -n "${NEMOCLAW_STATUS}" ]; then
+    printf "  ✅ %-22s %s\n" "NemoClaw (deep):" "${NEMOCLAW_STATUS}"
+    printf "     UI: openshell forward 18789 deep && open http://localhost:18789\n"
+else
+    printf "  ❌ %-22s sandbox not found — run scripts/07_nemoclaw.sh\n" "NemoClaw (deep):"
+fi
 echo ""
 
 # ── pgvector memory stats ─────────────────────────────────────────────────────
@@ -122,9 +144,7 @@ if docker inspect pgvector &>/dev/null 2>&1 && \
     docker exec pgvector psql -U postgres -d "${POSTGRES_DB}" -t -q 2>/dev/null << 'SQL'
 SELECT '  Lessons total:          ' || COUNT(*) FROM lessons;
 SELECT '  Lessons (success):      ' || COUNT(*) FROM lessons WHERE outcome='success';
-SELECT '  Lessons (failure):      ' || COUNT(*) FROM lessons WHERE outcome='failure';
-SELECT '  Web cache total:        ' || COUNT(*) FROM rag_cache;
-SELECT '  Web cache (verified):   ' || COUNT(*) FROM rag_cache WHERE verified=TRUE;
+SELECT '  Web cache entries:      ' || COUNT(*) FROM rag_cache;
 SQL
 else
     echo "  pgvector container not running"
@@ -138,11 +158,8 @@ if [ -f "${LOG_FILE}" ]; then
     echo "  ${LOG_FILE} (${SIZE})"
     echo "  Last 5 lines:"
     tail -5 "${LOG_FILE}" | sed 's/^/    /'
-    echo "  Full log: tail -f ${LOG_FILE}"
-    echo "  Debug:    LOG_LEVEL=DEBUG python3 agent/router.py"
 else
-    echo "  No log file yet — written on first agent/router.py or memory.py call"
-    echo "  Expected: ${LOG_FILE}"
+    echo "  No log file yet (written on first agent call)"
 fi
 echo ""
 
