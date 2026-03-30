@@ -37,13 +37,16 @@ ASR_WS      = os.environ.get("ASR_WS",      "ws://localhost:8002")
 TTS_URL     = os.environ.get("TTS_URL",     "http://localhost:8003/v1/audio/speech")
 TTS_VOICE   = os.environ.get("TTS_VOICE",   "alloy")
 
-SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", (
-    "You are a private AI assistant running entirely on local hardware — "
-    "a DGX Spark with a 35B parameter brain. You are direct, capable, and concise. "
-    "You can reason, write code, analyze images, search the web, and execute tasks. "
-    "You never apologize unnecessarily. When you don't know something, say so briefly "
-    "and offer to find out. Keep responses focused — no filler, no disclaimers."
+_SYSTEM_PROMPT_TEMPLATE = os.environ.get("SYSTEM_PROMPT", (
+    "Your name is {{BOT_NAME}}. You are a private AI assistant running entirely on "
+    "local hardware — a DGX Spark with a 35B parameter brain. You are direct, capable, "
+    "and concise. You can reason, write code, analyze images, search the web, and "
+    "execute tasks. You never apologize unnecessarily. When you don't know something, "
+    "say so briefly and offer to find out. Keep responses focused — no filler, no disclaimers."
 ))
+
+# Filled in at startup once we call getMe
+SYSTEM_PROMPT: str = _SYSTEM_PROMPT_TEMPLATE
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
@@ -293,12 +296,15 @@ async def poll():
     log.info(f"Bot starting. Allowed users: {ALLOWED_IDS or 'all'}")
 
     async with aiohttp.ClientSession() as session:
-        # Confirm token works
+        # Confirm token works and resolve bot name for system prompt
         me = await tg(session, "getMe")
         if not me.get("ok"):
             log.error(f"Bad token: {me}")
             sys.exit(1)
-        log.info(f"Logged in as @{me['result']['username']}")
+        bot_name = me["result"].get("first_name") or me["result"].get("username", "Assistant")
+        global SYSTEM_PROMPT
+        SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.replace("{{BOT_NAME}}", bot_name)
+        log.info(f"Logged in as @{me['result']['username']} (name: {bot_name})")
 
         while True:
             try:

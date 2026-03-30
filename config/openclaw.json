@@ -5,6 +5,28 @@
   "_model_note": "Brain is the sole model — vision, coding, agentic, reasoning at 50+ tok/s.",
   "model": "http://localhost:8000/v1/qwen35-35b-a3b",
 
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "name": "Omar Agent",
+        "workspace": "~/.openclaw/workspace",
+        "identity": {
+          "name": "Omar Agent",
+          "emoji": "🤖",
+          "theme": "private local AI on DGX Spark"
+        }
+      }
+    ]
+  },
+
+  "ui": {
+    "assistant": {
+      "name": "Omar Agent",
+      "avatar": "🤖"
+    }
+  },
+
   "mcpServers": {
     "_note": "See config/mcp_servers.json for full catalog. Add/remove servers here. npm packages use npx. Python packages use uvx.",
 
