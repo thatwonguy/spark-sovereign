@@ -549,3 +549,34 @@ Common fixes:
 - Swap model → edit `config/models.yml`, re-run `02_download_models.sh` + `start_brain_ad_hoc.sh`
 - pgvector errors → `docker logs pgvector --tail 30`
 - Restart Brain → `bash scripts/start_brain_ad_hoc.sh`
+
+---
+
+## Minimal Setup (After Testing)
+
+**After several days of testing OpenClaw with the full stack, the findings:**
+
+The system is over-engineered. After testing voice I/O, pgvector, and web search RAG extensively:
+
+**Conclusion:** **OpenClaw handles all capabilities with just the vLLM brain container.**
+
+The following containers are **NOT needed** for core functionality:
+- `asr-server` (port 8002) - Voice transcription: Text input works fine
+- `tts-server` (port 8003) - Voice synthesis: Text output is sufficient
+- `pgvector` (port 5432) - Memory database: OpenClaw file-based memory works
+- `searxng` (port 8088) - Web search: `web_fetch` tool accesses URLs directly
+- `openshell-cluster-nemoclaw` - GPU orchestration: Not needed for local setup
+
+**What you need:**
+- **Only the brain container (vLLM at port 8000)** - serves the model
+- Everything else is OpenClaw native capability
+
+**Benefits of minimal setup:**
+- Simpler to manage
+- Less to monitor
+- Faster boot time
+- Same core functionality (code, vision, agentic, chat)
+
+**Model focus:** Keep the brain running with whatever model gives best performance/speed tradeoff (Qwen3.5-35B-A3B is currently optimal).
+
+**This is the recommended setup for new deployments.**
