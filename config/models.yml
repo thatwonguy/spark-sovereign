@@ -32,6 +32,7 @@ brain:
   max_num_batched_tokens: 8192        # Double batch size for improved inference efficiency
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
+  limit_mm_per_prompt: "image=10"       # multimodal: allow up to 10 images per request
   # --- SWAP EXAMPLES ---
   # name: qwen3-vl-32b
   # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
