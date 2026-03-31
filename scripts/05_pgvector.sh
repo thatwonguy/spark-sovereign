@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. OpenClaw's onboard setup handles
+# memory and RAG — no separate pgvector instance needed.
 # =============================================================================
 # PHASE 5 — pgvector + RAG Memory DB
 # =============================================================================
