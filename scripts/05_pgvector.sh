@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# NOTE: This script is not necessary. OpenClaw's onboard setup handles
-# memory and RAG — no separate pgvector instance needed.
 # =============================================================================
-# PHASE 5 — pgvector + RAG Memory DB
+# PHASE 5 — pgvector + RAG Memory DB  [OPTIONAL]
+# =============================================================================
+# Not required for core functionality. OpenClaw's built-in memory handles
+# sessions and recall out of the box.
+#
+# Run this only if you want a persistent self-hosted pgvector database for
+# long-term semantic memory across all sessions (recommended for power users).
 # =============================================================================
 # Starts pgvector/pgvector:pg17 (pgvector 0.8.2 on PostgreSQL 17).
 # Applies schema from config/pgvector/init.sql.
