@@ -46,27 +46,19 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 
 ## Voice Setup (Optional)
 
-**STT (Speech-to-Text):**
-- **Local:** Run `bash scripts/04_voice_stt.sh` to download whisper-small (~450MB, ~96% accuracy)
-- **Cloud:** OpenAI, Deepgram, or Groq (requires API key)
+**STT (Speech-to-Text) - Local & Private:**
+- **Run:** `bash scripts/04_voice_stt.sh` to download whisper-small (~450MB, ~96% accuracy)
+- **How it works:** Whisper CLI transcribes voice notes locally on GPU before sending to model
 - **Config:** `tools.media.audio` in `~/.openclaw/openclaw.json`
+- **Privacy:** 100% local, no cloud APIs, no data leaves your machine
 
-**TTS (Text-to-Speech):**
-- **Provider-based only:** ElevenLabs (recommended), Microsoft Azure, or OpenAI
-- **No custom endpoints:** OpenClaw doesn't support local TTS servers without forking
-- **Config:** `messages.tts` in `~/.openclaw/openclaw.json`
-
-**Talk Mode:**
-- Continuous voice conversation (macOS menu bar, Android/iOS overlay)
-- Requires ElevenLabs API key
-- **Config:** `talk` in `~/.openclaw/openclaw.json`
-
-**Privacy tradeoff:** STT can be 100% local, but TTS requires cloud provider (ElevenLabs/Microsoft/OpenAI). For 100% local TTS, you'd need to fork OpenClaw and add a custom provider.
+**What you can do:**
+- Send voice notes in Telegram → auto-transcribed → model responds with text
+- Works in TUI, Telegram, and all OpenClaw channels
+- GPU-accelerated (~2GB VRAM, ~7s for 8-second audio)
 
 **Docs:**
 - https://docs.openclaw.ai/nodes/audio
-- https://docs.openclaw.ai/nodes/talk
-- https://docs.openclaw.ai/tools/tts
 
 ---
 
