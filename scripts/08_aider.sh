@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. OpenClaw's TUI includes a built-in CLI,
+# so a separate Aider installation is not needed.
 # =============================================================================
 # PHASE 8 — Aider CLI Coding Setup
 # =============================================================================

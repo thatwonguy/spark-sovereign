@@ -210,21 +210,18 @@ Native multimodal MoE: 35B total parameters, 3B active per token. Official FP8 f
 ```
 spark-sovereign/
 ├── config/
-│   ├── models.yml          ← SINGLE SOURCE OF TRUTH for all models
-│   ├── openclaw.json       ← NemoClaw agent config
-│   ├── aider.conf.yml      ← Aider CLI config
-│   └── pgvector/
-│       └── init.sql        ← pgvector schema (lessons + rag_cache)
+│   └── models.yml          ← SINGLE SOURCE OF TRUTH for all models
 ├── scripts/
 │   ├── 00_first_boot.sh       ← WiFi setup + NVIDIA Sync + Tailscale
 │   ├── 01_system_prep.sh      ← Docker cgroup, directories, Python deps, boot service
 │   ├── 02_download_models.sh  ← Download all HF models, prune unused
 │   ├── 03_vllm_servers.sh     ← Start Brain (8000)
-│   ├── 04_voice_pipeline.sh   ← Start ASR (8002) + TTS (8003)
-│   ├── 05_pgvector.sh         ← Start pgvector + apply schema
-│   ├── 06_searxng.sh          ← Start SearXNG web search
-│   ├── 07_nemoclaw.sh         ← Install + start NemoClaw agent runtime
-│   ├── 08_aider.sh            ← Install aider config
+│   ├── 04_voice_pipeline.sh   ← NOT NEEDED (OpenClaw onboard handles voice)
+│   ├── 05_pgvector.sh         ← NOT NEEDED (OpenClaw onboard handles memory/RAG)
+│   ├── 06_searxng.sh          ← NOT NEEDED (OpenClaw onboard handles web search)
+│   ├── 07_nemoclaw.sh         ← NOT NEEDED (OpenClaw onboard wizard handles setup)
+│   ├── 08_aider.sh            ← NOT NEEDED (OpenClaw TUI replaces Aider)
+│   ├── 09_telegram_bot.sh     ← NOT NEEDED (OpenClaw onboard handles Telegram)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain (stops GPU consumers first)
 │   └── check_stack.sh         ← Health check for all services
 ├── agent/
@@ -300,32 +297,18 @@ cp .env.example .env
 nano .env   # set HF_TOKEN at minimum
 ```
 
-**Run phases in order** — each script is idempotent, safe to re-run:
+**Run these four scripts in order** — each is idempotent, safe to re-run:
 
 ```bash
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, boot service
-bash scripts/02_download_models.sh # ~37GB download — prunes unused models automatically
-bash scripts/03_vllm_servers.sh    # Brain (8000) — waits until ready
-bash scripts/04_voice_pipeline.sh  # ASR (8002) + TTS (8003) — first run builds image (~2-3hrs)
-bash scripts/05_pgvector.sh        # Vector DB + schema
-bash scripts/06_searxng.sh         # Local web search
-bash scripts/07_nemoclaw.sh        # NemoClaw — interactive onboarding wizard
-bash scripts/08_aider.sh           # Aider CLI config
-bash scripts/check_stack.sh        # Verify everything is up
+bash scripts/02_download_models.sh # Downloads model from HF → /opt/models (prunes unused)
+bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 
-> **Script 02 automatically prunes old models.** If you previously downloaded Qwen3-VL-32B or Nemotron-Nano, they will be deleted from `/opt/models` before the new model is downloaded. Disk space is freed automatically.
+That's it. Open OpenClaw and run its onboard setup wizard — point it at `http://localhost:8000/v1`. OpenClaw handles voice, memory, RAG, web search, Telegram, and all agent configuration from there.
 
-**NemoClaw onboarding (Phase 7) is interactive:**
-- Quickstart vs Manual → **Quickstart**
-- Model provider → **Other OpenAI-compatible endpoint**
-  - URL: `http://localhost:8000/v1`
-  - Model: `qwen35-35b-a3b`
-- Communication channel → **Skip for now**
-- Hooks → **Enable all three**
-- Sandbox name → **deep**
-- Policy presets → **n** (skip — no NVIDIA API key needed for local stack)
+> **Script 02 automatically prunes old models.** Any previously downloaded model not in `config/models.yml` will be deleted from `/opt/models` before the new one downloads. Disk space is freed automatically.
 
 ---
 
