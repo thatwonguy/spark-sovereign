@@ -101,11 +101,10 @@ echo ""
 echo "All models downloaded."
 echo ""
 echo "Disk usage summary:"
-du -sh "$(get_model_field brain local_path)" \
-       "$(get_model_field subagent local_path)" \
-       "$(get_model_field asr local_path)" \
-       "$(get_model_field tts local_path)" \
-       "$(get_model_field embeddings local_path)" 2>/dev/null || true
+for key in brain asr tts embeddings; do
+    path=$(get_model_field "${key}" local_path)
+    [ -n "${path}" ] && [ -d "${path}" ] && du -sh "${path}" 2>/dev/null || true
+done
 
 echo ""
 echo "Phase 2 complete. Proceed to: scripts/03_vllm_servers.sh"

@@ -1,121 +1,119 @@
 # Troubleshooting
 
-## Models fail to load — OOM / CUDA out of memory
+Quick reference for the spark-sovereign stack. Only Brain (port 8000) runs as a
+managed container — everything else is handled by OpenClaw.
 
-Check actual GPU memory first:
+---
+
+## Brain won't start / container exits immediately
+
+```bash
+docker logs brain --tail 50
+```
+
+Common causes:
+
+**Model download incomplete:**
+```bash
+bash scripts/02_download_models.sh   # re-downloads and verifies
+```
+
+**OOM — not enough GPU memory:**
+Reduce `gpu_memory_utilization` in `config/models.yml`, then restart:
+```bash
+bash scripts/start_brain_ad_hoc.sh
+```
+
+**Wrong max_model_len:**
+Reduce `max_model_len` in `config/models.yml` and restart Brain.
+
+**Stale container from previous run:**
+```bash
+docker rm -f brain
+bash scripts/start_brain_ad_hoc.sh
+```
+
+---
+
+## Brain is running but not responding on port 8000
+
+Model is still loading — it takes 3–5 minutes after container start to load
+~27GB of weights into memory. Check progress:
+```bash
+docker logs brain -f
+```
+Wait until you see `Application startup complete` or `Uvicorn running`.
+
+---
+
+## OOM during model load
+
+Check what's holding GPU memory:
 ```bash
 nvidia-smi
 ```
 
-The combined allocation is ~109GB of 128GB. If other processes are consuming GPU memory:
+Kill stray processes and free page cache, then restart:
 ```bash
-# Find and kill stray processes holding GPU memory
 sudo fuser -k /dev/nvidia*
 sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-# Then restart the affected container
-docker restart qwen-brain
+bash scripts/start_brain_ad_hoc.sh
 ```
-
-If you added another service that uses GPU memory, reduce `gpu_memory_utilization` in `config/models.yml` and re-run `scripts/03_vllm_servers.sh`.
 
 ---
 
-## vLLM container crashes immediately
+## Auto-start not working after reboot
 
-Check logs:
+Check the systemd service installed by `01_system_prep.sh`:
 ```bash
-docker logs qwen-brain --tail 50
-docker logs nemotron-nano --tail 50
+systemctl status spark-sovereign
+journalctl -u spark-sovereign -f
 ```
 
-Common causes:
-- **NVFP4 kernel not supported**: ensure you're using `avarok/dgx-vllm-nvfp4-kernel:v23` for the brain (not the standard vllm image)
-- **Wrong max_model_len**: reduce `max_model_len` in `config/models.yml`
-- **Model download incomplete**: re-run `scripts/02_download_models.sh`
-
----
-
-## pgvector schema errors on re-run
-
-The init.sql uses `IF NOT EXISTS` everywhere — safe to re-run. If you changed the embedding dimensions (e.g., switched to NV-Embed-v2 at 4096-dim), you must recreate the tables:
+If the service isn't found, re-run:
 ```bash
-docker exec pgvector psql -U postgres -d agent_memory -c "DROP TABLE rag_cache, lessons;"
-bash scripts/05_pgvector.sh
+bash scripts/01_system_prep.sh
 ```
 
 ---
 
-## SearXNG returns no results
+## Swapping the model
 
+1. Edit `config/models.yml` — update `hf_repo`, `name`, `local_path`, `served_name`, `gpu_memory_utilization`
+2. Download new model (auto-prunes old):
+   ```bash
+   bash scripts/02_download_models.sh
+   ```
+3. Restart Brain:
+   ```bash
+   bash scripts/start_brain_ad_hoc.sh
+   ```
+4. In OpenClaw — update the model ID to match the new `served_name`
+5. Verify:
+   ```bash
+   bash scripts/check_stack.sh
+   ```
+
+---
+
+## OpenClaw not connecting to Brain
+
+Verify Brain is up and returning models:
 ```bash
-# Check container status
-docker logs searxng --tail 30
-
-# Test directly
-curl "http://localhost:8080/search?q=nvidia+spark&format=json" | python3 -m json.tool | head -30
+curl http://localhost:8000/v1/models
 ```
 
-If the secret key was regenerated, SearXNG needs a restart. Set `SEARXNG_SECRET_KEY` in `.env` to a fixed value to make it stable across restarts.
+If Brain is up, check OpenClaw's configured endpoint matches:
+- Base URL: `http://localhost:8000/v1`
+- Model ID: matches `served_name` in `config/models.yml`
 
 ---
 
-## Swapping a model
-
-1. Edit `config/models.yml` — change `hf_repo`, `local_path`, `docker_image`, etc.
-2. Download: `bash scripts/02_download_models.sh`
-3. Restart the affected server:
-   - Brain: `bash scripts/03_vllm_servers.sh` (or just `docker restart qwen-brain`)
-   - Sub-agent: same script or `docker restart nemotron-nano`
-4. Update `config/openclaw.json` model names if using NemoClaw
-5. Update `config/aider.conf.yml` model names if using Aider
-6. Run health check: `bash scripts/check_stack.sh`
-
----
-
-## Embedding dimension mismatch after swapping embed model
-
-If you switch from nomic-embed (384-dim) to NV-Embed-v2 (4096-dim):
-1. Update `dimensions: 4096` in `config/models.yml` under `embeddings`
-2. Update the `VECTOR(384)` column definitions in `config/pgvector/init.sql` to `VECTOR(4096)`
-3. Drop and recreate the tables (all stored memories will be lost — re-embed if needed)
-4. Re-run `scripts/05_pgvector.sh`
-
----
-
-## NemoClaw won't start
+## Health check
 
 ```bash
-# Check Node.js
-node --version     # needs >= 18
-
-# Check config
-cat ~/.openclaw/openclaw.json | python3 -m json.tool
-
-# Restart
-nemoclaw restart
-# or
-nemoclaw stop && nemoclaw start
+bash scripts/check_stack.sh
 ```
 
----
-
-## Voice pipeline not streaming
-
-ASR/TTS use WebSocket, not HTTP. Test with:
-```bash
-# Check container
-docker logs voice-pipeline --tail 30
-
-# The models take a few minutes to warm up after container start
-# Re-check 2-3 minutes after starting
-```
-
----
-
-## Aider uses wrong endpoint
-
-Aider reads `~/.aider.conf.yml`. Verify:
-```bash
-cat ~/.aider.conf.yml
-```
-`openai-api-base` must match the Brain port (default 8000). `openai-api-key` must be `EMPTY` (not blank — the literal string EMPTY).
+Shows Brain endpoint status, container uptime, GPU utilization, and OpenClaw
+gateway status.
