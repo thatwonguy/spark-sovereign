@@ -44,7 +44,7 @@ echo "  HF cache: ${HF_CACHE}"
 echo ""
 
 # ── Build image (clone/pull latest, then build if image missing) ──────────────
-PIPECAT_DIR="${PIPECAT_DIR:-$HOME/nemotron-voice}"
+PIPECAT_DIR="${PIPECAT_DIR:-${REPO_ROOT}/nemotron-voice}"
 if [ ! -d "${PIPECAT_DIR}" ]; then
     echo ">>> Cloning pipecat voice pipeline..."
     git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
