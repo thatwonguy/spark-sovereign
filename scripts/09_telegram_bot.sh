@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. Telegram integration is handled by
+# OpenClaw's onboard channels setup — no separate bot service needed.
 # =============================================================================
 # PHASE 9 — Telegram Bot (routes through OpenClaw, no NVIDIA relay)
 # =============================================================================

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. OpenClaw's onboard setup handles
+# voice (ASR/TTS) — no separate pipeline needed.
 # =============================================================================
 # PHASE 4 — Voice Pipeline (ASR port 8002, TTS port 8003)
 # =============================================================================
