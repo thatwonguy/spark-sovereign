@@ -18,7 +18,7 @@ keys = '$1'.split('.')
 node = cfg
 for k in keys:
     node = node.get(k, {})
-print(node if isinstance(node, (str, int)) else '')
+print(node if isinstance(node, (str, int, float)) else '')
 " 2>/dev/null || echo ""
 }
 
