@@ -71,4 +71,43 @@ This would give the best of both worlds: OpenClaw's native capabilities + a priv
 
 ---
 
-*Last updated: March 2026*
+## 7. Voice Setup — STT Only (Local & Private)
+
+**What we learned:** OpenClaw's audio transcription happens at the OpenClaw layer, NOT the model layer. This is model-agnostic by design.
+
+**STT (Speech-to-Text):**
+- **100% local** using Whisper CLI (CLI-based transcription)
+- Configured via `tools.media.audio` in `~/.openclaw/openclaw.json`
+- Auto-detects installed CLIs (whisper, whisper-cli, sherpa-onnx)
+- Falls back to cloud providers (OpenAI, Deepgram, Groq) if no local CLI found
+
+**How it works:**
+1. User sends voice note (Telegram, TUI, etc.)
+2. OpenClaw detects audio file
+3. Whisper CLI transcribes locally on GPU
+4. Transcript replaces message body
+5. Model sees text and responds normally
+6. Echo shows: `🎤 "transcribed text"`
+
+**Privacy:**
+- ✅ Fully local — no cloud APIs
+- ✅ GPU-accelerated on local hardware
+- ✅ No data leaves the machine
+- ✅ whisper-small model (~450MB, ~96% accuracy, ~2GB VRAM)
+
+**What this means for users:**
+- Voice notes in Telegram auto-transcribe locally
+- Model responds with text (no TTS unless configured separately)
+- Works across all OpenClaw channels (Telegram, TUI, etc.)
+
+**Setup:**
+```bash
+bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
+```
+
+**Docs:**
+- https://docs.openclaw.ai/nodes/audio
+
+---
+
+*Last updated: March 31, 2026*

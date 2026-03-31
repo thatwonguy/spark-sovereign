@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# NOTE: This script is not necessary. OpenClaw's onboard setup handles
-# voice (ASR/TTS) — no separate pipeline needed.
 # =============================================================================
-# PHASE 4 — Voice Pipeline (ASR port 8002, TTS port 8003)
+# PHASE 4 — Voice Pipeline (STT)
 # =============================================================================
-# Runs TWO separate containers from the same nemotron-voice:cuda13 image:
+# Installs the Whisper CLI and pre-caches the model.
+# OpenClaw configuration is handled by the AI agent — see instructions below.
 #
-#   asr-server  — nemotron_speech.server     (aiohttp WebSocket)
-#   tts-server  — nemotron_speech.tts_server (FastAPI HTTP + WebSocket)
-#
-# There is no nemotron.sh inside the image. The entry points are the two
-# Python modules above. Models are loaded from HuggingFace on first run
-# and cached to ~/.cache/huggingface (mounted into both containers).
+# Idempotent — safe to re-run.
 # =============================================================================
 
 set -euo pipefail
@@ -19,137 +13,85 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/.env" 2>/dev/null || true
 
-MODELS_DIR="${MODELS_DIR:-/opt/models}"
-HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
-mkdir -p "${HF_CACHE}"
+WHISPER_MODEL="${WHISPER_MODEL:-small}"
+WHISPER_CACHE="${HOME}/.cache/whisper"
 
-get_field() {
-    python3 -c "
+echo "========================================================"
+echo " spark-sovereign — Phase 4: Voice Pipeline (STT)"
+echo "========================================================"
+echo ""
+
+# 1. Install openai-whisper CLI
+echo ">>> Installing Whisper CLI..."
+if command -v whisper &>/dev/null; then
+    echo "    Already installed: $(command -v whisper)"
+else
+    pip install openai-whisper --break-system-packages --quiet
+    echo "    Installed: $(command -v whisper)"
+fi
+
+# 2. Pre-cache the model
+# openai-whisper downloads .pt files to ~/.cache/whisper/ on first use.
+# Trigger it here so the agent's first transcription isn't slow.
+echo ">>> Pre-caching Whisper model (${WHISPER_MODEL})..."
+mkdir -p "${WHISPER_CACHE}"
+if [ -f "${WHISPER_CACHE}/${WHISPER_MODEL}.pt" ]; then
+    echo "    Already cached: ${WHISPER_CACHE}/${WHISPER_MODEL}.pt"
+else
+    echo "    Downloading (~450MB for small, one-time)..."
+    python3 -c "import whisper; whisper.load_model('${WHISPER_MODEL}')"
+    echo "    Cached: ${WHISPER_CACHE}/${WHISPER_MODEL}.pt"
+fi
+
+WHISPER_BIN="$(command -v whisper)"
+BRAIN_NAME=$(python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
-print(cfg.get('$1', {}).get('$2', ''))
-"
-}
+print(cfg.get('brain', {}).get('served_name', 'unknown'))
+" 2>/dev/null || echo "unknown")
+BRAIN_CTX=$(python3 -c "
+import yaml
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get('brain', {}).get('max_model_len', 262144))
+" 2>/dev/null || echo "262144")
 
-ASR_HF=$(get_field asr hf_repo)
-TTS_HF=$(get_field tts hf_repo)
-ASR_PORT=$(get_field asr port)
-TTS_PORT=$(get_field tts port)
-
+echo ""
 echo "========================================================"
-echo " spark-sovereign — Phase 4: Voice Pipeline"
+echo " Phase 4 complete."
+echo ""
+echo " Whisper is installed. Now ask your AI agent to finish"
+echo " the setup...FYI if your AI brain you selected
+echo " can't fix itself at this point, you messed up buddy! Pick a smarter model!
+echo " Open OpenClaw TUI and send this prompt:"
+echo ""
+echo "────────────────────────────────────────────────────────"
+cat <<PROMPT
+Configure my OpenClaw setup for voice and performance:
+
+1. Enable STT in ~/.openclaw/openclaw.json:
+   tools.media.audio.enabled = true
+   tools.media.audio.echoTranscript = true
+   tools.media.audio.models = [{
+     "type": "cli",
+     "command": "${WHISPER_BIN}",
+     "args": ["--model", "${WHISPER_MODEL}", "--device", "cuda", "{{MediaPath}}"],
+     "timeoutSeconds": 45
+   }]
+
+2. Fix context window (currently set to 128000, should be ${BRAIN_CTX}):
+   agents.defaults.models.vllm/${BRAIN_NAME}.contextWindow = ${BRAIN_CTX}
+
+3. Reduce response latency — we need speed for end user
+
+4. Telegram group policy - ask user about this and what they want
+
+After making changes, run: openclaw gateway restart
+Then confirm with: openclaw doctor
+PROMPT
+echo "────────────────────────────────────────────────────────"
+echo ""
+echo " Or start the TUI now:"
+echo "   openclaw tui"
 echo "========================================================"
-echo "  ASR: ${ASR_HF} → ws://localhost:${ASR_PORT}"
-echo "  TTS: ${TTS_HF} → http://localhost:${TTS_PORT}"
-echo "  HF cache: ${HF_CACHE}"
-echo ""
-
-# ── Build image (clone/pull latest, then build if image missing) ──────────────
-PIPECAT_DIR="${PIPECAT_DIR:-${REPO_ROOT}/nemotron-voice}"
-if [ ! -d "${PIPECAT_DIR}" ]; then
-    echo ">>> Cloning pipecat voice pipeline..."
-    git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
-else
-    echo ">>> Updating pipecat voice pipeline repo..."
-    git -C "${PIPECAT_DIR}" pull --ff-only 2>/dev/null || echo "    (git pull skipped — local changes or detached HEAD)"
-fi
-
-if ! docker image inspect nemotron-voice:cuda13-base &>/dev/null; then
-    cd "${PIPECAT_DIR}"
-    echo ">>> Building nemotron-voice:cuda13-base (~2-3 hours on first build)..."
-    docker build -f Dockerfile.unified -t nemotron-voice:cuda13-base .
-    echo "    Base build complete."
-else
-    echo "    Image nemotron-voice:cuda13-base already exists — skipping base build."
-fi
-
-# Always apply the NeMo patch (HindiCharsTokenizer fix) on top of the base image.
-# The pipecat Dockerfile pins NeMo to Dec 2025; HindiCharsTokenizer was added Jan 2026.
-# This build takes ~30 seconds and is idempotent (Docker layer cache).
-echo ">>> Applying NeMo patch (HindiCharsTokenizer fix)..."
-docker build -f "${REPO_ROOT}/docker/Dockerfile.tts-patch" -t nemotron-voice:cuda13 "${REPO_ROOT}"
-echo "    Patch applied."
-
-# ── Stop existing containers first (frees ports before preflight check) ───────
-echo ""
-echo ">>> Stopping existing voice containers (if any)..."
-docker rm -f asr-server  2>/dev/null || true
-docker rm -f tts-server  2>/dev/null || true
-docker rm -f voice-pipeline 2>/dev/null || true   # legacy name
-
-# ── Preflight: ports must be free from other processes ────────────────────────
-for port in "${ASR_PORT}" "${TTS_PORT}"; do
-    if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
-        echo "ERROR: port ${port} is still in use by another process"
-        echo "Run: ss -ltnp | grep :${port}"
-        exit 1
-    fi
-done
-
-# ── Common docker flags ────────────────────────────────────────────────────────
-COMMON_FLAGS=(
-    --gpus all
-    --ipc host
-    --network host
-    --restart no
-    -v "${MODELS_DIR}:/models"
-    -v "${HF_CACHE}:/root/.cache/huggingface"
-    -e HF_TOKEN="${HF_TOKEN:-}"
-    -e HUGGING_FACE_HUB_TOKEN="${HF_TOKEN:-}"
-)
-
-# ── Start ASR server ───────────────────────────────────────────────────────────
-echo ""
-echo ">>> Starting ASR server (port ${ASR_PORT})..."
-docker run -d --name asr-server \
-    "${COMMON_FLAGS[@]}" \
-    nemotron-voice:cuda13 \
-    python -m nemotron_speech.server \
-        --host 0.0.0.0 \
-        --port "${ASR_PORT}" \
-        --model "${ASR_HF}"
-
-echo "    asr-server started"
-echo "    WebSocket:    ws://localhost:${ASR_PORT}"
-echo "    Health check: http://localhost:${ASR_PORT}/health"
-
-# ── Start TTS server ───────────────────────────────────────────────────────────
-echo ""
-echo ">>> Starting TTS server (port ${TTS_PORT})..."
-docker run -d --name tts-server \
-    "${COMMON_FLAGS[@]}" \
-    nemotron-voice:cuda13 \
-    python -m nemotron_speech.tts_server \
-        --host 0.0.0.0 \
-        --port "${TTS_PORT}" \
-        --model "${TTS_HF}"
-
-echo "    tts-server started"
-echo "    HTTP:         http://localhost:${TTS_PORT}/v1/audio/speech"
-echo "    WebSocket:    ws://localhost:${TTS_PORT}/ws/tts/stream"
-echo "    Health check: http://localhost:${TTS_PORT}/health"
-
-# ── Wait for models to load ────────────────────────────────────────────────────
-echo ""
-echo "Waiting for models to load (first run downloads from HuggingFace — may take a while)..."
-echo "Watch logs: docker logs -f asr-server | docker logs -f tts-server"
-echo ""
-
-until curl -sf "http://localhost:${ASR_PORT}/health" >/dev/null 2>&1 && \
-      curl -sf "http://localhost:${TTS_PORT}/health" >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^asr-server$" --filter "status=running" | grep -q .; then
-        echo "ERROR: asr-server container exited. Check: docker logs asr-server"
-        exit 1
-    fi
-    if ! docker ps -q --filter "name=^tts-server$" --filter "status=running" | grep -q .; then
-        echo "ERROR: tts-server container exited. Check: docker logs tts-server"
-        exit 1
-    fi
-    sleep 5
-done
-echo ""
-echo "Both voice servers loaded and ready."
-
-echo ""
-echo "Phase 4 complete. Proceed to: scripts/05_pgvector.sh"
