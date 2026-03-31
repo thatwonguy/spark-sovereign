@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# NOTE: This script is not necessary. OpenClaw's onboard setup handles
-# voice (ASR/TTS) — no separate pipeline needed.
 # =============================================================================
-# PHASE 4 — Voice Pipeline (ASR port 8002, TTS port 8003)
+# PHASE 4 — Voice Pipeline (STT)
 # =============================================================================
-# Runs TWO separate containers from the same nemotron-voice:cuda13 image:
+# Sets up local Whisper STT so OpenClaw can transcribe voice notes from
+# Telegram, TUI, and all other channels.
 #
-#   asr-server  — nemotron_speech.server     (aiohttp WebSocket)
-#   tts-server  — nemotron_speech.tts_server (FastAPI HTTP + WebSocket)
+# OpenClaw handles audio transcription at its own layer — no separate
+# Docker containers needed. This script installs the Whisper CLI,
+# pre-caches the model, and wires the config into OpenClaw.
 #
-# There is no nemotron.sh inside the image. The entry points are the two
-# Python modules above. Models are loaded from HuggingFace on first run
-# and cached to ~/.cache/huggingface (mounted into both containers).
+# Idempotent — safe to re-run.
 # =============================================================================
 
 set -euo pipefail
@@ -19,137 +17,191 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/.env" 2>/dev/null || true
 
-MODELS_DIR="${MODELS_DIR:-/opt/models}"
-HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
-mkdir -p "${HF_CACHE}"
+WHISPER_MODEL="${WHISPER_MODEL:-small}"
+OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
+WHISPER_CACHE="${HOME}/.cache/whisper"
 
-get_field() {
+echo "========================================================"
+echo " spark-sovereign — Phase 4: Voice Pipeline (STT)"
+echo "========================================================"
+echo "  Model:  whisper-${WHISPER_MODEL} (local, GPU-accelerated)"
+echo "  Config: ${OPENCLAW_CONFIG}"
+echo ""
+
+# 1. Install openai-whisper CLI
+echo ">>> Installing Whisper CLI..."
+if command -v whisper &>/dev/null; then
+    echo "    Already installed."
+else
+    pip install openai-whisper --break-system-packages --quiet
+    echo "    Installed."
+fi
+
+# 2. Pre-cache the Whisper model
+# openai-whisper downloads its own .pt files to ~/.cache/whisper/ on first use.
+# We trigger that here so OpenClaw never waits on a cold download.
+echo ">>> Pre-caching Whisper model (${WHISPER_MODEL})..."
+mkdir -p "${WHISPER_CACHE}"
+if [ -f "${WHISPER_CACHE}/${WHISPER_MODEL}.pt" ]; then
+    echo "    Already cached: ${WHISPER_CACHE}/${WHISPER_MODEL}.pt"
+else
+    echo "    Downloading to ${WHISPER_CACHE}/ (one-time, ~450MB for small)..."
     python3 -c "
-import yaml
-with open('${REPO_ROOT}/config/models.yml') as f:
-    cfg = yaml.safe_load(f)
-print(cfg.get('$1', {}).get('$2', ''))
+import whisper
+whisper.load_model('${WHISPER_MODEL}')
+print('    Model cached.')
 "
+fi
+
+# Resolve full path to whisper binary (used in config)
+WHISPER_BIN="$(command -v whisper)"
+
+# 3. Apply OpenClaw audio config
+# ─────────────────────────────────────────────────────────────────────────────
+# Two paths:
+#   A) openclaw CLI is available → merge config non-interactively, then restart
+#   B) openclaw CLI not found    → write/merge config directly to JSON, print
+#                                  instructions for wizard or manual restart
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo ">>> Configuring OpenClaw audio..."
+
+# Build the audio block we want to inject
+AUDIO_BLOCK=$(cat <<EOF
+{
+  "enabled": true,
+  "maxBytes": 20971520,
+  "echoTranscript": true,
+  "models": [
+    {
+      "type": "cli",
+      "command": "${WHISPER_BIN}",
+      "args": ["--model", "${WHISPER_MODEL}", "--device", "cuda", "{{MediaPath}}"],
+      "timeoutSeconds": 45
+    }
+  ]
 }
-
-ASR_HF=$(get_field asr hf_repo)
-TTS_HF=$(get_field tts hf_repo)
-ASR_PORT=$(get_field asr port)
-TTS_PORT=$(get_field tts port)
-
-echo "========================================================"
-echo " spark-sovereign — Phase 4: Voice Pipeline"
-echo "========================================================"
-echo "  ASR: ${ASR_HF} → ws://localhost:${ASR_PORT}"
-echo "  TTS: ${TTS_HF} → http://localhost:${TTS_PORT}"
-echo "  HF cache: ${HF_CACHE}"
-echo ""
-
-# ── Build image (clone/pull latest, then build if image missing) ──────────────
-PIPECAT_DIR="${PIPECAT_DIR:-${REPO_ROOT}/nemotron-voice}"
-if [ ! -d "${PIPECAT_DIR}" ]; then
-    echo ">>> Cloning pipecat voice pipeline..."
-    git clone https://github.com/pipecat-ai/nemotron-january-2026 "${PIPECAT_DIR}"
-else
-    echo ">>> Updating pipecat voice pipeline repo..."
-    git -C "${PIPECAT_DIR}" pull --ff-only 2>/dev/null || echo "    (git pull skipped — local changes or detached HEAD)"
-fi
-
-if ! docker image inspect nemotron-voice:cuda13-base &>/dev/null; then
-    cd "${PIPECAT_DIR}"
-    echo ">>> Building nemotron-voice:cuda13-base (~2-3 hours on first build)..."
-    docker build -f Dockerfile.unified -t nemotron-voice:cuda13-base .
-    echo "    Base build complete."
-else
-    echo "    Image nemotron-voice:cuda13-base already exists — skipping base build."
-fi
-
-# Always apply the NeMo patch (HindiCharsTokenizer fix) on top of the base image.
-# The pipecat Dockerfile pins NeMo to Dec 2025; HindiCharsTokenizer was added Jan 2026.
-# This build takes ~30 seconds and is idempotent (Docker layer cache).
-echo ">>> Applying NeMo patch (HindiCharsTokenizer fix)..."
-docker build -f "${REPO_ROOT}/docker/Dockerfile.tts-patch" -t nemotron-voice:cuda13 "${REPO_ROOT}"
-echo "    Patch applied."
-
-# ── Stop existing containers first (frees ports before preflight check) ───────
-echo ""
-echo ">>> Stopping existing voice containers (if any)..."
-docker rm -f asr-server  2>/dev/null || true
-docker rm -f tts-server  2>/dev/null || true
-docker rm -f voice-pipeline 2>/dev/null || true   # legacy name
-
-# ── Preflight: ports must be free from other processes ────────────────────────
-for port in "${ASR_PORT}" "${TTS_PORT}"; do
-    if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
-        echo "ERROR: port ${port} is still in use by another process"
-        echo "Run: ss -ltnp | grep :${port}"
-        exit 1
-    fi
-done
-
-# ── Common docker flags ────────────────────────────────────────────────────────
-COMMON_FLAGS=(
-    --gpus all
-    --ipc host
-    --network host
-    --restart no
-    -v "${MODELS_DIR}:/models"
-    -v "${HF_CACHE}:/root/.cache/huggingface"
-    -e HF_TOKEN="${HF_TOKEN:-}"
-    -e HUGGING_FACE_HUB_TOKEN="${HF_TOKEN:-}"
+EOF
 )
 
-# ── Start ASR server ───────────────────────────────────────────────────────────
-echo ""
-echo ">>> Starting ASR server (port ${ASR_PORT})..."
-docker run -d --name asr-server \
-    "${COMMON_FLAGS[@]}" \
-    nemotron-voice:cuda13 \
-    python -m nemotron_speech.server \
-        --host 0.0.0.0 \
-        --port "${ASR_PORT}" \
-        --model "${ASR_HF}"
+# Python helper: merge audio block into existing openclaw.json (or create it)
+apply_config() {
+    python3 - <<PYEOF
+import json, os, sys
 
-echo "    asr-server started"
-echo "    WebSocket:    ws://localhost:${ASR_PORT}"
-echo "    Health check: http://localhost:${ASR_PORT}/health"
+config_path = os.path.expanduser("${OPENCLAW_CONFIG}")
+os.makedirs(os.path.dirname(config_path), exist_ok=True)
 
-# ── Start TTS server ───────────────────────────────────────────────────────────
-echo ""
-echo ">>> Starting TTS server (port ${TTS_PORT})..."
-docker run -d --name tts-server \
-    "${COMMON_FLAGS[@]}" \
-    nemotron-voice:cuda13 \
-    python -m nemotron_speech.tts_server \
-        --host 0.0.0.0 \
-        --port "${TTS_PORT}" \
-        --model "${TTS_HF}"
+# Load existing config or start fresh
+if os.path.exists(config_path):
+    with open(config_path) as f:
+        try:
+            cfg = json.load(f)
+        except json.JSONDecodeError:
+            print("    WARNING: existing openclaw.json is not valid JSON — backing up and recreating.")
+            os.rename(config_path, config_path + ".bak")
+            cfg = {}
+else:
+    cfg = {}
 
-echo "    tts-server started"
-echo "    HTTP:         http://localhost:${TTS_PORT}/v1/audio/speech"
-echo "    WebSocket:    ws://localhost:${TTS_PORT}/ws/tts/stream"
-echo "    Health check: http://localhost:${TTS_PORT}/health"
+# Merge audio block into tools.media.audio
+audio_block = json.loads('''${AUDIO_BLOCK}''')
+cfg.setdefault("tools", {}).setdefault("media", {})["audio"] = audio_block
 
-# ── Wait for models to load ────────────────────────────────────────────────────
+with open(config_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+
+print(f"    Written to {config_path}")
+PYEOF
+}
+
+if command -v openclaw &>/dev/null; then
+    # Path A: apply via config merge, then restart gateway
+    apply_config
+    echo "    Restarting OpenClaw gateway to apply changes..."
+    openclaw gateway restart 2>/dev/null \
+        && echo "    Gateway restarted." \
+        || echo "    Gateway not running — config will apply on next start."
+else
+    # Path B: write config directly, show manual instructions
+    apply_config
+
+    echo ""
+    echo "========================================================"
+    echo " OpenClaw CLI not found on this PATH."
+    echo " Config has been written. Complete setup one of two ways:"
+    echo "========================================================"
+    echo ""
+    echo " OPTION A — Run the OpenClaw setup wizard (recommended):"
+    echo ""
+    echo "   openclaw configure"
+    echo ""
+    echo "   The wizard will ask for your vLLM endpoint. Enter:"
+    echo "     Provider:       OpenAI-compatible"
+    echo "     Base URL:       http://localhost:8000/v1"
+    echo "     Model ID:       (from config/models.yml → brain.served_name)"
+    echo "     API key:        any string (e.g. 'local')"
+    echo "   Voice/STT config is already written — wizard will pick it up."
+    echo ""
+    echo " OPTION B — Manual config edit (if already onboarded):"
+    echo ""
+    echo "   File: ${OPENCLAW_CONFIG}"
+    echo ""
+    echo "   Add/merge this block under tools.media.audio:"
+    echo ""
+    cat <<JSONEOF
+  "tools": {
+    "media": {
+      "audio": {
+        "enabled": true,
+        "maxBytes": 20971520,
+        "echoTranscript": true,
+        "models": [
+          {
+            "type": "cli",
+            "command": "${WHISPER_BIN}",
+            "args": ["--model", "${WHISPER_MODEL}", "--device", "cuda", "{{MediaPath}}"],
+            "timeoutSeconds": 45
+          }
+        ]
+      }
+    }
+  }
+JSONEOF
+    echo ""
+    echo "   Then restart the gateway:"
+    echo "     openclaw gateway restart"
+    echo ""
+fi
+
+# 4. Verify
+echo ">>> Verifying..."
 echo ""
-echo "Waiting for models to load (first run downloads from HuggingFace — may take a while)..."
-echo "Watch logs: docker logs -f asr-server | docker logs -f tts-server"
+echo "  Whisper CLI : ${WHISPER_BIN}"
+echo "  Model cache : ${WHISPER_CACHE}/${WHISPER_MODEL}.pt"
+echo "  Config file : ${OPENCLAW_CONFIG}"
 echo ""
 
-until curl -sf "http://localhost:${ASR_PORT}/health" >/dev/null 2>&1 && \
-      curl -sf "http://localhost:${TTS_PORT}/health" >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^asr-server$" --filter "status=running" | grep -q .; then
-        echo "ERROR: asr-server container exited. Check: docker logs asr-server"
-        exit 1
-    fi
-    if ! docker ps -q --filter "name=^tts-server$" --filter "status=running" | grep -q .; then
-        echo "ERROR: tts-server container exited. Check: docker logs tts-server"
-        exit 1
-    fi
-    sleep 5
-done
-echo ""
-echo "Both voice servers loaded and ready."
+if command -v openclaw &>/dev/null; then
+    echo "  OpenClaw status:"
+    openclaw status 2>/dev/null | sed 's/^/    /' || echo "    (gateway not running)"
+    echo ""
+    echo "  Validate config:"
+    openclaw config validate 2>/dev/null | sed 's/^/    /' || true
+    echo ""
+fi
 
+echo "========================================================"
+echo " Phase 4 complete."
 echo ""
-echo "Phase 4 complete. Proceed to: scripts/05_pgvector.sh"
+echo " Test STT:"
+echo "   whisper --model ${WHISPER_MODEL} --device cuda <audio_file.mp3>"
+echo ""
+echo " Test via OpenClaw:"
+echo "   1. Send a voice note in Telegram (or TUI)"
+echo "   2. OpenClaw transcribes locally — model receives the text"
+echo "   3. Echo shows the transcript before the model reply"
+echo ""
+echo " View logs:"
+echo "   openclaw logs --follow"
+echo "========================================================"
