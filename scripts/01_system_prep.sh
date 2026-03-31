@@ -55,7 +55,6 @@ echo ">>> Installing Python tools..."
 pip install \
     huggingface_hub \
     hf_transfer \
-    aider-chat \
     psycopg2-binary \
     sentence-transformers \
     requests \
