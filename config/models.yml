@@ -25,11 +25,11 @@ brain:
   port: 8000
   served_name: qwen35-35b-a3b
   docker_image: vllm/vllm-openai:cu130-nightly  # nvcr.io/nvidia/vllm:26.02-py3 is vLLM 0.15.1 — too old for qwen3_5_moe arch
-  gpu_memory_utilization: 0.40        # ~48.7GB on 121.69GiB visible — ~35GB weights + ~13GB KV cache
+  gpu_memory_utilization: 0.60        # ~73GB on 121.69GiB visible — balanced for vLLM + ASR + TTS headroom
   max_model_len: 262144               # 262K context
   kv_cache_dtype: fp8
-  max_num_seqs: 16
-  max_num_batched_tokens: 4096        # Mamba/GDN hybrid arch: block_size=2096, must be >= block_size
+  max_num_seqs: 32                    # Double concurrency for better parallel throughput
+  max_num_batched_tokens: 8192        # Double batch size for improved inference efficiency
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   # --- SWAP EXAMPLES ---
@@ -126,8 +126,8 @@ infrastructure:
 # MEMORY MAP (128GB unified — March 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.5-35B-A3B FP8         48.7 GB   0.40 util (~35GB weights + ~13GB KV cache)
-# ASR (nemotron-speech)        2.4 GB   always-on
+# Qwen3.5-35B-A3B FP8         73.0 GB   0.60 util (balanced for vLLM + ASR + TTS)
+# ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on
 # pgvector + PostgreSQL        2.0 GB   always-on
@@ -135,5 +135,5 @@ infrastructure:
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                        62.4 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                     59.3 GB   ✅ very safe
+# TOTAL                        87.3 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     34.4 GB   ✅ safe for concurrent requests
