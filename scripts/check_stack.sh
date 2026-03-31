@@ -65,17 +65,35 @@ GPU_PROCS=$(nvidia-smi --query-compute-apps=pid,used_gpu_memory,name \
 if [ -z "${GPU_PROCS}" ]; then
     echo "    (none)"
 else
-    echo "${GPU_PROCS}" | while IFS=',' read -r pid mib pname; do
+    UNEXPECTED_PIDS=()
+    while IFS=',' read -r pid mib pname; do
         pid="${pid// /}"; mib="${mib// /}"; pname="${pname## }"
-        gb=$(python3 -c "print(f'{${mib}/1024:.1f}')" 2>/dev/null || echo "?")
+        gb=$(python3 -c "print(f'{int(\"${mib}\")/1024:.1f}')" 2>/dev/null || echo "?")
         proc=$(ps -p "${pid}" -o comm= 2>/dev/null || echo "unknown")
         printf "    PID %-8s  %-24s  %s GiB  (%s)\n" "${pid}" "${pname}" "${gb}" "${proc}"
-        # Prompt to kill anything that isn't the expected vLLM brain process
         if ! echo "${proc}" | grep -qiE "python|vllm"; then
-            echo "  ⚠️  Unexpected GPU process: PID ${pid} (${proc}) using ${gb} GiB"
-            ask_kill "kill PID ${pid}" "sudo kill -9 ${pid}"
+            UNEXPECTED_PIDS+=("${pid}:${proc}:${gb}")
         fi
-    done
+    done <<< "${GPU_PROCS}"
+
+    if [ "${#UNEXPECTED_PIDS[@]}" -gt 0 ]; then
+        echo ""
+        echo "  ⚠️  Unexpected processes consuming VRAM:"
+        for entry in "${UNEXPECTED_PIDS[@]}"; do
+            IFS=':' read -r pid proc gb <<< "${entry}"
+            printf "    - PID %-8s  %-20s  %s GiB\n" "${pid}" "${proc}" "${gb}"
+        done
+        echo ""
+        read -rp "  Kill all unexpected GPU processes? [y/N] " ans
+        if [[ "${ans,,}" == "y" ]]; then
+            for entry in "${UNEXPECTED_PIDS[@]}"; do
+                pid="${entry%%:*}"
+                sudo kill -9 "${pid}" 2>/dev/null && echo "  Killed PID ${pid}" || echo "  Failed: PID ${pid}"
+            done
+        else
+            echo "  Skipped."
+        fi
+    fi
 fi
 echo ""
 
@@ -96,21 +114,48 @@ else
         printf "  ${icon} %-20s %-14s %-38s %s\n" \
             "${name}" "${status:0:13}" "${image:0:37}" "${uptime}"
     done
+
+    # Prompt to remove stopped containers (wasting disk)
+    STOPPED=$(docker ps -a --filter "status=exited" --filter "status=created" \
+        --format "{{.Names}}" 2>/dev/null || true)
+    if [ -n "${STOPPED}" ]; then
+        echo ""
+        echo "  ⚠️  Stopped containers on disk (wasting space, not needed):"
+        echo "${STOPPED}" | while read -r name; do
+            size=$(docker inspect --format='{{.SizeRw}}' "${name}" 2>/dev/null \
+                | awk '{printf "%.0f MB", $1/1024/1024}' || echo "unknown size")
+            printf "    - %-28s (%s)\n" "${name}" "${size}"
+        done
+        echo ""
+        read -rp "  Remove all stopped containers? [y/N] " ans
+        if [[ "${ans,,}" == "y" ]]; then
+            echo "${STOPPED}" | xargs docker rm 2>/dev/null && echo "  Removed." || echo "  Some removals failed."
+        else
+            echo "  Skipped."
+        fi
+    fi
 fi
 echo ""
 
-# ── Unexpected running containers ─────────────────────────────────────────────
+# ── Unexpected running containers (wasting VRAM) ──────────────────────────────
 echo "── Unexpected Running Containers ───────────────────────────"
 STALE=$(docker ps --format "{{.Names}}" 2>/dev/null | grep -v -E "^brain$" || true)
 if [ -z "${STALE}" ]; then
     echo "  ✅ None — only Brain is running"
 else
-    echo "  ⚠️  These containers are running but not part of the current stack:"
+    echo "  ⚠️  Running but not part of the current stack (wasting VRAM):"
     echo "${STALE}" | while read -r name; do
         image=$(docker inspect -f '{{.Config.Image}}' "${name}" 2>/dev/null || echo "unknown")
-        printf "\n  - %-22s (%s)\n" "${name}" "${image}"
-        ask_kill "stop + remove ${name}" "docker stop ${name} && docker rm ${name}"
+        printf "    - %-28s (%s)\n" "${name}" "${image}"
     done
+    echo ""
+    read -rp "  Stop + remove all unexpected running containers? [y/N] " ans
+    if [[ "${ans,,}" == "y" ]]; then
+        echo "${STALE}" | xargs -I{} sh -c 'docker stop {} && docker rm {}' \
+            && echo "  Stopped and removed." || echo "  Some failed."
+    else
+        echo "  Skipped."
+    fi
 fi
 echo ""
 
@@ -136,12 +181,15 @@ echo ""
 
 # ── Auto-start service ────────────────────────────────────────────────────────
 echo "── Auto-Start Service ──────────────────────────────────────"
-SVC_STATUS=$(systemctl is-active spark-sovereign 2>/dev/null || echo "unknown")
-SVC_ENABLED=$(systemctl is-enabled spark-sovereign 2>/dev/null || echo "unknown")
-if [ "${SVC_STATUS}" = "active" ]; then
-    printf "  ✅ spark-sovereign.service: %s (enabled: %s)\n" "${SVC_STATUS}" "${SVC_ENABLED}"
+SVC_STATUS=$(systemctl is-active spark-sovereign 2>/dev/null) || SVC_STATUS="inactive"
+SVC_ENABLED=$(systemctl is-enabled spark-sovereign 2>/dev/null) || SVC_ENABLED="unknown"
+if [ "${SVC_ENABLED}" = "enabled" ]; then
+    printf "  ✅ spark-sovereign.service: enabled (status: %s)\n" "${SVC_STATUS}"
+    if [ "${SVC_STATUS}" = "inactive" ]; then
+        echo "     Normal — oneshot service runs on boot. Brain was started manually this session."
+    fi
 else
-    printf "  ❌ spark-sovereign.service: %s (enabled: %s)\n" "${SVC_STATUS}" "${SVC_ENABLED}"
+    printf "  ❌ spark-sovereign.service: not enabled (status: %s)\n" "${SVC_STATUS}"
     echo "     Fix: bash scripts/01_system_prep.sh"
 fi
 echo ""
