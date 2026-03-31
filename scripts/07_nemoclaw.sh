@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. OpenClaw's onboard setup wizard handles
+# all configuration when you first launch the app on the DGX Spark.
 # =============================================================================
 # PHASE 7 — NemoClaw Agent Runtime
 # =============================================================================

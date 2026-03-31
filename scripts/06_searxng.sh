@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# NOTE: This script is not necessary. OpenClaw's onboard setup handles
+# web search — no separate SearXNG instance needed.
 # =============================================================================
 # PHASE 6 — SearXNG Web Search
 # =============================================================================
