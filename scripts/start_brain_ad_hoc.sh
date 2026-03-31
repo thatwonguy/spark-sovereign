@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Ad-hoc Brain restart — stops all GPU model containers first to free memory,
-# then starts Brain with maximum GPU headroom for VL profiling.
+# Ad-hoc Brain restart — stops any existing Brain container, then starts
+# a fresh one with all settings read from config/models.yml.
 #
-# Called by: boot_sequence.sh (which then handles Nano/ASR/TTS after Brain ready)
-# Manual use: run this, wait for Brain ready, then `docker start nemotron-nano`
+# Called by: boot_sequence.sh on every boot
+# Manual use: run this any time to restart Brain (after a model swap, OOM, etc.)
 # =============================================================================
 
 set -euo pipefail
@@ -48,10 +48,9 @@ BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
-# Stop all GPU model containers before Brain to ensure maximum free memory.
-# Brain's VL profiling peak requires ~80GiB free; other models must be down first.
-echo ">>> Stopping GPU model containers..."
-for name in brain qwen-brain asr-server tts-server; do
+# Stop any existing Brain container before starting fresh.
+echo ">>> Stopping existing Brain container..."
+for name in brain qwen-brain; do
     if docker ps -q --filter "name=^${name}$" | grep -q .; then
         docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
     fi
@@ -83,4 +82,4 @@ docker run -d --name brain \
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
-echo "    After Brain is ready, start voice: docker start asr-server tts-server"
+echo "    Brain takes 3-5 minutes to load. OpenClaw reconnects automatically."

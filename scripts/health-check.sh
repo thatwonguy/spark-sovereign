@@ -1,4 +1,6 @@
 #!/bin/bash
+# NOTE: This script is outdated. Use scripts/check_stack.sh instead.
+# This file checks ASR, TTS, pgvector, and other services no longer in the stack.
 # Comprehensive System Health Check
 # Usage: ./health-check.sh [--detailed] [--telegram]
 # Checks: vLLM, ASR, TTS, Docker containers, GPU, Database, Message Queue
