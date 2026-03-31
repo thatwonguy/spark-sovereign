@@ -1,24 +1,8 @@
 #!/bin/bash
-# ~/spark-sovereign/scripts/04_voice_servers.sh
-# Local STT setup for OpenClaw voice support
+# ~/spark-sovereign/scripts/04_voice_stt.sh
+# Local STT (Speech-to-Text) setup for OpenClaw
 # Per OpenClaw docs: STT uses CLI-based transcription (whisper CLI)
-# TTS uses provider-based (ElevenLabs, Microsoft, OpenAI) - no custom endpoints
-
-set -e
-
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}=== OpenClaw Voice Setup (STT) ===${NC}"
-echo ""
-echo "Per OpenClaw docs:"
-echo "- STT: CLI-based (whisper CLI) or provider-based (OpenAI, Deepgram)"
-echo "- TTS: Provider-based (ElevenLabs, Microsoft, OpenAI)"
-echo "- Talk Mode: Uses ElevenLabs streaming API"
-echo ""
+# This script sets up LOCAL Whisper STT only - no TTS, no cloud APIs
 
 # Configuration
 MODELS_DIR="$HOME/.local/share/openclaw-voice"
@@ -56,12 +40,9 @@ else
     WHISPER_INSTALLED=true
 fi
 
-# Set up environment variable for model path
+# Output configuration
 echo ""
 echo -e "${BLUE}=== Configuration ===${NC}"
-echo ""
-echo "Add this to your ~/.bashrc or ~/.zshrc:"
-echo "  export WHISPER_MODEL_PATH=\"$MODELS_DIR/whisper/pytorch_model.bin\""
 echo ""
 echo "Add this to ~/.openclaw/openclaw.json:"
 echo ""
@@ -72,6 +53,8 @@ cat << 'EOF'
       "audio": {
         "enabled": true,
         "maxBytes": 20971520,
+        "echoTranscript": true,
+        "echoFormat": "🎤 \"{transcript}\"",
         "models": [
           {
             "type": "cli",
@@ -79,73 +62,35 @@ cat << 'EOF'
             "args": ["--model", "small", "--device", "cuda", "{{MediaPath}}"],
             "timeoutSeconds": 45
           }
-        ],
-        "echoTranscript": true
+        ]
       }
     }
-  },
-  "messages": {
-    "tts": {
-      "auto": "inbound",
-      "providers": {
-        "elevenlabs": {
-          "enabled": true,
-          "apiKey": "${ELEVENLABS_API_KEY}",
-          "voiceId": "21m00Tcm4TlvDq8ikWAM",
-          "modelId": "eleven_multilingual_v2"
-        },
-        "microsoft": {
-          "enabled": false
-        },
-        "openai": {
-          "enabled": false
-        }
-      }
-    }
-  },
-  "talk": {
-    "enabled": true,
-    "silenceTimeoutMs": 1500,
-    "interruptOnSpeech": true,
-    "apiKey": "${ELEVENLABS_API_KEY}",
-    "voiceId": "21m00Tcm4TlvDq8ikWAM",
-    "modelId": "eleven_v3"
   }
 }
 EOF
 
 echo ""
-echo -e "${BLUE}=== Notes ===${NC}"
+echo -e "${BLUE}=== What This Does ===${NC}"
 echo ""
-echo "1. STT (Speech-to-Text):"
-echo "   - Uses whisper CLI (local, GPU-accelerated)"
-echo "   - Model: $WHISPER_MODEL (~96% accuracy)"
-echo "   - Command: whisper --model small --device cuda <audio_file>"
+echo "STT (Speech-to-Text) - LOCAL & PRIVATE:"
+echo "  • Voice notes auto-transcribe before reaching the model"
+echo "  • Whisper CLI runs locally on GPU (~2GB VRAM)"
+echo "  • Model: $WHISPER_MODEL (~96% accuracy)"
+echo "  • No cloud APIs, no data leaves your machine"
 echo ""
-echo "2. TTS (Text-to-Speech):"
-echo "   - Uses ElevenLabs API (cloud, high quality)"
-echo "   - Alternative: Microsoft Azure TTS (requires Azure subscription)"
-echo "   - OpenClaw does NOT support custom TTS endpoints"
-echo ""
-echo "3. Talk Mode:"
-echo "   - Continuous voice conversation (macOS/Android/iOS)"
-echo "   - Requires ElevenLabs API key"
-echo "   - Uses streaming TTS for low latency"
-echo ""
-echo "4. Privacy-first alternative:"
-echo "   - If you need 100% local TTS, use Piper CLI manually"
-echo "   - But OpenClaw's TTS integration only supports providers"
-echo "   - You'd need to modify OpenClaw source to add custom TTS"
+echo "What you can do:"
+echo "  • Send voice notes in Telegram → auto-transcribed → model replies with text"
+echo "  • Works in TUI, Telegram, and all OpenClaw channels"
+echo "  • Echo shows: 🎤 \"transcribed text\""
 echo ""
 echo -e "${BLUE}=== Test ===${NC}"
 echo ""
 echo "Test Whisper CLI:"
 echo "  whisper --model $WHISPER_MODEL --device cuda <audio_file.mp3>"
 echo ""
-echo "Test OpenClaw voice:"
-echo "  1. Add config to ~/.openclaw/openclaw.json"
-echo "  2. Set ELEVENLABS_API_KEY env var (for TTS)"
-echo "  3. Restart: openclaw gateway restart"
-echo "  4. Test: /tts status"
+echo "Test OpenClaw STT:"
+echo "  1. Add config to ~/.openclaw/openclaw.json (see above)"
+echo "  2. Config hot-reloads automatically (no restart needed)"
+echo "  3. Send a voice note in Telegram → should auto-transcribe"
 echo ""
 echo -e "${GREEN}=== Setup Complete ===${NC}"
