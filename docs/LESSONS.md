@@ -71,4 +71,43 @@ This would give the best of both worlds: OpenClaw's native capabilities + a priv
 
 ---
 
-*Last updated: March 2026*
+## 7. Voice Architecture — STT Local, TTS Cloud
+
+**What we learned:** OpenClaw's voice processing happens at the OpenClaw layer, NOT the model layer. This is model-agnostic by design.
+
+**STT (Speech-to-Text):**
+- Can be **100% local** using Whisper CLI (CLI-based transcription)
+- Or cloud-based (OpenAI, Deepgram, Groq)
+- Configured via `tools.media.audio` in `openclaw.json`
+- **Auto-detection order:** Local CLIs → Gemini CLI → Provider keys
+
+**TTS (Text-to-Speech):**
+- **Provider-based only** — OpenClaw does NOT support custom TTS endpoints
+- Options: ElevenLabs (recommended), Microsoft Azure, OpenAI
+- Requires API key (cloud call)
+- Configured via `messages.tts` in `openclaw.json`
+- **No local option** without forking OpenClaw to add custom provider
+
+**Talk Mode:**
+- Continuous voice conversation loop (macOS/Android/iOS)
+- Specifically uses ElevenLabs streaming API for low latency
+- Configured via `talk` in `openclaw.json`
+
+**Privacy tradeoff:** 
+- ✅ STT can be fully local (Whisper CLI, GPU-accelerated)
+- ⚠️ TTS requires cloud provider (ElevenLabs/Microsoft/OpenAI)
+- ❌ No 100% local voice without forking OpenClaw
+
+**What this means for users:**
+- Voice notes in Telegram work with local Whisper STT
+- Voice replies require ElevenLabs API key (or Microsoft/OpenAI)
+- Talk Mode (continuous voice chat) requires ElevenLabs
+
+**Docs:**
+- https://docs.openclaw.ai/nodes/audio
+- https://docs.openclaw.ai/nodes/talk
+- https://docs.openclaw.ai/tools/tts
+
+---
+
+*Last updated: March 31, 2026*

@@ -29,6 +29,9 @@ Brain runs as a Docker container, starts automatically on boot, and serves the m
 | Capability | How |
 |---|---|
 | **Voice I/O** | Speak → transcribe → Brain responds → speaks back |
+| **STT (Speech-to-Text)** | Local Whisper CLI (GPU-accelerated) or cloud providers (OpenAI, Deepgram) |
+| **TTS (Text-to-Speech)** | Provider-based (ElevenLabs, Microsoft, OpenAI) — requires API key |
+| **Talk Mode** | Continuous voice conversation (macOS/Android/iOS) with ElevenLabs streaming |
 | **Image / video** | Send photo or video → Brain analyzes natively |
 | **Memory** | Persistent across sessions — learns from every conversation |
 | **Web search** | Live search, results fed to Brain |
@@ -38,6 +41,32 @@ Brain runs as a Docker container, starts automatically on boot, and serves the m
 | **TUI** | `openclaw tui` — interactive terminal chat |
 
 See `config/mcp_servers.json` for the full MCP server catalog.
+
+---
+
+## Voice Setup (Optional)
+
+**STT (Speech-to-Text):**
+- **Local:** Run `bash scripts/04_voice_stt.sh` to download whisper-small (~450MB, ~96% accuracy)
+- **Cloud:** OpenAI, Deepgram, or Groq (requires API key)
+- **Config:** `tools.media.audio` in `~/.openclaw/openclaw.json`
+
+**TTS (Text-to-Speech):**
+- **Provider-based only:** ElevenLabs (recommended), Microsoft Azure, or OpenAI
+- **No custom endpoints:** OpenClaw doesn't support local TTS servers without forking
+- **Config:** `messages.tts` in `~/.openclaw/openclaw.json`
+
+**Talk Mode:**
+- Continuous voice conversation (macOS menu bar, Android/iOS overlay)
+- Requires ElevenLabs API key
+- **Config:** `talk` in `~/.openclaw/openclaw.json`
+
+**Privacy tradeoff:** STT can be 100% local, but TTS requires cloud provider (ElevenLabs/Microsoft/OpenAI). For 100% local TTS, you'd need to fork OpenClaw and add a custom provider.
+
+**Docs:**
+- https://docs.openclaw.ai/nodes/audio
+- https://docs.openclaw.ai/nodes/talk
+- https://docs.openclaw.ai/tools/tts
 
 ---
 
@@ -84,7 +113,8 @@ spark-sovereign/
 │   ├── 01_system_prep.sh      ← Docker config, directories, Python deps, boot service
 │   ├── 02_download_models.sh  ← Download model from HF → /opt/models (prunes unused)
 │   ├── 03_vllm_servers.sh     ← Start Brain (port 8000)
-│   ├── 04–09_*.sh             ← NOT NEEDED — OpenClaw onboard handles everything
+│   ├── 04_voice_stt.sh        ← Local Whisper STT setup (optional, for voice notes)
+│   ├── 05–09_*.sh             ← NOT NEEDED — OpenClaw onboard handles everything
 │   ├── boot_sequence.sh       ← Auto-start on boot (installed by 01_system_prep.sh)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   └── check_stack.sh         ← Health check
