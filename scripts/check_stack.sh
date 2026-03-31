@@ -114,19 +114,19 @@ if command -v openclaw &>/dev/null; then
         echo "     Fix: openclaw gateway start"
     fi
 
-    # Telegram + session status
-    OC_STATUS=$(openclaw status 2>/dev/null || echo "")
-    TG_LINE=$(echo "${OC_STATUS}" | grep "^Telegram:" || echo "")
+    # Telegram + session status — strip ANSI codes before parsing
+    OC_STATUS=$(openclaw status 2>/dev/null | sed 's/\x1B\[[0-9;]*[mK]//g' || echo "")
+    TG_LINE=$(echo "${OC_STATUS}" | grep "Telegram:" | head -1 || echo "")
     if echo "${TG_LINE}" | grep -q " ok "; then
         BOT=$(echo "${TG_LINE}" | grep -oP '\(@\S+\)' | tr -d '()')
         printf "  ✅ Telegram: connected  %s\n" "${BOT}"
     elif [ -n "${TG_LINE}" ]; then
         printf "  ⚠️  Telegram: %s\n" "${TG_LINE}"
     else
-        printf "  ⚠️  Telegram: status unknown\n"
+        printf "  ⚠️  Telegram: not connected — check TELEGRAM_BOT_TOKEN in .env\n"
     fi
 
-    SESSIONS=$(echo "${OC_STATUS}" | grep "^Session store" | grep -oP '\d+ entr' || echo "")
+    SESSIONS=$(echo "${OC_STATUS}" | grep "Session store" | grep -oP '\d+ entr' || echo "")
     [ -n "${SESSIONS}" ] && echo "  Sessions: ${SESSIONS}ies"
 
     # Telegram group policy warning
@@ -176,16 +176,24 @@ echo "── Memory Search (embeddings) ─────────────�
 if command -v openclaw &>/dev/null; then
     MEM_ENABLED=$(openclaw config get agents.defaults.memorySearch.enabled 2>/dev/null || echo "")
     MEM_PROVIDER=$(openclaw config get agents.defaults.memorySearch.provider 2>/dev/null || echo "")
-    if [ "${MEM_ENABLED}" = "true" ] && [ -z "${MEM_PROVIDER}" ]; then
-        echo "  ⚠️  Memory search enabled but no embedding provider configured."
-        echo "     Semantic recall will not work."
-        echo "     Fix: openclaw configure --section model"
-        echo "          openclaw memory status --deep"
-    elif [ "${MEM_ENABLED}" = "false" ]; then
-        echo "  ℹ️  Memory search disabled."
+    # "auto" or empty means OpenClaw tries cloud API keys — check if any are set in .env
+    HAS_EMBED_KEY=false
+    for var in OPENAI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY VOYAGE_API_KEY MISTRAL_API_KEY; do
+        [ -n "${!var:-}" ] && HAS_EMBED_KEY=true && break
+    done
+    if [ "${MEM_ENABLED}" = "false" ]; then
+        echo "  ℹ️  Memory search: disabled"
         echo "     Enable: openclaw config set agents.defaults.memorySearch.enabled true"
+    elif [ "${MEM_ENABLED}" = "true" ] && [ -z "${MEM_PROVIDER}" ] && [ "${HAS_EMBED_KEY}" = "false" ]; then
+        echo "  ⚠️  Memory search: enabled but no embedding provider ready"
+        echo "     Auto mode requires an API key (OpenAI/Gemini/Voyage/Mistral) or local model."
+        echo "     Fix (local, no cloud key): openclaw configure --section model"
+        echo "     Fix (disable):             openclaw config set agents.defaults.memorySearch.enabled false"
+        echo "     Verify:                    openclaw memory status --deep"
+    elif [ -n "${MEM_PROVIDER}" ] && [ "${MEM_PROVIDER}" != "auto" ]; then
+        printf "  ✅ Memory search: enabled (provider: %s)\n" "${MEM_PROVIDER}"
     else
-        printf "  ✅ Memory search: enabled (provider: %s)\n" "${MEM_PROVIDER:-auto}"
+        printf "  ✅ Memory search: enabled (provider: auto — API key found)\n"
     fi
 else
     echo "  (openclaw not on PATH — skipping)"
@@ -193,15 +201,11 @@ fi
 echo ""
 
 # ── Skills ────────────────────────────────────────────────────────────────────
+# openclaw doctor is interactive — don't run it here, just report from config
 echo "── Skills ──────────────────────────────────────────────────"
 if command -v openclaw &>/dev/null; then
-    SKILLS_OUT=$(openclaw doctor 2>/dev/null | grep -E "Eligible:|Missing" || echo "")
-    if [ -n "${SKILLS_OUT}" ]; then
-        echo "${SKILLS_OUT}" | sed 's/^/  /'
-    else
-        echo "  (run: openclaw doctor)"
-    fi
-    echo "  Full report: openclaw doctor --repair"
+    echo "  Run for full report: openclaw doctor"
+    echo "  Run to auto-fix:     openclaw doctor --repair"
 else
     echo "  (openclaw not on PATH — skipping)"
 fi
