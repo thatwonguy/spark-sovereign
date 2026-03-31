@@ -35,6 +35,10 @@ ask_kill() {
 
 BRAIN_PORT=$(get_field brain.port)
 BRAIN_NAME=$(get_field brain.served_name)
+BRAIN_HF=$(get_field brain.hf_repo)
+BRAIN_CTX=$(get_field brain.max_model_len)
+BRAIN_UTIL=$(get_field brain.gpu_memory_utilization)
+BRAIN_KV=$(get_field brain.kv_cache_dtype)
 OPENCLAW_PORT=$(get_field infrastructure.nemoclaw.ui_port)
 
 echo ""
@@ -177,6 +181,18 @@ if [ "${OC_CODE}" = "200" ]; then
 else
     printf "  ❌ OpenClaw (port %-5s)  not responding — run: openclaw gateway start\n" "${OPENCLAW_PORT}"
 fi
+echo ""
+
+# ── Brain details + OpenClaw onboarding reference ─────────────────────────────
+echo "── Brain Info (use these in OpenClaw wizard) ───────────────"
+echo "  HF model        : ${BRAIN_HF}"
+echo "  Served name     : ${BRAIN_NAME}"
+echo "  Base URL        : http://localhost:${BRAIN_PORT}/v1"
+echo "  Model ID        : ${BRAIN_NAME}"
+echo "  API key         : unused  (any string works)"
+echo "  Context window  : ${BRAIN_CTX}"
+echo "  KV cache dtype  : ${BRAIN_KV}"
+echo "  GPU mem util    : ${BRAIN_UTIL} (~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved)"
 echo ""
 
 # ── Auto-start service ────────────────────────────────────────────────────────
