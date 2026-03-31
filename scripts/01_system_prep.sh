@@ -39,7 +39,18 @@ sudo mkdir -p /opt/searxng
 sudo chown -R "$(whoami):$(whoami)" "${MODELS_DIR}" /opt/pgvector /opt/searxng /opt/agent 2>/dev/null || true
 echo "    Directories created."
 
-# 3. Install Python tools
+# 3. Resolve pre-installed NeMo/pyannote package conflicts
+echo ">>> Resolving pre-installed package conflicts..."
+pip install \
+    "fsspec==2024.12.0" \
+    "protobuf==5.29.5" \
+    "numpy>=2.2.2" \
+    "scipy>=1.15.1" \
+    "typing_extensions>=4.14.0" \
+    --break-system-packages --quiet
+echo "    Conflicts resolved."
+
+# 4. Install Python tools
 echo ">>> Installing Python tools..."
 pip install \
     huggingface_hub \
@@ -52,12 +63,12 @@ pip install \
     --break-system-packages --quiet
 echo "    Python tools installed."
 
-# 4. Drop page cache (mandatory before loading large models on Spark)
+# 5. Drop page cache (mandatory before loading large models on Spark)
 echo ">>> Dropping page cache..."
 sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 echo "    Page cache cleared."
 
-# 5. Clone this repo to Spark (if not already there)
+# 6. Clone this repo to Spark (if not already there)
 if [ ! -d /opt/agent ]; then
     echo ">>> Copying agent files to /opt/agent..."
     sudo mkdir -p /opt/agent
@@ -66,12 +77,12 @@ if [ ! -d /opt/agent ]; then
     sudo chown -R "$(whoami):$(whoami)" /opt/agent
 fi
 
-# 6. Install Python requirements for agent memory layer
+# 7. Install Python requirements for agent memory layer
 echo ">>> Installing agent Python requirements..."
 pip install -r "${REPO_ROOT}/agent/requirements.txt" \
     --break-system-packages --quiet
 
-# 7. Install sequenced startup service — starts lightweight containers on boot,
+# 8. Install sequenced startup service — starts lightweight containers on boot,
 #    then waits for Brain to be ready before starting voice services + OpenClaw.
 #    Prevents simultaneous startup OOM on 128GB unified memory.
 echo ">>> Installing spark-sovereign startup service..."
