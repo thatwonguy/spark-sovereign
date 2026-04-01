@@ -47,6 +47,20 @@ for name in brain qwen-brain nemotron-nano asr-server tts-server; do
     docker rm -f "${name}" 2>/dev/null || true
 done
 
+# Remove all stopped containers and unused images to free disk space.
+echo ">>> Pruning stopped containers..."
+docker container prune -f
+
+echo ">>> Pruning unused Docker images (frees old brain image from disk)..."
+docker image prune -a -f
+
+# Drop page cache to fully release unified memory held by the old model.
+# Critical on DGX Spark — GPU and system share the same 128GB pool.
+echo ">>> Dropping page cache to free unified memory..."
+sudo sysctl -w vm.drop_caches=3
+echo "    Cache cleared."
+echo ""
+
 # ── Brain ─────────────────────────────────────────────────────────────────────
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
