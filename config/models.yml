@@ -35,7 +35,7 @@ brain:
   docker_image: vllm/vllm-openai:cu130-nightly
   gpu_memory_utilization: 0.80
   max_model_len: 131072
-  quantization: nvfp4
+  quantization: petit_nvfp4
   load_format: fastsafetensors
   max_num_seqs: 32
   tool_call_parser: qwen3_coder
@@ -50,7 +50,7 @@ brain:
   # docker_image: vllm/vllm-openai:cu130-nightly
   # gpu_memory_utilization: 0.70
   # max_model_len: 131072
-  # quantization: fp8
+  # quantization: petit_nvfp4
   # load_format: fastsafetensors
   # max_num_seqs: 8
   # tool_call_parser: qwen3_coder
