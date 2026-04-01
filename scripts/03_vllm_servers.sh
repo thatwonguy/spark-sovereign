@@ -97,6 +97,7 @@ docker run -d \
         --max-model-len "${BRAIN_CTX}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --quantization "${BRAIN_QUANT}" \
+        --allow-deprecated-quantization \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
