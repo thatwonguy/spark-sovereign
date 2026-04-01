@@ -79,6 +79,19 @@ BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
+# Patch tokenizer_config.json if the checkpoint uses TokenizersBackend (transformers 5.x class,
+# incompatible with vLLM's pinned transformers <5.0). Safe no-op if already patched.
+TOKENIZER_CFG=$(find "${HOME}/.cache/huggingface" \
+    -name "tokenizer_config.json" \
+    -path "*$(echo "${BRAIN_HF_REPO}" | tr '/' '-' | sed 's/^/models--/')*" \
+    2>/dev/null | head -1)
+if [ -n "${TOKENIZER_CFG}" ] && grep -q '"TokenizersBackend"' "${TOKENIZER_CFG}" 2>/dev/null; then
+    echo "    Patching tokenizer_config.json: TokenizersBackend → Qwen2TokenizerFast"
+    sudo sed -i 's/"tokenizer_class": "TokenizersBackend"/"tokenizer_class": "Qwen2TokenizerFast"/' \
+        "${TOKENIZER_CFG}"
+    echo "    Patched: ${TOKENIZER_CFG}"
+fi
+
 # shellcheck disable=SC2086
 docker run -d \
     --name brain \
