@@ -68,7 +68,8 @@ BRAIN_NAME=$(get_field brain served_name)
 BRAIN_PORT=$(get_field brain port)
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
-BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_QUANT=$(get_field brain quantization)       # optional — omit for self-describing checkpoints
+BRAIN_MOE_BACKEND=$(get_field brain moe_backend)  # optional — e.g. flashinfer_cutlass for NVFP4
 BRAIN_LOAD_FMT=$(get_field brain load_format)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
@@ -96,12 +97,13 @@ docker run -d \
         --port "${BRAIN_PORT}" \
         --max-model-len "${BRAIN_CTX}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
-        --quantization "${BRAIN_QUANT}" \
-        --allow-deprecated-quantization \
+        ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+        ${BRAIN_MOE_BACKEND:+--moe_backend "${BRAIN_MOE_BACKEND}"} \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         --enable-prefix-caching \
+        --trust-remote-code \
         --max-num-seqs "${BRAIN_SEQS}" \
         --load-format "${BRAIN_LOAD_FMT}"
 
