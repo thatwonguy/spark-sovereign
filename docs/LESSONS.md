@@ -110,4 +110,34 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-*Last updated: March 31, 2026*
+---
+
+## 8. Model Revisit: Back to 35B-A3B-FP8 (with SM121 Kernels)
+
+**Context:** Lesson 4 recorded the switch FROM 35B-A3B TO 27B-FP8, citing MoE quadratic attention at long contexts and better SWE-bench coding scores for the dense 27B. That reasoning was sound — but it assumed the 35B-A3B was actually running as fast as documented (~50 tok/s). It was not.
+
+**Root cause discovered:** `vllm/vllm-openai:cu130-nightly` contains a CMake arch guard bug — it compiles `"12.0f"` instead of `"12.0a"` for the SM121 architecture check. This silently excludes the GB10 from native kernel compilation, causing vLLM to fall back to generic paths. Real-world measured throughput for both 27B-FP8 and 35B-A3B on this image: **12–15 tok/s**, not 50. All previous tok/s estimates in config comments were based on incorrect assumptions about the image behavior.
+
+This was confirmed via NVIDIA Developer Forums (multiple independent benchmarks with llama-benchy v0.3.3, April 2026).
+
+**New image:** `hellohal2064/vllm-qwen3.5-gb10:latest` — community-built ARM64/GB10 image that fixes the CMake bug and compiles SM121-native kernels. Independently verified at **48–50 tok/s** for 35B-A3B-FP8 on a single DGX Spark, with 1M context via YaRN.
+
+**Required env vars for FP8 Marlin backend on SM121 (set in models.yml extra_env):**
+```
+VLLM_FLASHINFER_MOE_BACKEND=latency
+VLLM_TEST_FORCE_FP8_MARLIN=1
+VLLM_MARLIN_USE_ATOMIC_ADD=0
+```
+Without these, the MoE FP8 path does not engage the Marlin kernel and throughput reverts to ~13 tok/s.
+
+**Why 35B-A3B over 27B-FP8 at equal real-world speed:**
+- ~35 GiB FP8 weights vs ~27 GiB — only slightly larger footprint
+- MoE: only ~3B params active per token — lower compute per token than dense 27B
+- More headroom left for KV cache with the same 0.75 util (~56 GB vs ~64 GB prior — less needed because the model is faster and can serve the same context with less buffering)
+- Outperforms 27B-FP8 on vision, agent, and multi-step reasoning benchmarks at this token rate
+
+**Open question — MoE long-context cliff (from Lesson 4):** The quadratic attention concern at 100K+ context is real for MoE full-attention layers, but the 35B-A3B uses sparse MoE only in the FFN layers, not attention. Attention is standard multi-head and scales the same as dense models. The long-context degradation observed previously may have been a throughput perception issue (slow model feels worse at long context) rather than an architectural ceiling. Testing will confirm.
+
+**What to watch:** If long agentic sessions (100K+ tokens) feel noticeably slower or degraded vs the 27B-FP8, that is the MoE attention cliff reasserting itself. Roll back via the swap-back comment block in `config/models.yml`.
+
+*Last updated: April 1, 2026*
