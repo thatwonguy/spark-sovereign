@@ -4,7 +4,7 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 
 **Zero cloud. Zero API cost. Zero data leaving your hardware.**
 
-- **Qwen3.5-27B-FP8** — native multimodal, coding, agentic, reasoning, 262K context
+- **Qwen3.5-35B-A3B-FP8** — native multimodal MoE, coding, agentic, reasoning, 262K context
 - **OpenClaw** handles everything else: voice, memory, RAG, web search, Telegram, MCP tools
 - **One model. One endpoint. Fully self-contained.**
 
@@ -66,14 +66,15 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 
 | Component | Model | Size | Port |
 |---|---|---|---|
-| **Brain** | Qwen/Qwen3.5-27B-FP8 | ~27 GB | 8000 |
+| **Brain** | Qwen/Qwen3.5-35B-A3B-FP8 | ~35 GB | 8000 |
 
-**Why Qwen3.5-27B-FP8:**
+**Why Qwen3.5-35B-A3B-FP8:**
+- MoE architecture: 35B total params / ~3B active per token — fast inference, low VRAM vs size
 - Native multimodal (vision + video + text) — no separate encoder
-- 262K context window (extensible to 1M with YaRN)
+- 262K context window
 - Thinking mode + tool calling built in
-- Hybrid Gated DeltaNet architecture — near-linear compute at long contexts
-- FP8 quantized: ~27GB weights, same quality as BF16
+- Verified 48–50 tok/s on single DGX Spark GB10 with SM121-patched image and FP8 Marlin kernels
+- Requires `hellohal2064/vllm-qwen3.5-gb10:latest` — stock vllm images hit a CMake arch bug that drops throughput to ~13 tok/s on GB10
 
 ---
 
@@ -82,12 +83,12 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ═══════════════════════════════════════════════════════════════
- Qwen3.5-27B-FP8 (Brain)      91.3 GB    0.75 util (~27GB weights + ~64GB KV cache)
+ Qwen3.5-35B-A3B-FP8 (Brain)  91.3 GB    0.75 util (~35GB weights + ~56GB KV cache)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ───────────────────────────────────────────────────────────────
  TOTAL ALLOCATED               99.3 GB
- HEADROOM                      16.1 GB   ✅ safe
+ HEADROOM                      22.4 GB   ✅ safe
 ═══════════════════════════════════════════════════════════════
 ```
 
@@ -206,7 +207,7 @@ Script 01 installs a systemd service (`spark-sovereign.service`) that runs autom
 2. Brain container starts via `start_brain_ad_hoc.sh`
 3. Service waits until port 8000 is ready before completing
 
-**Note:** Brain takes **3–5 minutes to load** after a cold boot while 27GB of weights load into memory. This is normal — OpenClaw will reconnect automatically once port 8000 is ready.
+**Note:** Brain takes **3–5 minutes to load** after a cold boot while ~35GB of weights load into memory. This is normal — OpenClaw will reconnect automatically once port 8000 is ready.
 
 To check service status:
 ```bash
