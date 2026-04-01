@@ -13,26 +13,53 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3.5-35B-A3B is a native multimodal MoE (35B total / 3B active per token).
-# Outperforms Qwen3-VL-32B on vision, coding, and agent benchmarks.
-# ~50 tok/s sustained on single DGX Spark GB10 with FP8 + standard vLLM.
-# 262K context window. No separate vision encoder — no VL profiling OOM.
+# Qwen3.5-35B-A3B-FP8 is a native multimodal MoE (35B total / ~3B active per token).
+# ~34.6 GiB FP8 weights. Verified 48–50 tok/s on single DGX Spark GB10 with
+# hellohal2064 SM121-patched image + FP8 Marlin env vars.
+# 262K context window. No separate vision encoder.
+#
+# REQUIRES SM121-patched image: hellohal2064/vllm-qwen3.5-gb10:latest
+# Stock vllm/vllm-openai:cu130-nightly has a CMake arch guard bug ("12.0f" vs
+# "12.0a") that silently excludes GB10 from native kernel compilation, dropping
+# throughput to ~13 tok/s. The hellohal2064 image fixes this.
+#
+# REQUIRED env vars (set in extra_env below) for FP8 Marlin backend on SM121:
+#   VLLM_FLASHINFER_MOE_BACKEND=latency
+#   VLLM_TEST_FORCE_FP8_MARLIN=1
+#   VLLM_MARLIN_USE_ATOMIC_ADD=0
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen35-27b-fp8
-  hf_repo: Qwen/Qwen3.5-27B-FP8
-  local_path: /opt/models/qwen35-27b-fp8
+  name: qwen35-35b-a3b-fp8
+  hf_repo: Qwen/Qwen3.5-35B-A3B-FP8
+  local_path: /opt/models/qwen35-35b-a3b-fp8
   port: 8000
-  served_name: qwen35-27b
-  docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~27GB weights + ~64GB KV cache; ~30GB left for ASR/TTS/OS
+  served_name: qwen35-35b
+  docker_image: hellohal2064/vllm-qwen3.5-gb10:latest
+  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~35GB weights + ~56GB KV cache
   max_model_len: 262144               # 262K context
   kv_cache_dtype: fp8
-  max_num_seqs: 32                    # Double concurrency for better parallel throughput
-  max_num_batched_tokens: 8192        # Double batch size for improved inference efficiency
+  max_num_seqs: 32
+  max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   limit_mm_per_prompt: '{"image": 10}'  # multimodal: allow up to 10 images per request
+  extra_env:
+    VLLM_FLASHINFER_MOE_BACKEND: latency
+    VLLM_TEST_FORCE_FP8_MARLIN: "1"
+    VLLM_MARLIN_USE_ATOMIC_ADD: "0"
+  # --- SWAP BACK (previous model) ---
+  # name: qwen35-27b-fp8
+  # hf_repo: Qwen/Qwen3.5-27B-FP8
+  # local_path: /opt/models/qwen35-27b-fp8
+  # docker_image: vllm/vllm-openai:cu130-nightly
+  # gpu_memory_utilization: 0.75
+  # max_model_len: 262144
+  # kv_cache_dtype: fp8
+  # max_num_seqs: 32
+  # max_num_batched_tokens: 8192
+  # tool_call_parser: qwen3_coder
+  # reasoning_parser: qwen3
+  # (no extra_env needed)
   # --- SWAP EXAMPLES ---
   # name: qwen3-vl-32b
   # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
@@ -124,17 +151,12 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified — March 2026)
+# MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.5-27B FP8             91.3 GB   0.75 util (~27GB weights + ~64GB KV cache)
-# ASR (nemotron-speech)        3.0 GB   always-on
-# TTS (magpie_tts)             1.4 GB   always-on
-# Embeddings (nomic)           0.4 GB   always-on
-# pgvector + PostgreSQL        2.0 GB   always-on
-# SearXNG                      0.5 GB   always-on
-# NemoClaw + OpenClaw          1.0 GB   always-on
+# Qwen3.5-35B-A3B FP8         91.3 GB   0.75 util (~35GB weights + ~56GB KV cache)
+# OpenClaw                     2.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                       105.6 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                     16.1 GB   ✅ safe for concurrent requests
+# TOTAL                        99.3 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     22.4 GB   ✅ safe for concurrent requests
