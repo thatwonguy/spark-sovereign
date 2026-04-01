@@ -42,7 +42,7 @@ brain:
   gpu_memory_utilization: 0.90        # ~109GB — ~75GB weights + ~34GB KV cache
   max_model_len: 65536                # 64K context — sized for available KV cache
   moe_backend: flashinfer_cutlass     # per Red Hat model card; required for NVFP4 kernels
-  load_format: fastsafetensors
+  load_format: safetensors
   max_num_seqs: 16                    # reduced vs 35B — larger active param count
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
@@ -56,6 +56,7 @@ brain:
   # gpu_memory_utilization: 0.80
   # max_model_len: 131072
   # quantization: fp8
+  # load_format: safetensors
   # max_num_seqs: 32
   # --- SWAP EXAMPLES ---
   # name: qwen3-vl-32b
