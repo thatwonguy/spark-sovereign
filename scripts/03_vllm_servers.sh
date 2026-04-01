@@ -63,43 +63,46 @@ echo ""
 
 # ── Brain ─────────────────────────────────────────────────────────────────────
 BRAIN_IMAGE=$(get_field brain docker_image)
-BRAIN_PATH=$(get_field brain local_path)
+BRAIN_HF_REPO=$(get_field brain hf_repo)
 BRAIN_NAME=$(get_field brain served_name)
 BRAIN_PORT=$(get_field brain port)
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
-BRAIN_KV=$(get_field brain kv_cache_dtype)
+BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_LOAD_FMT=$(get_field brain load_format)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
-BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
-BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
 # shellcheck disable=SC2086
-docker run -d --name brain \
-    --gpus all --ipc host --network host \
-    --restart no \
-    ${BRAIN_EXTRA_ENV} \
+docker run -d \
+    --name brain \
+    --restart unless-stopped \
+    --gpus all \
+    --ipc host \
+    --shm-size 64gb \
+    -p "${BRAIN_PORT}:${BRAIN_PORT}" \
+    -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
     -v "${MODELS_DIR}:/models" \
+    ${BRAIN_EXTRA_ENV} \
     "${BRAIN_IMAGE}" \
-        --model "/models/$(basename "${BRAIN_PATH}")" \
+        "${BRAIN_HF_REPO}" \
         --served-model-name "${BRAIN_NAME}" \
-        --host 0.0.0.0 --port "${BRAIN_PORT}" \
-        --gpu-memory-utilization "${BRAIN_UTIL}" \
+        --host 0.0.0.0 \
+        --port "${BRAIN_PORT}" \
         --max-model-len "${BRAIN_CTX}" \
-        --kv-cache-dtype "${BRAIN_KV}" \
-        ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
-        --trust-remote-code \
+        --gpu-memory-utilization "${BRAIN_UTIL}" \
+        --quantization "${BRAIN_QUANT}" \
+        --reasoning-parser "${BRAIN_REASON}" \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
-        --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
         --max-num-seqs "${BRAIN_SEQS}" \
-        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
+        --load-format "${BRAIN_LOAD_FMT}"
 
 echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
@@ -118,7 +121,7 @@ echo "========================================================"
 echo " Brain loaded and serving."
 echo "  Model : ${BRAIN_NAME}"
 echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
-echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (~27GB weights + KV cache)"
+echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM"
 echo "========================================================"
 echo ""
 echo " NEXT STEP: Open OpenClaw → run the onboard setup wizard"
