@@ -13,45 +13,57 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3.5-35B-A3B is a native MoE (35B total / ~3B active per token).
-# Served via stock vllm/vllm-openai:cu130-nightly with NVFP4 quantization.
-# Model loaded from HF cache (~/.cache/huggingface mounted into container).
-# 131K context window. ~80% GPU memory utilization on DGX Spark GB10.
+# RedHatAI/Qwen3.5-122B-A10B-NVFP4 — pre-quantized NVFP4 checkpoint.
+# 122B total / ~10B active per token. NVFP4 weights ~75GB.
+# Runtime: stock vllm/vllm-openai:cu130-nightly (NOT a Red Hat image).
 #
-# NOTE: Do NOT use hellohal2064/vllm-qwen3.5-gb10:latest — that image has a
-# custom entrypoint that hardcodes its own model path and flags, which conflicts
-# with anything passed via docker run args (duplicate flags, positional arg clash).
+# Quantization: DO NOT pass --quantization. The checkpoint embeds its own
+# quantization config; vLLM auto-detects it. Passing --quantization externally
+# conflicts with the embedded config and will error.
 #
-# REQUIRED env vars for FlashInfer MoE FP4 backend on SM121:
-#   VLLM_USE_FLASHINFER_MOE_FP4=1
-#   VLLM_FLASHINFER_MOE_BACKEND=latency
+# MoE backend: --moe_backend flashinfer_cutlass per Red Hat's own model card.
+# (NOT flashinfer_latency — that's for BF16/FP8 MoE, not NVFP4 kernels.)
+#
+# ⚠ Known issue: vLLM bug #35519 — Qwen3.5 NVFP4 on ARM64/GB10 may crash
+#   with CUDA illegal instruction during generation (~31 tok/s then dies).
+#   RedHatAI checkpoint uses llm-compressor, not modelopt — may behave
+#   differently. Watch `docker logs brain -f` on first generation.
+#
+# Memory: 0.90 * 121.69GB = ~109GB → ~75GB weights + ~34GB KV cache.
+# Context capped at 65536 to stay within KV cache budget.
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen35-35b-a3b
-  hf_repo: Qwen/Qwen3.5-35B-A3B
-  local_path: /opt/models/qwen35-35b-a3b
+  name: qwen35-122b-a10b-nvfp4
+  hf_repo: RedHatAI/Qwen3.5-122B-A10B-NVFP4
+  local_path: /opt/models/qwen35-122b-a10b-nvfp4
   port: 8000
-  served_name: qwen3.5-35b
+  served_name: qwen3.5-122b
   docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.80
-  max_model_len: 131072
-  quantization: petit_nvfp4
+  gpu_memory_utilization: 0.90        # ~109GB — ~75GB weights + ~34GB KV cache
+  max_model_len: 65536                # 64K context — sized for available KV cache
+  moe_backend: flashinfer_cutlass     # per Red Hat model card; required for NVFP4 kernels
   load_format: fastsafetensors
-  max_num_seqs: 32
+  max_num_seqs: 16                    # reduced vs 35B — larger active param count
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  extra_env:
-    VLLM_USE_FLASHINFER_MOE_FP4: "1"
-    VLLM_FLASHINFER_MOE_BACKEND: latency
+  # no quantization field — checkpoint is self-describing, vLLM auto-detects
+  # no extra_env — moe_backend is now a CLI flag, not an env var
+  # --- SWAP BACK (35B FP8 on-the-fly, ~35–45 tok/s) ---
+  # name: qwen35-35b-a3b
+  # hf_repo: Qwen/Qwen3.5-35B-A3B
+  # local_path: /opt/models/qwen35-35b-a3b
+  # served_name: qwen3.5-35b
+  # gpu_memory_utilization: 0.80
+  # max_model_len: 131072
+  # quantization: fp8
+  # max_num_seqs: 32
   # --- SWAP EXAMPLES ---
   # name: qwen3-vl-32b
   # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
   # local_path: /opt/models/qwen3-vl-32b
-  # docker_image: vllm/vllm-openai:cu130-nightly
   # gpu_memory_utilization: 0.70
   # max_model_len: 131072
-  # quantization: petit_nvfp4
-  # load_format: fastsafetensors
+  # quantization: fp8
   # max_num_seqs: 8
   # tool_call_parser: qwen3_coder
   # reasoning_parser: qwen3
@@ -137,10 +149,10 @@ infrastructure:
 # -----------------------------------------------------------------------------
 # MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
-# Component                  Allocated   Note
-# Qwen3.5-35B-A3B NVFP4        97.4 GB   0.80 util (~18GB weights + ~79GB KV cache)
-# OpenClaw                      2.0 GB   always-on
-# OS + Docker + vLLM            6.0 GB   always-on
+# Component                    Allocated   Note
+# Qwen3.5-122B-A10B NVFP4       109.5 GB   0.90 util (~75GB weights + ~34GB KV cache)
+# OpenClaw                        2.0 GB   always-on
+# OS + Docker + vLLM              6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                        105.4 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                      16.3 GB   ✅ safe for concurrent requests
+# TOTAL                          117.5 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                         4.2 GB   ⚠ tight — do not run ASR/TTS concurrently
