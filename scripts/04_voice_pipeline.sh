@@ -62,8 +62,8 @@ echo "========================================================"
 echo " Phase 4 complete."
 echo ""
 echo " Whisper is installed. Now ask your AI agent to finish"
-echo " the setup...FYI if your AI brain you selected
-echo " can't fix itself at this point, you messed up buddy! Pick a smarter model!
+echo " the setup...FYI if your AI brain you selected"
+echo " cannot fix itself at this point, you messed up buddy! Pick a smarter model!"
 echo " Open OpenClaw TUI and send this prompt:"
 echo ""
 echo "────────────────────────────────────────────────────────"
