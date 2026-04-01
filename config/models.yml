@@ -44,6 +44,7 @@ brain:
   moe_backend: flashinfer_cutlass     # per Red Hat model card; required for NVFP4 kernels
   load_format: safetensors
   max_num_seqs: 16                    # reduced vs 35B — larger active param count
+  max_num_batched_tokens: 4096        # must be >= block_size (2096) in Mamba cache align mode
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   # no quantization field — checkpoint is self-describing, vLLM auto-detects
