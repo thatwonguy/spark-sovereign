@@ -11,61 +11,36 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# BRAIN — daily driver: coding, agentic, reasoning, tool calls
+# BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# RedHatAI/Qwen3.5-122B-A10B-NVFP4 — pre-quantized NVFP4 checkpoint.
-# 122B total / ~10B active per token. NVFP4 weights ~75GB.
-# Runtime: stock vllm/vllm-openai:cu130-nightly (NOT a Red Hat image).
-#
-# Quantization: DO NOT pass --quantization. The checkpoint embeds its own
-# quantization config; vLLM auto-detects it. Passing --quantization externally
-# conflicts with the embedded config and will error.
-#
-# MoE backend: --moe_backend flashinfer_cutlass per Red Hat's own model card.
-# (NOT flashinfer_latency — that's for BF16/FP8 MoE, not NVFP4 kernels.)
-#
-# ⚠ Known issue: vLLM bug #35519 — Qwen3.5 NVFP4 on ARM64/GB10 may crash
-#   with CUDA illegal instruction during generation (~31 tok/s then dies).
-#   RedHatAI checkpoint uses llm-compressor, not modelopt — may behave
-#   differently. Watch `docker logs brain -f` on first generation.
-#
-# Memory: 0.90 * 121.69GB = ~109GB → ~75GB weights + ~34GB KV cache.
-# Context capped at 65536 to stay within KV cache budget.
+# Qwen3.5-35B-A3B is a native multimodal MoE (35B total / 3B active per token).
+# Outperforms Qwen3-VL-32B on vision, coding, and agent benchmarks.
+# ~50 tok/s sustained on single DGX Spark GB10 with FP8 + standard vLLM.
+# 262K context window. No separate vision encoder — no VL profiling OOM.
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen35-122b-a10b-nvfp4
-  hf_repo: RedHatAI/Qwen3.5-122B-A10B-NVFP4
-  local_path: /opt/models/qwen35-122b-a10b-nvfp4
+  name: qwen35-27b-fp8
+  hf_repo: Qwen/Qwen3.5-27B-FP8
+  local_path: /opt/models/qwen35-27b-fp8
   port: 8000
-  served_name: qwen3.5-122b
+  served_name: qwen35-27b
   docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.90        # ~109GB — ~75GB weights + ~34GB KV cache
-  max_model_len: 65536                # 64K context — sized for available KV cache
-  moe_backend: flashinfer_cutlass     # per Red Hat model card; required for NVFP4 kernels
-  load_format: safetensors
-  max_num_seqs: 16                    # reduced vs 35B — larger active param count
-  max_num_batched_tokens: 4096        # must be >= block_size (2096) in Mamba cache align mode
+  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~27GB weights + ~64GB KV cache; ~30GB left for ASR/TTS/OS
+  max_model_len: 262144               # 262K context
+  kv_cache_dtype: fp8
+  max_num_seqs: 32                    # Double concurrency for better parallel throughput
+  max_num_batched_tokens: 8192        # Double batch size for improved inference efficiency
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  # no quantization field — checkpoint is self-describing, vLLM auto-detects
-  # no extra_env — moe_backend is now a CLI flag, not an env var
-  # --- SWAP BACK (35B FP8 on-the-fly, ~35–45 tok/s) ---
-  # name: qwen35-35b-a3b
-  # hf_repo: Qwen/Qwen3.5-35B-A3B
-  # local_path: /opt/models/qwen35-35b-a3b
-  # served_name: qwen3.5-35b
-  # gpu_memory_utilization: 0.80
-  # max_model_len: 131072
-  # quantization: fp8
-  # load_format: safetensors
-  # max_num_seqs: 32
+  limit_mm_per_prompt: '{"image": 10}'  # multimodal: allow up to 10 images per request
   # --- SWAP EXAMPLES ---
   # name: qwen3-vl-32b
   # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
   # local_path: /opt/models/qwen3-vl-32b
-  # gpu_memory_utilization: 0.70
+  # docker_image: vllm/vllm-openai:cu130-nightly
+  # gpu_memory_utilization: 0.70      # VL profiling peak needs ~80GB — start Brain before any other GPU model
   # max_model_len: 131072
-  # quantization: fp8
+  # kv_cache_dtype: fp8
   # max_num_seqs: 8
   # tool_call_parser: qwen3_coder
   # reasoning_parser: qwen3
@@ -149,12 +124,17 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified — April 2026)
+# MEMORY MAP (128GB unified — March 2026)
 # -----------------------------------------------------------------------------
-# Component                    Allocated   Note
-# Qwen3.5-122B-A10B NVFP4       109.5 GB   0.90 util (~75GB weights + ~34GB KV cache)
-# OpenClaw                        2.0 GB   always-on
-# OS + Docker + vLLM              6.0 GB   always-on
+# Component                  Allocated   Note
+# Qwen3.5-27B FP8             91.3 GB   0.75 util (~27GB weights + ~64GB KV cache)
+# ASR (nemotron-speech)        3.0 GB   always-on
+# TTS (magpie_tts)             1.4 GB   always-on
+# Embeddings (nomic)           0.4 GB   always-on
+# pgvector + PostgreSQL        2.0 GB   always-on
+# SearXNG                      0.5 GB   always-on
+# NemoClaw + OpenClaw          1.0 GB   always-on
+# OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                          117.5 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                         4.2 GB   ⚠ tight — do not run ASR/TTS concurrently
+# TOTAL                       105.6 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     16.1 GB   ✅ safe for concurrent requests
