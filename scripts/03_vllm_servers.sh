@@ -72,6 +72,7 @@ BRAIN_QUANT=$(get_field brain quantization)       # optional — omit for self-d
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)  # optional — e.g. flashinfer_cutlass for NVFP4
 BRAIN_LOAD_FMT=$(get_field brain load_format)
 BRAIN_SEQS=$(get_field brain max_num_seqs)
+BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
@@ -118,6 +119,7 @@ docker run -d \
         --enable-prefix-caching \
         --trust-remote-code \
         --max-num-seqs "${BRAIN_SEQS}" \
+        ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
         --load-format "${BRAIN_LOAD_FMT}"
 
 echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
