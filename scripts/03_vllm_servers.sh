@@ -47,12 +47,38 @@ for name in brain qwen-brain nemotron-nano asr-server tts-server; do
     docker rm -f "${name}" 2>/dev/null || true
 done
 
-# Remove all stopped containers and unused images to free disk space.
+# Remove all stopped containers (not images — we keep the brain image cached).
 echo ">>> Pruning stopped containers..."
 docker container prune -f
 
-echo ">>> Pruning unused Docker images (frees old brain image from disk)..."
-docker image prune -a -f
+# Pull brain image only if not present locally or if the registry has a newer digest.
+# This avoids re-downloading multi-GB images on every restart.
+_pull_if_updated() {
+    local image="$1"
+    local local_digest remote_digest
+    if ! docker image inspect "${image}" >/dev/null 2>&1; then
+        echo ">>> Image not found locally — pulling ${image}..."
+        docker pull "${image}"
+        return
+    fi
+    echo ">>> Checking for updated image: ${image}"
+    remote_digest=$(docker manifest inspect "${image}" 2>/dev/null \
+        | python3 -c "import json,sys; m=json.load(sys.stdin); print(m.get('config',{}).get('digest',''))" 2>/dev/null || true)
+    local_digest=$(docker image inspect "${image}" \
+        --format '{{index .Id}}' 2>/dev/null | sed 's/sha256://' | cut -c1-12 || true)
+    if [ -z "${remote_digest}" ]; then
+        echo "    Could not reach registry — using cached image."
+    else
+        local remote_short
+        remote_short=$(echo "${remote_digest}" | sed 's/sha256://' | cut -c1-12)
+        if [ "${local_digest}" != "${remote_short}" ]; then
+            echo "    New digest detected (${remote_short} vs local ${local_digest}) — pulling..."
+            docker pull "${image}"
+        else
+            echo "    Image up-to-date (${local_digest}) — skipping pull."
+        fi
+    fi
+}
 
 # Drop page cache to fully release unified memory held by the old model.
 # Critical on DGX Spark — GPU and system share the same 128GB pool.
@@ -76,6 +102,8 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
+
+_pull_if_updated "${BRAIN_IMAGE}"
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
