@@ -26,6 +26,7 @@ brain:
   port: 8000
   served_name: qwen3-next-80b
   docker_image: avarok/dgx-vllm-nvfp4-kernel:v22
+  entrypoint_mode: serve              # Avarok image requires: serve <model> [flags] (not --model)
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~40GB weights + ~50GB KV cache; ~30GB left for ASR/TTS/OS
   max_model_len: 131072               # 131K context — bump to 200K after confirming stable
   kv_cache_dtype: fp8
