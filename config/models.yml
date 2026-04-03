@@ -11,34 +11,52 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
+# BRAIN — daily driver: coding, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3.5-35B-A3B is a native multimodal MoE (35B total / 3B active per token).
-# Outperforms Qwen3-VL-32B on vision, coding, and agent benchmarks.
-# ~50 tok/s sustained on single DGX Spark GB10 with FP8 + standard vLLM.
-# 262K context window. No separate vision encoder — no VL profiling OOM.
+# Qwen3-Next-80B-A3B is an 80B MoE (3B active per token) with MTP speculative
+# decoding. 67–112 tok/s on DGX Spark GB10 via Avarok's NVFP4 kernel image.
+# ~40GB weights in NVFP4 + FP8 KV cache — massive headroom vs prior 27B dense.
+# Requires avarok/dgx-vllm-nvfp4-kernel:v22 (community image that unlocked
+# NVFP4 on SM121/GB10). 131K context start, bump to 200K+ after confirming stable.
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen35-27b-fp8
-  hf_repo: Qwen/Qwen3.5-27B-FP8
-  local_path: /opt/models/qwen35-27b-fp8
+  name: qwen3-next-80b-nvfp4
+  hf_repo: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
+  local_path: /opt/models/qwen3-next-80b-nvfp4
   port: 8000
-  served_name: qwen35-27b
-  docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~27GB weights + ~64GB KV cache; ~30GB left for ASR/TTS/OS
-  max_model_len: 262144               # 262K context
+  served_name: qwen3-next-80b
+  docker_image: avarok/dgx-vllm-nvfp4-kernel:v22
+  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~40GB weights + ~50GB KV cache; ~30GB left for ASR/TTS/OS
+  max_model_len: 131072               # 131K context — bump to 200K after confirming stable
   kv_cache_dtype: fp8
-  max_num_seqs: 32                    # Double concurrency for better parallel throughput
-  max_num_batched_tokens: 8192        # Double batch size for improved inference efficiency
+  quantization: modelopt_fp4           # NVFP4 quantization — requires Avarok image
+  speculative_model: built_in_proposal_model  # MTP: generates ~2.4 tokens per forward pass
+  num_speculative_tokens: 2            # MTP predicts 2 tokens per step → 67–112 tok/s
+  max_num_seqs: 32                    # concurrent request slots
+  max_num_batched_tokens: 8192        # batch size for inference efficiency
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  limit_mm_per_prompt: '{"image": 10}'  # multimodal: allow up to 10 images per request
+  extra_env:
+    VLLM_FLASHINFER_MOE_BACKEND: latency  # optimized MoE dispatch for Spark
   # --- SWAP EXAMPLES ---
+  # Previous: Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s)
+  # name: qwen35-27b-fp8
+  # hf_repo: Qwen/Qwen3.5-27B-FP8
+  # local_path: /opt/models/qwen35-27b-fp8
+  # docker_image: vllm/vllm-openai:cu130-nightly
+  # gpu_memory_utilization: 0.75
+  # max_model_len: 262144
+  # kv_cache_dtype: fp8
+  # max_num_seqs: 32
+  # tool_call_parser: qwen3_coder
+  # reasoning_parser: qwen3
+  # limit_mm_per_prompt: '{"image": 10}'
+  #
   # name: qwen3-vl-32b
   # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
   # local_path: /opt/models/qwen3-vl-32b
   # docker_image: vllm/vllm-openai:cu130-nightly
-  # gpu_memory_utilization: 0.70      # VL profiling peak needs ~80GB — start Brain before any other GPU model
+  # gpu_memory_utilization: 0.70
   # max_model_len: 131072
   # kv_cache_dtype: fp8
   # max_num_seqs: 8
@@ -124,10 +142,10 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified — March 2026)
+# MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.5-27B FP8             91.3 GB   0.75 util (~27GB weights + ~64GB KV cache)
+# Qwen3-Next-80B NVFP4        ~91 GB   0.75 util (~40GB weights + ~50GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on
@@ -136,5 +154,5 @@ infrastructure:
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                       105.6 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                     16.1 GB   ✅ safe for concurrent requests
+# TOTAL (estimated)           ~95 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM (estimated)        ~27 GB   ✅ much more than prior 16.1GB
