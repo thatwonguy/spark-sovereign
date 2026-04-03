@@ -63,10 +63,21 @@ BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
 BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
+BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
+
+# Build the model argument based on entrypoint style.
+# Avarok images use: serve <model> [flags]
+# Official vLLM images use: --model <path> [flags]
+BRAIN_MODEL_PATH="/models/$(basename "${BRAIN_PATH}")"
+if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
+    MODEL_ARGS="serve ${BRAIN_MODEL_PATH}"
+else
+    MODEL_ARGS="--model ${BRAIN_MODEL_PATH}"
+fi
 
 # shellcheck disable=SC2086
 docker run -d --name brain \
@@ -75,7 +86,7 @@ docker run -d --name brain \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     "${BRAIN_IMAGE}" \
-        --model "/models/$(basename "${BRAIN_PATH}")" \
+        ${MODEL_ARGS} \
         --served-model-name "${BRAIN_NAME}" \
         --host 0.0.0.0 --port "${BRAIN_PORT}" \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
