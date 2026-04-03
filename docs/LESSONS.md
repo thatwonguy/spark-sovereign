@@ -183,4 +183,29 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-*Last updated: April 2, 2026*
+## 11. SM12.1 (DGX Spark) Requires Specific vLLM Environment Variables
+
+**What happened:** After switching to Nemotron-3-Nano-30B-A3B-FP8, we audited the official NVIDIA HuggingFace model card and the Avarok DGX Spark vLLM docs against our actual `models.yml` config. Several critical flags were missing or wrong.
+
+**What was wrong:**
+- `quantization: fp8` was explicitly set — unnecessary and potentially harmful. The FP8 model checkpoint is pre-quantized; vLLM auto-detects this. Removed.
+- `max_num_seqs: 32` — the official NVIDIA recipe uses 8. On Spark's bandwidth-constrained unified memory, 32 concurrent sequences degrades throughput or OOMs.
+- No SM12.1-specific environment variables were set.
+
+**What was added:**
+- `VLLM_USE_FLASHINFER_MOE_FP8=1` — required to activate the FP8 MoE kernel path (from official HF model card)
+- `VLLM_FLASHINFER_MOE_BACKEND=latency` — the `throughput` backend has SM120 kernel issues on SM12.1 (from Avarok DGX Spark vLLM docs)
+- `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1` — needed when pushing past default context length
+- `--async-scheduling` — NVIDIA recommended for reducing host overhead between decoding steps
+- `max_num_seqs` dropped from 32 to 8
+
+**What was already correct (scripts had it, Sonnet incorrectly flagged as missing):**
+- `--trust-remote-code` — hardcoded in `03_vllm_servers.sh` and `start_brain_ad_hoc.sh`, not read from yml
+- `--enable-auto-tool-choice` — same, hardcoded in both scripts
+- `reasoning_parser_plugin: nano_v3_reasoning_parser.py` — bare filename is correct; scripts prepend the model path (`${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}`), and `huggingface-cli download` pulls the file as part of the full repo
+
+**Key lesson:** Always cross-reference AI-suggested configs against the actual official model card AND the scripts that consume the config. Sonnet got ~80% right but also recommended adding flags that would have broken path construction or duplicated hardcoded behavior.
+
+---
+
+*Last updated: April 3, 2026*
