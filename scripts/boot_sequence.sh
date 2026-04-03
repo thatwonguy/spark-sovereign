@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# =============================================================================
-# Auto-start boot sequence — installed as spark-sovereign.service by
-# scripts/01_system_prep.sh. Runs automatically on every boot after Docker.
-#
-# Sequence: Start Brain → wait until port 8000 ready → done.
-# OpenClaw reconnects to Brain automatically once the endpoint is up.
-# =============================================================================
+# Sequenced boot — CPU services first, then Brain, then voice.
 set -euo pipefail
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log() { echo "[spark-boot] $*"; }
+
+log "Starting CPU-only services..."
+for name in pgvector searxng; do
+    docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
+done
 
 log "Starting Brain..."
 bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
@@ -23,5 +21,14 @@ until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
     fi
     sleep 5
 done
+log "Brain ready."
 
-log "Brain ready. Stack is up."
+log "Starting voice services..."
+for name in asr-server tts-server; do
+    docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
+done
+
+log "Starting OpenClaw gateway..."
+openclaw gateway start 2>/dev/null || true
+
+log "Stack is up."
