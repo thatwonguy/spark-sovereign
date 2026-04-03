@@ -110,35 +110,52 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-## 8. Model Upgraded: 27B-FP8 → Qwen3-Next-80B-A3B-NVFP4
+## 8. Qwen3-Next-80B NVFP4 Attempted and Abandoned
 
-**Original model:** Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s, 16.1GB headroom)
+**What we tried:** nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 via `avarok/vllm-dgx-spark:latest`
 
-**Problem identified:** Dense 27B was the slowest and most memory-hungry option. Used 105.6GB of 121.69GB, leaving only 16.1GB headroom — tight for concurrent requests and long sessions.
+**What worked:**
+- Model loaded and served on port 8888 (~88.4GB VRAM, healthy container)
+- Non-streaming tool calls parsed correctly with `--tool-call-parser hermes`
+- ~40GB weights in NVFP4, plenty of headroom
 
-**New model:** nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 (MoE — 80B total / 3B active per token)
+**What broke — and why we abandoned it:**
 
-**Why it's better for this use case:**
-- NVFP4 quantization: ~40GB weights vs 27GB but with MoE efficiency (only 3B active)
-- MTP speculative decoding: 67–112 tok/s (vs ~50 tok/s dense)
-- Estimated ~95GB total usage → ~27GB headroom (vs 16.1GB prior)
-- 131K context window (community-proven ceiling at 0.75 util with multi-service)
-- Same tool calling and reasoning parsers (qwen3_coder / qwen3)
+1. **Avarok image quirks:** Custom entrypoint ignores `--port`, `--served-model-name`, and all CLI flags. Everything must be passed as env vars (`MODEL`, `PORT`, `VLLM_EXTRA_ARGS`). Required reverse-engineering the entrypoint script.
 
-**Docker image change:** Switched from `vllm/vllm-openai:cu130-nightly` to `avarok/vllm-dgx-spark:latest`. The Avarok community image unlocked NVFP4 on SM121/GB10 with software E2M1 conversion patches. Standard vLLM images fail to JIT-compile CUTLASS MoE kernels on this GPU arch.
+2. **Tool calling broken in streaming mode:** vLLM 0.14.0rc2 (Jan 2026) in the Avarok image has a known hermes parser bug where streaming responses return raw `<tool_call>` XML as text content instead of parsed `tool_calls` arrays. OpenClaw always sends `stream: true` — no config option to disable it at the API level. Tried `hermes`, `qwen3_coder`, and `qwen3_xml` parsers — none worked in streaming.
 
-**Avarok image quirks discovered during deployment:**
-- Ignores `--port` flag — always binds to 8888 (updated all configs/scripts)
-- Ignores `--served-model-name` — serves as the model path instead
-- Requires `MODEL` env var (not positional arg) in `serve` mode
-- Prefix caching not supported on Qwen3-Next architecture — removed flag
+3. **NVFP4 kernel JIT failures:** The first Avarok image (`avarok/dgx-vllm-nvfp4-kernel:v22`) failed to JIT-compile FlashInfer CUTLASS MoE kernels on SM121a. Had to switch to `avarok/vllm-dgx-spark:latest` which had pre-built kernels.
 
-**Community-proven flags (from NVIDIA forums):**
-- `--enforce-eager` required for NVFP4 stability (avoids CUDA graph crashes)
-- `max_num_seqs: 16` (not 32 — NVFP4 stable range is 8-16)
-- `VLLM_FLASHINFER_MOE_BACKEND=latency` for optimized MoE dispatch
-- `VLLM_ATTENTION_BACKEND=FLASH_ATTN` for VRAM efficiency
-- `VLLM_USE_DEEP_GEMM=0` to avoid experimental GEMM paths that bloat memory
+4. **MTP speculative decoding unsupported:** `--speculative-model` flag not recognized by this vLLM build, eliminating the headline speed advantage (67–112 tok/s).
+
+**Key lesson:** Community Docker images for NVFP4 on DGX Spark are bleeding-edge. The vLLM version inside (0.14.0rc2) is too old for reliable streaming tool calls. Until Avarok ships an image with vLLM 0.8+, NVFP4 models on Spark can't do tool calling through OpenClaw.
+
+---
+
+## 9. Model Settled: Qwen3-30B-A3B-FP8 (Working Stack)
+
+**Final model:** Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 (MoE — 30B total / 3B active per token)
+
+**Docker image:** `vllm/vllm-openai:cu130-nightly` (the proven standard image)
+
+**Why this is the right choice:**
+- Standard vLLM image — no custom entrypoint, no env var workarounds, `--port` and `--served-model-name` work normally
+- Tool calling works with `--tool-call-parser hermes` in both streaming and non-streaming
+- ~30GB FP8 weights → ~60GB KV cache at 0.75 util → massive context headroom
+- ~46–54 tok/s — comparable to old dense 27B but with MoE efficiency
+- 131K context window, FP8 KV cache
+- Port 8000 (standard), clean model name
+
+**What changed from old 27B dense setup:**
+- MoE architecture: only 3B params active per token (vs all 27B) — more efficient inference
+- More KV cache headroom: ~60GB vs ~64GB (similar) but lighter compute per token
+- Same docker image, same port, same scripts — drop-in swap
+
+**OpenClaw config for this model:**
+- Base URL: `http://127.0.0.1:8000/v1`
+- Model ID: `qwen3-30b` (the served_name)
+- Streaming: works with any mode (partial, block, off)
 
 ---
 

@@ -13,8 +13,8 @@ done
 log "Starting Brain..."
 bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
 
-log "Waiting for Brain to be ready (port 8888)..."
-until curl -sf http://localhost:8888/v1/models >/dev/null 2>&1; do
+log "Waiting for Brain to be ready (port 8000)..."
+until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
     if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
         log "ERROR: brain container exited. Check: docker logs brain"
         exit 1

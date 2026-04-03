@@ -13,7 +13,7 @@ spark-sovereign (infrastructure layer)
 │   ├── ASR server (port 8002) - Speech-to-text
 │   ├── TTS server (port 8003) - Text-to-speech
 │   ├── pgvector (port 5432) - Vector database
-│   └── searxng (port 8888) - Search engine
+│   └── searxng (port 8088) - Search engine
 │
 └── OpenClaw (agent layer)
     ├── Gateway (port 18789) - Agent routing
@@ -127,7 +127,7 @@ These files must be accessed via tools:
 
 #### 2. "OpenClaw not connecting to brain"
 **Cause:** vLLM container not running or wrong port
-**Fix:** `docker ps | grep vllm` then `curl http://localhost:8888/v1/models`
+**Fix:** `docker ps | grep vllm` then `curl http://localhost:8000/v1/models`
 
 #### 3. "Precompaction prompt fires on every message"
 **Cause:** Memory flush mechanism triggering unnecessarily

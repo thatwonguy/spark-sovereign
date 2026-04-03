@@ -100,11 +100,11 @@ bash scripts/01_system_prep.sh
 
 Verify Brain is up and returning models:
 ```bash
-curl http://localhost:8888/v1/models
+curl http://localhost:8000/v1/models
 ```
 
 If Brain is up, check OpenClaw's configured endpoint matches:
-- Base URL: `http://localhost:8888/v1`
+- Base URL: `http://localhost:8000/v1`
 - Model ID: matches `served_name` in `config/models.yml`
 
 ---

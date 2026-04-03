@@ -13,35 +13,27 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3-Next-80B-A3B is an 80B MoE (3B active per token) with MTP speculative
-# decoding. 67–112 tok/s on DGX Spark GB10 via Avarok's NVFP4 kernel image.
-# ~40GB weights in NVFP4 + FP8 KV cache — massive headroom vs prior 27B dense.
-# Requires avarok/dgx-vllm-nvfp4-kernel:v22 (community image that unlocked
-# NVFP4 on SM121/GB10). 131K context start, bump to 200K+ after confirming stable.
+# Qwen3-30B-A3B is a 30B MoE (3B active per token) in FP8.
+# ~46–54 tok/s on DGX Spark GB10. ~30GB weights + FP8 KV cache.
+# Uses the proven vllm/vllm-openai:cu130-nightly image (standard entrypoint).
+# Tool calling works correctly with hermes parser (no streaming bugs).
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen3-next-80b-nvfp4
-  hf_repo: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
-  local_path: /opt/models/qwen3-next-80b-nvfp4
-  port: 8888                            # Avarok image overrides --port; defaults to 8888
-  served_name: /models/qwen3-next-80b-nvfp4  # Avarok ignores --served-model-name; uses model path
-  docker_image: avarok/vllm-dgx-spark:latest
-  entrypoint_mode: serve              # Avarok image requires: serve <model> [flags] (not --model)
-  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~40GB weights + ~50GB KV cache; ~30GB left for ASR/TTS/OS
-  max_model_len: 131072               # 131K — community-proven ceiling at 0.75 util w/ multi-service
+  name: qwen3-30b-a3b-fp8
+  hf_repo: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+  local_path: /opt/models/qwen3-30b-a3b-fp8
+  port: 8000                            # standard vLLM port
+  served_name: qwen3-30b
+  docker_image: vllm/vllm-openai:cu130-nightly
+  # entrypoint_mode: (not set — standard vLLM image uses --model flag)
+  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB — ~30GB weights + ~60GB KV cache; ~30GB left
+  max_model_len: 131072               # 131K context
   kv_cache_dtype: fp8
-  quantization: modelopt_fp4           # NVFP4 quantization — requires Avarok image
-  enforce_eager: true                  # required for NVFP4 stability (avoids CUDA graph crashes)
-  # speculative_model: built_in_proposal_model  # MTP: not supported in Avarok vLLM build
-  # num_speculative_tokens: 2                   # re-enable when image adds --speculative-model
-  max_num_seqs: 16                    # NVFP4 stable range is 8-16; 32 risks OOM under load
-  max_num_batched_tokens: 8192        # batch size for inference efficiency
-  tool_call_parser: qwen3_xml            # newer parser, handles streaming tool calls correctly
+  quantization: fp8
+  max_num_seqs: 32                    # FP8 handles higher concurrency than NVFP4
+  max_num_batched_tokens: 8192
+  tool_call_parser: hermes             # Qwen3 MoE uses <tool_call> XML (Hermes convention)
   reasoning_parser: qwen3
-  extra_env:
-    VLLM_FLASHINFER_MOE_BACKEND: latency    # optimized MoE dispatch for Spark
-    VLLM_ATTENTION_BACKEND: FLASH_ATTN      # improves VRAM efficiency
-    VLLM_USE_DEEP_GEMM: "0"                 # avoids experimental GEMM paths that bloat memory
   # --- SWAP EXAMPLES ---
   # Previous: Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s)
   # name: qwen35-27b-fp8
@@ -149,7 +141,7 @@ infrastructure:
 # MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3-Next-80B NVFP4        ~91 GB   0.75 util (~40GB weights + ~50GB KV cache)
+# Qwen3-30B-A3B FP8            ~91 GB   0.75 util (~30GB weights + ~60GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on
