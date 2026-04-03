@@ -13,28 +13,42 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3-30B-A3B is a 30B MoE (3B active per token) in FP8.
-# ~46–54 tok/s on DGX Spark GB10. ~30GB weights + FP8 KV cache.
+# Nemotron-3-Nano-30B-A3B is a 30B MoE (3B active per token) in FP8.
+# ~35–45 tok/s on DGX Spark GB10. ~30GB weights + FP8 KV cache.
 # Uses the proven vllm/vllm-openai:cu130-nightly image (standard entrypoint).
-# Tool calling works correctly with hermes parser (no streaming bugs).
+# Tool calling uses qwen3_coder parser. Requires custom reasoning parser plugin
+# (nano_v3_reasoning_parser.py ships inside the HF repo).
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen3-30b-a3b-fp8
-  hf_repo: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
-  local_path: /opt/models/qwen3-30b-a3b-fp8
+  name: nemotron-3-nano-fp8
+  hf_repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8
+  local_path: /opt/models/nemotron-3-nano-fp8
   port: 8000                            # standard vLLM port
-  served_name: qwen3-30b
+  served_name: nemotron-3-nano
   docker_image: vllm/vllm-openai:cu130-nightly
   # entrypoint_mode: (not set — standard vLLM image uses --model flag)
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB — ~30GB weights + ~60GB KV cache; ~30GB left
   max_model_len: 131072               # 131K context
   kv_cache_dtype: fp8
   quantization: fp8
-  max_num_seqs: 32                    # FP8 handles higher concurrency than NVFP4
+  max_num_seqs: 32
   max_num_batched_tokens: 8192
-  tool_call_parser: hermes             # Qwen3 MoE uses <tool_call> XML (Hermes convention)
-  reasoning_parser: qwen3
+  tool_call_parser: qwen3_coder        # Nemotron-3-Nano uses qwen3_coder format
+  reasoning_parser: nano_v3
+  reasoning_parser_plugin: nano_v3_reasoning_parser.py  # ships inside HF repo
   # --- SWAP EXAMPLES ---
+  # Previous: Qwen3-30B-A3B-FP8 (MoE, ~46-54 tok/s, hermes parser)
+  # name: qwen3-30b-a3b-fp8
+  # hf_repo: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+  # local_path: /opt/models/qwen3-30b-a3b-fp8
+  # docker_image: vllm/vllm-openai:cu130-nightly
+  # gpu_memory_utilization: 0.75
+  # max_model_len: 131072
+  # kv_cache_dtype: fp8
+  # max_num_seqs: 32
+  # tool_call_parser: hermes
+  # reasoning_parser: qwen3
+  #
   # Previous: Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s)
   # name: qwen35-27b-fp8
   # hf_repo: Qwen/Qwen3.5-27B-FP8
@@ -44,18 +58,6 @@ brain:
   # max_model_len: 262144
   # kv_cache_dtype: fp8
   # max_num_seqs: 32
-  # tool_call_parser: qwen3_coder
-  # reasoning_parser: qwen3
-  # limit_mm_per_prompt: '{"image": 10}'
-  #
-  # name: qwen3-vl-32b
-  # hf_repo: Qwen/Qwen3-VL-32B-Instruct-FP8
-  # local_path: /opt/models/qwen3-vl-32b
-  # docker_image: vllm/vllm-openai:cu130-nightly
-  # gpu_memory_utilization: 0.70
-  # max_model_len: 131072
-  # kv_cache_dtype: fp8
-  # max_num_seqs: 8
   # tool_call_parser: qwen3_coder
   # reasoning_parser: qwen3
 
@@ -141,7 +143,7 @@ infrastructure:
 # MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3-30B-A3B FP8            ~91 GB   0.75 util (~30GB weights + ~60GB KV cache)
+# Nemotron-3-Nano FP8          ~91 GB   0.75 util (~30GB weights + ~60GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on

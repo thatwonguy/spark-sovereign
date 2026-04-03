@@ -4,7 +4,7 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 
 **Zero cloud. Zero API cost. Zero data leaving your hardware.**
 
-- **Qwen3-30B-A3B-FP8** — 30B MoE (3B active), ~46–54 tok/s, 131K context, working tool calls
+- **Nemotron-3-Nano-30B-A3B-FP8** — 30B MoE (3B active), ~35–45 tok/s, 131K context, working tool calls
 - **OpenClaw** handles everything else: voice, memory, RAG, web search, Telegram, MCP tools
 - **One model. One endpoint. Fully self-contained.**
 
@@ -66,14 +66,15 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 
 | Component | Model | Size | Port |
 |---|---|---|---|
-| **Brain** | Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 | ~30 GB | 8000 |
+| **Brain** | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 | ~30 GB | 8000 |
 
-**Why Qwen3-30B-A3B-FP8:**
+**Why Nemotron-3-Nano-30B-A3B-FP8:**
 - 30B MoE with only 3B active per token — efficient and fast
-- ~46–54 tok/s on DGX Spark (vs ~50 tok/s prior dense 27B)
+- NVIDIA's own model — optimized for DGX Spark hardware
+- ~35–45 tok/s on DGX Spark
 - Standard vllm/vllm-openai:cu130-nightly image — proven, no custom image needed
 - 131K context window with FP8 KV cache
-- Tool calling works correctly (hermes parser, no streaming bugs)
+- Tool calling works with qwen3_coder parser + custom nano_v3 reasoning parser plugin
 - ~30GB weights → ~60GB KV cache headroom at 0.75 util
 
 ---
@@ -83,7 +84,7 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ═══════════════════════════════════════════════════════════════
- Qwen3-30B-A3B FP8 (Brain)    ~91.0 GB    0.75 util (~30GB weights + ~60GB KV cache)
+ Nemotron-3-Nano FP8 (Brain)   ~91.0 GB    0.75 util (~30GB weights + ~60GB KV cache)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ───────────────────────────────────────────────────────────────
@@ -184,7 +185,7 @@ nano .env   # set HF_TOKEN at minimum
 ```bash
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service
-bash scripts/02_download_models.sh # Downloads Qwen3-30B-A3B-FP8 → /opt/models (~30GB)
+bash scripts/02_download_models.sh # Downloads Nemotron-3-Nano-FP8 → /opt/models (~30GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 
@@ -207,7 +208,7 @@ Script 01 installs a systemd service (`spark-sovereign.service`) that runs autom
 2. Brain container starts via `start_brain_ad_hoc.sh`
 3. Service waits until port 8000 is ready before completing
 
-**Note:** Brain takes **3–5 minutes to load** after a cold boot while 27GB of weights load into memory. This is normal — OpenClaw will reconnect automatically once port 8000 is ready.
+**Note:** Brain takes **3–5 minutes to load** after a cold boot while ~30GB of weights load into memory. This is normal — OpenClaw will reconnect automatically once port 8000 is ready.
 
 To check service status:
 ```bash
