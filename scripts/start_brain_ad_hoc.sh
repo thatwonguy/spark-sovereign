@@ -51,6 +51,7 @@ BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
 BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
 BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
+BRAIN_ASYNC=$(get_field brain async_scheduling)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
@@ -83,6 +84,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
     [ -n "${BRAIN_SPEC_TOKENS}" ]  && EXTRA_ARGS+=" --num-speculative-tokens ${BRAIN_SPEC_TOKENS}"
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
+    [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
 
     # shellcheck disable=SC2086
     docker run -d --name brain \
@@ -122,7 +124,8 @@ else
             --tool-call-parser "${BRAIN_TOOL}" \
             --reasoning-parser "${BRAIN_REASON}" \
             ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
-            --max-num-seqs "${BRAIN_SEQS}"
+            --max-num-seqs "${BRAIN_SEQS}" \
+            $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling")
 fi
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"

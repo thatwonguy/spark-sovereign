@@ -27,12 +27,20 @@ brain:
   served_name: nemotron-3-nano
   docker_image: vllm/vllm-openai:cu130-nightly
   # entrypoint_mode: (not set — standard vLLM image uses --model flag)
+
+  # SM12.1 (DGX Spark / GB10) required env vars — passed as -e flags to docker
+  extra_env:
+    VLLM_USE_FLASHINFER_MOE_FP8: "1"          # required for FP8 MoE kernel path
+    VLLM_FLASHINFER_MOE_BACKEND: "latency"     # throughput backend has SM120 kernel issues on SM12.1
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"         # needed if pushing past default context
+
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB — ~30GB weights + ~60GB KV cache; ~30GB left
   max_model_len: 131072               # 131K context
   kv_cache_dtype: fp8
-  quantization: fp8
-  max_num_seqs: 32
+  # quantization: NOT set — model checkpoint is already FP8, vLLM auto-detects
+  max_num_seqs: 8                     # official NVIDIA recommendation; 32 OOMs or degrades on Spark
   max_num_batched_tokens: 8192
+  async_scheduling: true              # NVIDIA recommended — reduces host overhead between decoding steps
   tool_call_parser: qwen3_coder        # Nemotron-3-Nano uses qwen3_coder format
   reasoning_parser: nano_v3
   reasoning_parser_plugin: nano_v3_reasoning_parser.py  # ships inside HF repo
