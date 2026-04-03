@@ -110,4 +110,36 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-*Last updated: March 31, 2026*
+## 8. Model Upgraded: 27B-FP8 → Qwen3-Next-80B-A3B-NVFP4
+
+**Original model:** Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s, 16.1GB headroom)
+
+**Problem identified:** Dense 27B was the slowest and most memory-hungry option. Used 105.6GB of 121.69GB, leaving only 16.1GB headroom — tight for concurrent requests and long sessions.
+
+**New model:** nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 (MoE — 80B total / 3B active per token)
+
+**Why it's better for this use case:**
+- NVFP4 quantization: ~40GB weights vs 27GB but with MoE efficiency (only 3B active)
+- MTP speculative decoding: 67–112 tok/s (vs ~50 tok/s dense)
+- Estimated ~95GB total usage → ~27GB headroom (vs 16.1GB prior)
+- 131K context window (community-proven ceiling at 0.75 util with multi-service)
+- Same tool calling and reasoning parsers (qwen3_coder / qwen3)
+
+**Docker image change:** Switched from `vllm/vllm-openai:cu130-nightly` to `avarok/vllm-dgx-spark:latest`. The Avarok community image unlocked NVFP4 on SM121/GB10 with software E2M1 conversion patches. Standard vLLM images fail to JIT-compile CUTLASS MoE kernels on this GPU arch.
+
+**Avarok image quirks discovered during deployment:**
+- Ignores `--port` flag — always binds to 8888 (updated all configs/scripts)
+- Ignores `--served-model-name` — serves as the model path instead
+- Requires `MODEL` env var (not positional arg) in `serve` mode
+- Prefix caching not supported on Qwen3-Next architecture — removed flag
+
+**Community-proven flags (from NVIDIA forums):**
+- `--enforce-eager` required for NVFP4 stability (avoids CUDA graph crashes)
+- `max_num_seqs: 16` (not 32 — NVFP4 stable range is 8-16)
+- `VLLM_FLASHINFER_MOE_BACKEND=latency` for optimized MoE dispatch
+- `VLLM_ATTENTION_BACKEND=FLASH_ATTN` for VRAM efficiency
+- `VLLM_USE_DEEP_GEMM=0` to avoid experimental GEMM paths that bloat memory
+
+---
+
+*Last updated: April 3, 2026*

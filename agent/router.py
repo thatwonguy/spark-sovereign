@@ -32,7 +32,7 @@ log = get_logger(__name__)
 
 MODELS = {
     "nano": "http://localhost:8001/v1/nemotron-nano",
-    "deep": "http://localhost:8000/v1/qwen3-next-80b",
+    "deep": "http://localhost:8888/v1",
 }
 
 DEEP_TRIGGERS = [
@@ -192,7 +192,7 @@ def handle_vision(image_b64: str, user_question: str) -> str:
     brain_resp = requests.post(
         f"{MODELS['deep']}/chat/completions",
         json={
-            "model": "qwen3-next-80b",
+            "model": "/models/qwen3-next-80b-nvfp4",
             "messages": [{
                 "role": "user",
                 "content": [

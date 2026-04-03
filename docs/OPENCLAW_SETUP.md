@@ -127,7 +127,7 @@ These files must be accessed via tools:
 
 #### 2. "OpenClaw not connecting to brain"
 **Cause:** vLLM container not running or wrong port
-**Fix:** `docker ps | grep vllm` then `curl http://localhost:8000/v1/models`
+**Fix:** `docker ps | grep vllm` then `curl http://localhost:8888/v1/models`
 
 #### 3. "Precompaction prompt fires on every message"
 **Cause:** Memory flush mechanism triggering unnecessarily
