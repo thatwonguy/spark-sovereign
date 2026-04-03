@@ -4,7 +4,7 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 
 **Zero cloud. Zero API cost. Zero data leaving your hardware.**
 
-- **Qwen3-Next-80B-A3B-NVFP4** — 80B MoE (3B active), 67–112 tok/s with MTP, 131K context
+- **Qwen3-30B-A3B-FP8** — 30B MoE (3B active), ~46–54 tok/s, 131K context, working tool calls
 - **OpenClaw** handles everything else: voice, memory, RAG, web search, Telegram, MCP tools
 - **One model. One endpoint. Fully self-contained.**
 
@@ -13,14 +13,14 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 ## How It Works
 
 ```
-vLLM (Brain)  →  http://localhost:8888/v1
+vLLM (Brain)  →  http://localhost:8000/v1
       ↑
 OpenClaw  →  connects via onboard wizard, handles all agent capabilities
       ↑
 You  →  OpenClaw TUI, Telegram, browser UI at http://localhost:18789
 ```
 
-Brain runs as a Docker container, starts automatically on boot, and serves the model at port 8888 (Avarok image default). OpenClaw connects to it and provides everything on top — voice, memory, web search, Telegram, MCP tools, agent orchestration.
+Brain runs as a Docker container, starts automatically on boot, and serves the model at port 8000. OpenClaw connects to it and provides everything on top — voice, memory, web search, Telegram, MCP tools, agent orchestration.
 
 ---
 
@@ -66,15 +66,15 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 
 | Component | Model | Size | Port |
 |---|---|---|---|
-| **Brain** | nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 | ~40 GB | 8000 |
+| **Brain** | Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 | ~30 GB | 8000 |
 
-**Why Qwen3-Next-80B-A3B-NVFP4:**
-- 80B MoE with only 3B active per token — faster and smarter than dense 27B
-- MTP speculative decoding: 67–112 tok/s on DGX Spark (vs ~50 tok/s prior)
-- NVFP4 quantization via Avarok's dgx-vllm image (proven on SM121/GB10)
-- 131K context window (start), extensible to 200K+
-- Thinking mode + tool calling built in
-- FP8 KV cache for memory efficiency
+**Why Qwen3-30B-A3B-FP8:**
+- 30B MoE with only 3B active per token — efficient and fast
+- ~46–54 tok/s on DGX Spark (vs ~50 tok/s prior dense 27B)
+- Standard vllm/vllm-openai:cu130-nightly image — proven, no custom image needed
+- 131K context window with FP8 KV cache
+- Tool calling works correctly (hermes parser, no streaming bugs)
+- ~30GB weights → ~60GB KV cache headroom at 0.75 util
 
 ---
 
@@ -83,7 +83,7 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ═══════════════════════════════════════════════════════════════
- Qwen3-Next-80B NVFP4 (Brain) ~91.0 GB    0.75 util (~40GB weights + ~50GB KV cache)
+ Qwen3-30B-A3B FP8 (Brain)    ~91.0 GB    0.75 util (~30GB weights + ~60GB KV cache)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ───────────────────────────────────────────────────────────────
@@ -184,13 +184,13 @@ nano .env   # set HF_TOKEN at minimum
 ```bash
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service
-bash scripts/02_download_models.sh # Downloads Qwen3-Next-80B-A3B-NVFP4 → /opt/models (~40GB)
+bash scripts/02_download_models.sh # Downloads Qwen3-30B-A3B-FP8 → /opt/models (~30GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 
 Then open OpenClaw, run the onboard setup wizard, and point it at:
 ```
-http://localhost:8888/v1
+http://localhost:8000/v1
 ```
 
 OpenClaw handles everything from there — voice, memory, web search, Telegram, MCP tools.
