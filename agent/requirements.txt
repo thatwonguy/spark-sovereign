@@ -1,4 +1,0 @@
-psycopg2-binary>=2.9
-sentence-transformers>=3.0
-requests>=2.31
-pyyaml>=6.0
