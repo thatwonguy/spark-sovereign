@@ -64,45 +64,63 @@ done
 
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
-# Build the model argument based on entrypoint style.
-# Avarok images use: MODEL env var + "serve" mode
-# Official vLLM images use: --model <path> [flags]
 BRAIN_MODEL_PATH="/models/$(basename "${BRAIN_PATH}")"
-if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
-    ENTRYPOINT_CMD="serve"
-    MODEL_ENV="-e MODEL=${BRAIN_MODEL_PATH}"
-    MODEL_FLAG=""
-else
-    ENTRYPOINT_CMD=""
-    MODEL_ENV=""
-    MODEL_FLAG="--model ${BRAIN_MODEL_PATH}"
-fi
 
-# shellcheck disable=SC2086
-docker run -d --name brain \
-    --gpus all --ipc host --network host \
-    --restart no \
-    ${BRAIN_EXTRA_ENV} \
-    ${MODEL_ENV} \
-    -v "${MODELS_DIR}:/models" \
-    "${BRAIN_IMAGE}" \
-        ${ENTRYPOINT_CMD} \
-        ${MODEL_FLAG} \
-        --served-model-name "${BRAIN_NAME}" \
-        --host 0.0.0.0 --port "${BRAIN_PORT}" \
-        --gpu-memory-utilization "${BRAIN_UTIL}" \
-        --max-model-len "${BRAIN_CTX}" \
-        --kv-cache-dtype "${BRAIN_KV}" \
-        ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
-        ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
-        ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
-        ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
-        $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
-        --trust-remote-code \
-        --enable-auto-tool-choice \
-        --tool-call-parser "${BRAIN_TOOL}" \
-        --reasoning-parser "${BRAIN_REASON}" \
-        --max-num-seqs "${BRAIN_SEQS}"
+if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
+    # ── Avarok image ──────────────────────────────────────────────────────────
+    # Avarok entrypoint reads: MODEL, PORT, HOST, MAX_MODEL_LEN, GPU_MEMORY_UTIL,
+    # MAX_NUM_SEQS as env vars. All other vLLM flags go into VLLM_EXTRA_ARGS.
+    EXTRA_ARGS=""
+    EXTRA_ARGS+=" --kv-cache-dtype ${BRAIN_KV}"
+    EXTRA_ARGS+=" --trust-remote-code"
+    EXTRA_ARGS+=" --enable-auto-tool-choice"
+    EXTRA_ARGS+=" --tool-call-parser ${BRAIN_TOOL}"
+    EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
+    [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
+    [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
+    [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
+    [ -n "${BRAIN_SPEC_TOKENS}" ]  && EXTRA_ARGS+=" --num-speculative-tokens ${BRAIN_SPEC_TOKENS}"
+    [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
+
+    # shellcheck disable=SC2086
+    docker run -d --name brain \
+        --gpus all --ipc host --network host \
+        --restart no \
+        -e MODEL="${BRAIN_MODEL_PATH}" \
+        -e PORT="${BRAIN_PORT}" \
+        -e MAX_MODEL_LEN="${BRAIN_CTX}" \
+        -e GPU_MEMORY_UTIL="${BRAIN_UTIL}" \
+        -e MAX_NUM_SEQS="${BRAIN_SEQS}" \
+        -e VLLM_EXTRA_ARGS="${EXTRA_ARGS}" \
+        ${BRAIN_EXTRA_ENV} \
+        -v "${MODELS_DIR}:/models" \
+        "${BRAIN_IMAGE}"
+else
+    # ── Standard vLLM image ───────────────────────────────────────────────────
+    # shellcheck disable=SC2086
+    docker run -d --name brain \
+        --gpus all --ipc host --network host \
+        --restart no \
+        ${BRAIN_EXTRA_ENV} \
+        -v "${MODELS_DIR}:/models" \
+        "${BRAIN_IMAGE}" \
+            --model "${BRAIN_MODEL_PATH}" \
+            --served-model-name "${BRAIN_NAME}" \
+            --host 0.0.0.0 --port "${BRAIN_PORT}" \
+            --gpu-memory-utilization "${BRAIN_UTIL}" \
+            --max-model-len "${BRAIN_CTX}" \
+            --kv-cache-dtype "${BRAIN_KV}" \
+            ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
+            ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+            ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
+            ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
+            $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
+            --trust-remote-code \
+            --enable-auto-tool-choice \
+            --tool-call-parser "${BRAIN_TOOL}" \
+            --reasoning-parser "${BRAIN_REASON}" \
+            --max-num-seqs "${BRAIN_SEQS}"
+fi
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
