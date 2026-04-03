@@ -12,8 +12,8 @@ model: openai/qwen35-122b
 # Editor model — Nano for fast diff application
 editor-model: openai/nemotron-nano
 
-# Local vLLM endpoint (Brain on 8000)
-openai-api-base: http://localhost:8000/v1
+# Local vLLM endpoint (Brain on 8888 — Avarok image default)
+openai-api-base: http://localhost:8888/v1
 openai-api-key: EMPTY
 
 # Coding behavior

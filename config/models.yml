@@ -23,8 +23,8 @@ brain:
   name: qwen3-next-80b-nvfp4
   hf_repo: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
   local_path: /opt/models/qwen3-next-80b-nvfp4
-  port: 8000
-  served_name: qwen3-next-80b
+  port: 8888                            # Avarok image overrides --port; defaults to 8888
+  served_name: /models/qwen3-next-80b-nvfp4  # Avarok ignores --served-model-name; uses model path
   docker_image: avarok/vllm-dgx-spark:latest
   entrypoint_mode: serve              # Avarok image requires: serve <model> [flags] (not --model)
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~40GB weights + ~50GB KV cache; ~30GB left for ASR/TTS/OS

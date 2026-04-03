@@ -13,14 +13,14 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 ## How It Works
 
 ```
-vLLM (Brain)  →  http://localhost:8000/v1
+vLLM (Brain)  →  http://localhost:8888/v1
       ↑
 OpenClaw  →  connects via onboard wizard, handles all agent capabilities
       ↑
 You  →  OpenClaw TUI, Telegram, browser UI at http://localhost:18789
 ```
 
-Brain runs as a Docker container, starts automatically on boot, and serves the model at port 8000. OpenClaw connects to it and provides everything on top — voice, memory, web search, Telegram, MCP tools, agent orchestration.
+Brain runs as a Docker container, starts automatically on boot, and serves the model at port 8888 (Avarok image default). OpenClaw connects to it and provides everything on top — voice, memory, web search, Telegram, MCP tools, agent orchestration.
 
 ---
 
@@ -190,7 +190,7 @@ bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until r
 
 Then open OpenClaw, run the onboard setup wizard, and point it at:
 ```
-http://localhost:8000/v1
+http://localhost:8888/v1
 ```
 
 OpenClaw handles everything from there — voice, memory, web search, Telegram, MCP tools.
