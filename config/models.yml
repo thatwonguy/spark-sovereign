@@ -28,17 +28,20 @@ brain:
   docker_image: avarok/dgx-vllm-nvfp4-kernel:v22
   entrypoint_mode: serve              # Avarok image requires: serve <model> [flags] (not --model)
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~40GB weights + ~50GB KV cache; ~30GB left for ASR/TTS/OS
-  max_model_len: 131072               # 131K context — bump to 200K after confirming stable
+  max_model_len: 131072               # 131K — community-proven ceiling at 0.75 util w/ multi-service
   kv_cache_dtype: fp8
   quantization: modelopt_fp4           # NVFP4 quantization — requires Avarok image
+  enforce_eager: true                  # required for NVFP4 stability (avoids CUDA graph crashes)
   speculative_model: built_in_proposal_model  # MTP: generates ~2.4 tokens per forward pass
   num_speculative_tokens: 2            # MTP predicts 2 tokens per step → 67–112 tok/s
-  max_num_seqs: 32                    # concurrent request slots
+  max_num_seqs: 16                    # NVFP4 stable range is 8-16; 32 risks OOM under load
   max_num_batched_tokens: 8192        # batch size for inference efficiency
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   extra_env:
-    VLLM_FLASHINFER_MOE_BACKEND: latency  # optimized MoE dispatch for Spark
+    VLLM_FLASHINFER_MOE_BACKEND: latency    # optimized MoE dispatch for Spark
+    VLLM_ATTENTION_BACKEND: FLASH_ATTN      # improves VRAM efficiency
+    VLLM_USE_DEEP_GEMM: "0"                 # avoids experimental GEMM paths that bloat memory
   # --- SWAP EXAMPLES ---
   # Previous: Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s)
   # name: qwen35-27b-fp8

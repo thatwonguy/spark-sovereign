@@ -49,6 +49,7 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
 BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
+BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
@@ -96,11 +97,11 @@ docker run -d --name brain \
         ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
         ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
         ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
+        $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
-        --enable-prefix-caching \
         --max-num-seqs "${BRAIN_SEQS}"
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
