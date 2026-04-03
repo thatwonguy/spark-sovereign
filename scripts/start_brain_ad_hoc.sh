@@ -77,7 +77,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     EXTRA_ARGS+=" --enable-auto-tool-choice"
     EXTRA_ARGS+=" --tool-call-parser ${BRAIN_TOOL}"
     EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
-    [ -n "${BRAIN_REASON_PLUGIN}" ] && EXTRA_ARGS+=" --reasoning-parser-plugin /plugins/${BRAIN_REASON_PLUGIN}"
+    [ -n "${BRAIN_REASON_PLUGIN}" ] && EXTRA_ARGS+=" --reasoning-parser-plugin ${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"
     [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
     [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
     [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
@@ -96,7 +96,6 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
         -e VLLM_EXTRA_ARGS="${EXTRA_ARGS}" \
         ${BRAIN_EXTRA_ENV} \
         -v "${MODELS_DIR}:/models" \
-        ${BRAIN_REASON_PLUGIN:+-v "${BRAIN_PATH}/${BRAIN_REASON_PLUGIN}:/plugins/${BRAIN_REASON_PLUGIN}:ro"} \
         "${BRAIN_IMAGE}"
 else
     # ── Standard vLLM image ───────────────────────────────────────────────────
@@ -106,7 +105,6 @@ else
         --restart no \
         ${BRAIN_EXTRA_ENV} \
         -v "${MODELS_DIR}:/models" \
-        ${BRAIN_REASON_PLUGIN:+-v "${BRAIN_PATH}/${BRAIN_REASON_PLUGIN}:/plugins/${BRAIN_REASON_PLUGIN}:ro"} \
         "${BRAIN_IMAGE}" \
             --model "${BRAIN_MODEL_PATH}" \
             --served-model-name "${BRAIN_NAME}" \
@@ -123,7 +121,7 @@ else
             --enable-auto-tool-choice \
             --tool-call-parser "${BRAIN_TOOL}" \
             --reasoning-parser "${BRAIN_REASON}" \
-            ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "/plugins/${BRAIN_REASON_PLUGIN}"} \
+            ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
             --max-num-seqs "${BRAIN_SEQS}"
 fi
 
