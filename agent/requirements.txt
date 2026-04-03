@@ -1,0 +1,2 @@
+# Agent memory layer dependencies
+# Add packages here as the agent code is built out

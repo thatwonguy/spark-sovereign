@@ -71,7 +71,7 @@ echo "    Page cache cleared."
 if [ ! -d /opt/agent ]; then
     echo ">>> Copying agent files to /opt/agent..."
     sudo mkdir -p /opt/agent
-    sudo cp -r "${REPO_ROOT}/agent/"* /opt/agent/
+    sudo cp -r "${REPO_ROOT}/agent/"* /opt/agent/ 2>/dev/null || true
     sudo cp "${REPO_ROOT}/config/models.yml" /opt/agent/models.yml
     sudo chown -R "$(whoami):$(whoami)" /opt/agent
 fi
