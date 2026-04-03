@@ -159,4 +159,28 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-*Last updated: April 3, 2026*
+## 10. Model Swap: Qwen3-30B-A3B → Nemotron-3-Nano-30B-A3B
+
+**Previous model:** Qwen3-30B-A3B-Instruct-2507-FP8 (~46–54 tok/s, hermes parser)
+
+**New model:** nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8
+
+**Why the switch:**
+- NVIDIA's own model, purpose-built for DGX Spark hardware
+- Same architecture: 30B MoE, 3B active per token, FP8 quantization
+- Same Docker image: `vllm/vllm-openai:cu130-nightly` — no custom images needed
+- Same memory footprint: ~30GB weights, ~60GB KV cache at 0.75 util
+
+**Key differences from Qwen3-30B:**
+- Tool call parser: `qwen3_coder` (not `hermes`)
+- Requires custom reasoning parser plugin: `nano_v3_reasoning_parser.py` (ships inside the HF repo)
+- Pass `--reasoning-parser-plugin /path/to/nano_v3_reasoning_parser.py --reasoning-parser nano_v3` to vLLM
+- Plugin file is volume-mounted into the Docker container from the model directory
+
+**What stayed the same:**
+- Port 8000, standard vLLM image, same scripts, same boot sequence
+- OpenClaw connects identically — just update model ID to `nemotron-3-nano`
+
+---
+
+*Last updated: April 2, 2026*

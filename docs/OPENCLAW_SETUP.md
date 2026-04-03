@@ -103,12 +103,12 @@ These files must be accessed via tools:
 {
   "agents": {
     "defaults": {
-      "model": "local-vllm/qwen35-35b-a3b"
+      "model": "local-vllm/nemotron-3-nano"
     },
     "providers": {
       "local-vllm": {
         "baseUrl": "127.0.0.1:8000",
-        "modelId": "qwen35-35b-a3b"
+        "modelId": "nemotron-3-nano"
       }
     }
   }
