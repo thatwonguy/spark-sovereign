@@ -4,7 +4,7 @@ Private local AI stack on **NVIDIA DGX Spark** (128GB unified memory, GB10 Super
 
 **Zero cloud. Zero API cost. Zero data leaving your hardware.**
 
-- **Qwen3.5-27B-FP8** — native multimodal, coding, agentic, reasoning, 262K context
+- **Qwen3-Next-80B-A3B-NVFP4** — 80B MoE (3B active), 67–112 tok/s with MTP, 131K context
 - **OpenClaw** handles everything else: voice, memory, RAG, web search, Telegram, MCP tools
 - **One model. One endpoint. Fully self-contained.**
 
@@ -66,14 +66,15 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 
 | Component | Model | Size | Port |
 |---|---|---|---|
-| **Brain** | Qwen/Qwen3.5-27B-FP8 | ~27 GB | 8000 |
+| **Brain** | nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 | ~40 GB | 8000 |
 
-**Why Qwen3.5-27B-FP8:**
-- Native multimodal (vision + video + text) — no separate encoder
-- 262K context window (extensible to 1M with YaRN)
+**Why Qwen3-Next-80B-A3B-NVFP4:**
+- 80B MoE with only 3B active per token — faster and smarter than dense 27B
+- MTP speculative decoding: 67–112 tok/s on DGX Spark (vs ~50 tok/s prior)
+- NVFP4 quantization via Avarok's dgx-vllm image (proven on SM121/GB10)
+- 131K context window (start), extensible to 200K+
 - Thinking mode + tool calling built in
-- Hybrid Gated DeltaNet architecture — near-linear compute at long contexts
-- FP8 quantized: ~27GB weights, same quality as BF16
+- FP8 KV cache for memory efficiency
 
 ---
 
@@ -82,12 +83,12 @@ See `config/mcp_servers.json` for the full MCP server catalog.
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ═══════════════════════════════════════════════════════════════
- Qwen3.5-27B-FP8 (Brain)      91.3 GB    0.75 util (~27GB weights + ~64GB KV cache)
+ Qwen3-Next-80B NVFP4 (Brain) ~91.0 GB    0.75 util (~40GB weights + ~50GB KV cache)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ───────────────────────────────────────────────────────────────
- TOTAL ALLOCATED               99.3 GB
- HEADROOM                      16.1 GB   ✅ safe
+ TOTAL ALLOCATED (est.)        ~95.0 GB
+ HEADROOM (est.)               ~27.0 GB   ✅ much improved
 ═══════════════════════════════════════════════════════════════
 ```
 
@@ -183,7 +184,7 @@ nano .env   # set HF_TOKEN at minimum
 ```bash
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service
-bash scripts/02_download_models.sh # Downloads Qwen3.5-27B-FP8 → /opt/models (~27GB)
+bash scripts/02_download_models.sh # Downloads Qwen3-Next-80B-A3B-NVFP4 → /opt/models (~40GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 

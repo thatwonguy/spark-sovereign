@@ -60,6 +60,9 @@ BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
+BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
+BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -79,6 +82,9 @@ docker run -d --name brain \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
+        ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+        ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
+        ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
@@ -104,7 +110,7 @@ echo "========================================================"
 echo " Brain loaded and serving."
 echo "  Model : ${BRAIN_NAME}"
 echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
-echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (~27GB weights + KV cache)"
+echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (~40GB weights + KV cache)"
 echo "========================================================"
 echo ""
 echo " NEXT STEP: Open OpenClaw → run the onboard setup wizard"
