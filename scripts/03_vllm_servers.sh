@@ -67,6 +67,8 @@ BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
 BRAIN_ASYNC=$(get_field brain async_scheduling)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
+BRAIN_SCHED_STEPS=$(get_field brain num_scheduler_steps)
+BRAIN_CHUNKED=$(get_field brain enable_chunked_prefill)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -92,6 +94,8 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
+    [ -n "${BRAIN_SCHED_STEPS}" ]  && EXTRA_ARGS+=" --num-scheduler-steps ${BRAIN_SCHED_STEPS}"
+    [ "${BRAIN_CHUNKED}" = "true" ] && EXTRA_ARGS+=" --enable-chunked-prefill"
 
     # shellcheck disable=SC2086
     docker run -d --name brain \
@@ -133,7 +137,9 @@ else
             ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
             --max-num-seqs "${BRAIN_SEQS}" \
             ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
-            $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling")
+            $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling") \
+            ${BRAIN_SCHED_STEPS:+--num-scheduler-steps "${BRAIN_SCHED_STEPS}"} \
+            $([ "${BRAIN_CHUNKED}" = "true" ] && echo "--enable-chunked-prefill")
 fi
 
 echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"

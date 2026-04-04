@@ -28,11 +28,13 @@ brain:
   port: 8000
   served_name: qwen35-35b
   docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~55GB weights + ~36GB KV cache; ~30GB left for ASR/TTS/OS
-  max_model_len: 131072               # 131K context - 262k context
+  gpu_memory_utilization: 0.80        # ~97GB on 121.69GiB visible — ~55GB weights + ~42GB KV cache; ~24GB left for ASR/TTS/OS
+  max_model_len: 131072               # 131K context
   kv_cache_dtype: fp8
-  max_num_seqs: 32                    # High concurrency — MoE handles this well with 3B active
+  max_num_seqs: 16                    # Single-user — lower = less scheduling overhead per decode step
   max_num_batched_tokens: 8192        # Large batch for improved throughput
+  num_scheduler_steps: 8              # Multi-step scheduling — batches decode steps, ~15-25% throughput boost
+  enable_chunked_prefill: true        # Interleaves prefill with decode — faster time-to-first-token
   tool_call_parser: qwen3_coder       # Same parser as Qwen3.5-27B — same family
   reasoning_parser: qwen3             # Same parser as Qwen3.5-27B — same family
   extra_env:
@@ -139,7 +141,7 @@ infrastructure:
 # MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.5-35B-A3B FP8         91.3 GB   0.75 util (~55GB weights + ~36GB KV cache)
+# Qwen3.5-35B-A3B FP8         97.4 GB   0.80 util (~55GB weights + ~42GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on
@@ -148,8 +150,8 @@ infrastructure:
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                       105.6 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                     16.1 GB   ✅ safe — MoE only activates 3B/token
+# TOTAL                       111.7 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     10.0 GB   ✅ tight but safe — MoE only activates 3B/token
 # NOTE: Effective weight memory is ~55GB (vs ~105GB for dense 27B).
 #       The remaining ~36GB within the 0.75 util goes to KV cache,
 #       which is MORE KV cache than the 27B had — better for long contexts.
