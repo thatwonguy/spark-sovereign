@@ -269,7 +269,9 @@ Common fixes:
 
 ## License
 
-This is a setup and configuration repo — no proprietary code. The models referenced are open-weight and available on HuggingFace under their respective licenses. vLLM and OpenClaw are open source.
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+Free to use, modify, and distribute with attribution. The models referenced are open-weight and available on HuggingFace under their respective licenses. vLLM and OpenClaw are open source (MIT/Apache 2.0).
 
 ---
 
