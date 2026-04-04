@@ -208,4 +208,52 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-*Last updated: April 3, 2026*
+## 12. Model Swap: Nemotron-3-Nano → Qwen3.5-35B-A3B-FP8 (Current)
+
+**Previous model:** nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 (~35–45 tok/s, qwen3_coder + nano_v3 custom parser)
+
+**New model:** Qwen/Qwen3.5-35B-A3B-FP8
+
+**Why the switch:**
+- Nemotron-3-Nano was weaker on complex coding and architectural reasoning — confirmed through testing
+- The dense Qwen3.5-27B was smarter but bandwidth-limited to ~14–30 tok/s on Spark (273 GB/s ÷ 54GB weights ≈ 5 tok/s theoretical ceiling)
+- Qwen3.5-35B-A3B-FP8 is MoE (35B total / 3B active per token) from the same Qwen3.5 family — gets MoE speed with near-dense intelligence
+
+**What makes this model the best fit so far:**
+- ~49 tok/s on Spark — 3x faster than the dense 27B, faster than Nemotron-3-Nano
+- Community-confirmed: surpasses Qwen3-235B-A22B (22B active) with only 3B active params — better RL and architecture, not bigger parameter counts
+- Same `qwen3_coder` tool parser and `qwen3` reasoning parser as the 27B — no custom parser plugins needed (unlike Nemotron-3-Nano which required nano_v3_reasoning_parser.py)
+- ~55GB FP8 weights vs ~30GB for Nemotron — uses more memory but still fits comfortably at 0.80 util
+- Both more intelligent AND faster than the previous two release models
+
+**Tuning applied:**
+- `gpu_memory_utilization: 0.80` — ~97GB to vLLM (~55GB weights + ~42GB KV cache), ~24GB left for OS/Docker
+- `max_num_seqs: 16` — reduced from 32; single-user setup benefits from less scheduling overhead
+- `VLLM_FLASHINFER_MOE_BACKEND=latency` — required for SM12.1 MoE kernels on Blackwell
+- `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1` — allows 131K context without vLLM warning
+- `enable-prefix-caching` — big win for OpenClaw's repeated memory.md preprompt
+
+**Flags that don't work on cu130-nightly (vLLM v0.12+):**
+- `--num-scheduler-steps` — removed in this vLLM version (multi-step scheduling is automatic)
+- `--enable-chunked-prefill` — enabled by default in this vLLM version
+
+**OpenClaw config for this model:**
+- Base URL: `http://127.0.0.1:8000/v1`
+- Model ID: `qwen35-35b` (the served_name)
+- Context window: `131072`
+
+**Key lesson:** The dense vs MoE trade-off is real, but within the same model family (Qwen3.5), the MoE variant can match or exceed the dense variant's intelligence while being dramatically faster. The 27B dense model is the wrong choice for bandwidth-limited hardware like the Spark — you hit physics limits, not software limits. The MoE architecture sidesteps this entirely by only moving 3B of params per token through the memory bus.
+
+---
+
+## Model History (Quick Reference)
+
+| Release | Model | Active Params | tok/s | Intelligence | Issue |
+|---|---|---|---|---|---|
+| v1.0 | Qwen3.5-27B-FP8 (dense) | 27B | ~14–30 | High | Too slow — bandwidth ceiling |
+| v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | 3B | ~35–45 | Medium | Weaker on coding/reasoning |
+| **v3.0** | **Qwen3.5-35B-A3B-FP8** | **3B** | **~49** | **High** | **Current — best of both** |
+
+---
+
+*Last updated: April 4, 2026*
