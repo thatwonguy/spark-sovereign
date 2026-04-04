@@ -24,16 +24,42 @@ This setup lets you pick the best available open-weight model, serve it locally 
 
 ## What You Get
 
-- **~49 tokens/sec** inference on a 35B-parameter model (3B active per token via MoE)
+**TLDR:** As of April 2026, this setup is a practical replacement for Claude Code and ChatGPT Codex for day-to-day engineering work. CLI coding, agentic tool use, parallel agents, chat, voice, Telegram, MCP integrations — all running locally, 24/7, with zero API dependency. An engineer can go fully off-grid and still get professional work done.
+
+- **~49 tokens/sec** sustained inference — no queue, no throttling, no network latency
 - **131K context window** — long conversations, full codebase analysis, deep reasoning
-- **Tool calling** — your AI can use tools, execute code, search the web, manage files
-- **Voice I/O** — speak to it, it speaks back (local STT, configurable TTS)
+- **Agentic coding** — tool calling, code execution, file management, web search
+- **Parallel agents** — OpenClaw spawns multiple workers for complex tasks simultaneously
+- **Voice I/O** — speak to it, it speaks back (local Whisper STT, configurable TTS)
 - **Telegram bot** — message your AI from your phone, send voice notes, images, text
-- **Persistent memory** — it remembers across sessions
-- **Agent orchestration** — spawns parallel workers for complex tasks
+- **Persistent memory** — remembers across sessions, learns your codebase and preferences
 - **Multimodal** — send images and video, Brain analyzes natively
 - **MCP tools** — git, GitHub, browser, shell, databases, Slack, Stripe, and more
 - **Auto-start on boot** — plug in power, walk away, it's ready in 5 minutes
+- **111 of 128 GB VRAM utilized** — this setup pushes a single DGX Spark to its limit
+
+### How This Compares (April 2026 — Honest Assessment)
+
+|  | **spark-sovereign** (Qwen3.5-35B-A3B) | **Claude Code** (Opus 4.6) | **ChatGPT Codex** (GPT-5.4) |
+|---|---|---|---|
+| **Speed** | ~49 tok/s sustained, zero latency | Variable — depends on server load and queue | Variable — depends on server load and queue |
+| **Coding** | Strong — handles day-to-day engineering, debugging, refactoring, and generation | Best-in-class for complex multi-step coding | Strong, comparable to Claude on most tasks |
+| **Hard reasoning** | Good for most tasks; frontier models still lead on the hardest problems | Strongest on complex architectural reasoning | Strong, especially on math and long-chain logic |
+| **Agentic** | Full — parallel agents, tool calling, MCP, code execution via OpenClaw | Full — native tool use, computer use | Full — native tool use, code interpreter |
+| **Context window** | 131K tokens | 200K tokens | 128K–1M tokens |
+| **Chat / conversation** | Unlimited — no session limits, no token caps | Session-limited, rate-limited on heavy use | Generous but usage-capped on Pro tier |
+| **Voice** | Local STT + configurable TTS, Telegram voice notes | Not available in CLI | Voice mode available |
+| **Privacy** | 100% local — zero data leaves your machine | Data processed on Anthropic servers | Data processed on OpenAI servers |
+| **Ownership** | You own the hardware, the model, and every byte of output | You own nothing — renting API access | You own nothing — renting API access |
+| **Rate limits** | None — run it 24/7 at full speed | Yes — throttled during peak usage, hard caps on Pro | Yes — usage caps on all tiers |
+| **Cost after setup** | Electricity only (~$5–15/month) | $20–200/month + API overages | $20–200/month + API overages |
+| **Availability** | 24/7 — works offline, no outages, no maintenance windows | Dependent on Anthropic infrastructure | Dependent on OpenAI infrastructure |
+| **Bans / ToS risk** | Zero — no terms of service, no content policy, no account to lose | Subject to Anthropic's acceptable use policy | Subject to OpenAI's usage policies |
+| **Model upgrades** | Swap in newer open-weight models as they release — instant | Automatic but you have no choice or control | Automatic but you have no choice or control |
+
+**The honest take:** Frontier models like Opus 4.6 and GPT-5.4 still lead on the hardest reasoning tasks — the kind where you need 500B+ active parameters grinding through a complex multi-file refactor or novel algorithm design. But for the vast majority of professional engineering work — writing code, debugging, reviewing PRs, chatting, running agents, using tools — this local setup gets the job done at ~49 tok/s with zero ongoing cost, total privacy, and no one standing between you and your AI.
+
+The gap is closing fast. Every few weeks, a new open-weight model drops that's smarter and faster than the last. This hardware will only get more capable over time.
 
 ---
 
@@ -85,6 +111,8 @@ Brain runs as a Docker container serving the model via vLLM. OpenClaw connects t
 
 ## Memory Map
 
+This setup uses **~111 of 128 GB** — pushing a single DGX Spark close to its limit.
+
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ===============================================================
@@ -96,6 +124,8 @@ Brain runs as a Docker container serving the model via vLLM. OpenClaw connects t
  HEADROOM (est.)               ~16.3 GB   safe — MoE only activates 3B/token
 ===============================================================
 ```
+
+As NVIDIA improves the DGX Spark hardware and the open-source community releases smarter, more efficiently quantized models, these numbers will only get better. The Spark is a long-term investment — the models you run on it next year will be significantly more capable than what's available today, on the same hardware.
 
 ---
 
