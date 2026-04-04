@@ -1,0 +1,13 @@
+# You can define code owners in public repos to restrict anyone from the globe making changes to the main branch and ruin the CI/CD pipeline or production code.
+
+# Default reviewers/codeowners for all code changes 
+* @thatwonguy
+
+# Reviewer by email for .py files
+# *.py test@gmail.com 
+
+# Reviewer by organization team
+# *.py @organizationName/TeamName
+
+# Reviewer by specific folders or files
+# *.py                     @thatwonguy      
