@@ -29,7 +29,7 @@ brain:
   served_name: qwen35-35b
   docker_image: vllm/vllm-openai:cu130-nightly
   gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~55GB weights + ~36GB KV cache; ~30GB left for ASR/TTS/OS
-  max_model_len: 262144               # 131K context - 262k context
+  max_model_len: 131072               # 131K context - 262k context
   kv_cache_dtype: fp8
   max_num_seqs: 32                    # High concurrency — MoE handles this well with 3B active
   max_num_batched_tokens: 8192        # Large batch for improved throughput
