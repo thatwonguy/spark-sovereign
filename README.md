@@ -276,7 +276,9 @@ Common fixes:
 
 ## OpenClaw Integration
 
-This repo is built on [OpenClaw](https://github.com/openclaw/openclaw) as the agentic layer. We've proposed adding spark-sovereign as a community hardware reference for DGX Spark users:
+**spark-sovereign is the muscle — [OpenClaw](https://github.com/openclaw/openclaw) is the brain that commands it.** This repo handles the hardware layer: model serving, memory allocation, vLLM tuning, auto-start, and GPU optimization on DGX Spark. OpenClaw sits on top as the agentic layer — pointing at spark-sovereign's endpoint to provide tool calling, parallel agents, memory, voice, Telegram, MCP integrations, and everything else that turns a raw model into a fully capable AI assistant.
+
+We've proposed adding spark-sovereign as a community hardware reference for DGX Spark users:
 
 **Feature request:** [openclaw/openclaw#60792](https://github.com/openclaw/openclaw/issues/60792)
 
