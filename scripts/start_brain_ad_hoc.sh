@@ -46,6 +46,7 @@ BRAIN_SEQS=$(get_field brain max_num_seqs)
 BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
+BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -78,7 +79,8 @@ docker run -d --name brain \
         --tool-call-parser "${BRAIN_TOOL}" \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
-        --max-num-seqs "${BRAIN_SEQS}"
+        --max-num-seqs "${BRAIN_SEQS}" \
+        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
