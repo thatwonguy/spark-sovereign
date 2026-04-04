@@ -18,6 +18,8 @@ The open-source community has been closing the gap fast. Models available today 
 
 This is for anyone who wants to **own their AI infrastructure** instead of renting it.
 
+This setup lets you pick the best available open-weight model, serve it locally on your own 24/7 hardware, and point OpenClaw at it for full agentic capabilities. The only thing outside your control is electricity. Your AI stays up as long as you can pay the power bill. Use it to your heart's content — and as more intelligent, faster models become available, swap them in and instantly gain speed and intelligence boosts.
+
 ---
 
 ## What You Get
