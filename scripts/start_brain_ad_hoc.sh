@@ -47,8 +47,6 @@ BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
-BRAIN_SCHED_STEPS=$(get_field brain num_scheduler_steps)
-BRAIN_CHUNKED=$(get_field brain enable_chunked_prefill)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -82,9 +80,7 @@ docker run -d --name brain \
         --reasoning-parser "${BRAIN_REASON}" \
         --enable-prefix-caching \
         --max-num-seqs "${BRAIN_SEQS}" \
-        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
-        ${BRAIN_SCHED_STEPS:+--num-scheduler-steps "${BRAIN_SCHED_STEPS}"} \
-        $([ "${BRAIN_CHUNKED}" = "true" ] && echo "--enable-chunked-prefill")
+        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
