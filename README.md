@@ -1,7 +1,7 @@
 # spark-sovereign
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-NVIDIA_DGX_Spark-76B900?logo=nvidia&logoColor=white)](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/dgx-spark/)
+[![Platform](https://img.shields.io/badge/platform-NVIDIA_DGX_Spark-76B900?logo=nvidia&logoColor=white)](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)
 [![Model](https://img.shields.io/badge/model-Qwen3.5--35B--A3B--FP8-orange)](https://huggingface.co/Qwen/Qwen3.5-35B-A3B-FP8)
 [![Speed](https://img.shields.io/badge/speed-~49_tok%2Fs-brightgreen)](config/models.yml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25_local-critical)](README.md)
