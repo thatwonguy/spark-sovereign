@@ -276,7 +276,7 @@ Common fixes:
 
 ## OpenClaw Integration
 
-**spark-sovereign is the muscle — [OpenClaw](https://github.com/openclaw/openclaw) is the brain that commands it.** This repo handles the hardware layer: model serving, memory allocation, vLLM tuning, auto-start, and GPU optimization on DGX Spark. OpenClaw sits on top as the agentic layer — pointing at spark-sovereign's endpoint to provide tool calling, parallel agents, memory, voice, Telegram, MCP integrations, and everything else that turns a raw model into a fully capable AI assistant.
+**spark-sovereign is the brain — [OpenClaw](https://github.com/openclaw/openclaw) is the lobster body it controls.** Think of it this way: spark-sovereign is the sovereign private intelligence that replaces ChatGPT, Claude, and every other paid API endpoint. It's the brain you own — running on your hardware, serving your model, answering to no one. OpenClaw is the lobster — the claws that grip tools, the legs that walk through your filesystem, the nervous system that connects voice, Telegram, agents, memory, and MCP. The brain thinks, the lobster acts. Without spark-sovereign, OpenClaw needs someone else's brain (a cloud API). Without OpenClaw, spark-sovereign is just a model sitting on a port with no way to reach the world. Together, they're a fully autonomous AI that belongs to you.
 
 We've proposed adding spark-sovereign as a community hardware reference for DGX Spark users:
 
