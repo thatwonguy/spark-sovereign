@@ -274,6 +274,16 @@ Common fixes:
 
 ---
 
+## OpenClaw Integration
+
+This repo is built on [OpenClaw](https://github.com/openclaw/openclaw) as the agentic layer. We've proposed adding spark-sovereign as a community hardware reference for DGX Spark users:
+
+**Feature request:** [openclaw/openclaw#60792](https://github.com/openclaw/openclaw/issues/60792)
+
+If you're an OpenClaw user with a DGX Spark, this is a tested drop-in setup — clone, run 4 scripts, `openclaw onboard`, done.
+
+---
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
