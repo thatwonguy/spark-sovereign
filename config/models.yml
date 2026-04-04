@@ -11,63 +11,51 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# BRAIN — daily driver: coding, agentic, reasoning, tool calls
+# BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Nemotron-3-Nano-30B-A3B is a 30B MoE (3B active per token) in FP8.
-# ~35–45 tok/s on DGX Spark GB10. ~30GB weights + FP8 KV cache.
-# Uses the proven vllm/vllm-openai:cu130-nightly image (standard entrypoint).
-# Tool calling uses qwen3_coder parser. Requires custom reasoning parser plugin
-# (nano_v3_reasoning_parser.py ships inside the HF repo).
+# Qwen3.5-35B-A3B-FP8: MoE (35B total / 3B active per token).
+# Same Qwen3.5 family as the 27B dense — same tool calling parser, same
+# reasoning parser — but only 3B params active per token → ~49 tok/s on Spark
+# vs ~14-30 tok/s for the dense 27B.  Community-confirmed: surpasses
+# Qwen3-235B-A22B benchmarks with 3B active (better RL + architecture).
+# FP8 weights ~55 GB → frees ~50 GB headroom vs the dense 27B.
+# 131K context window.  Prefix caching big win for OpenClaw memory.md preprompt.
 # -----------------------------------------------------------------------------
 brain:
-  name: nemotron-3-nano-fp8
-  hf_repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8
-  local_path: /opt/models/nemotron-3-nano-fp8
-  port: 8000                            # standard vLLM port
-  served_name: nemotron-3-nano
+  name: qwen35-35b-a3b-fp8
+  hf_repo: Qwen/Qwen3.5-35B-A3B-FP8
+  local_path: /opt/models/qwen35-35b-a3b-fp8
+  port: 8000
+  served_name: qwen35-35b
   docker_image: vllm/vllm-openai:cu130-nightly
-  # entrypoint_mode: (not set — standard vLLM image uses --model flag)
-
-  # SM12.1 (DGX Spark / GB10) required env vars — passed as -e flags to docker
-  extra_env:
-    VLLM_USE_FLASHINFER_MOE_FP8: "1"          # required for FP8 MoE kernel path
-    VLLM_FLASHINFER_MOE_BACKEND: "latency"     # throughput backend has SM120 kernel issues on SM12.1
-    VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"         # needed if pushing past default context
-
-  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB — ~30GB weights + ~60GB KV cache; ~30GB left
+  gpu_memory_utilization: 0.75        # ~91GB on 121.69GiB visible — ~55GB weights + ~36GB KV cache; ~30GB left for ASR/TTS/OS
   max_model_len: 131072               # 131K context
   kv_cache_dtype: fp8
-  # quantization: NOT set — model checkpoint is already FP8, vLLM auto-detects
-  max_num_seqs: 8                     # official NVIDIA recommendation; 32 OOMs or degrades on Spark
-  max_num_batched_tokens: 8192
-  async_scheduling: true              # NVIDIA recommended — reduces host overhead between decoding steps
-  tool_call_parser: qwen3_coder        # Nemotron-3-Nano uses qwen3_coder format
-  reasoning_parser: nano_v3
-  reasoning_parser_plugin: nano_v3_reasoning_parser.py  # ships inside HF repo
+  max_num_seqs: 32                    # High concurrency — MoE handles this well with 3B active
+  max_num_batched_tokens: 8192        # Large batch for improved throughput
+  tool_call_parser: qwen3_coder       # Same parser as Qwen3.5-27B — same family
+  reasoning_parser: qwen3             # Same parser as Qwen3.5-27B — same family
+  extra_env:
+    VLLM_FLASHINFER_MOE_BACKEND: latency    # Required for SM12.1 MoE kernels on Blackwell
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1        # Allow 131K context without warning
+  limit_mm_per_prompt: '{"image": 10}'  # multimodal: allow up to 10 images per request
   # --- SWAP EXAMPLES ---
-  # Previous: Qwen3-30B-A3B-FP8 (MoE, ~46-54 tok/s, hermes parser)
-  # name: qwen3-30b-a3b-fp8
-  # hf_repo: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
-  # local_path: /opt/models/qwen3-30b-a3b-fp8
-  # docker_image: vllm/vllm-openai:cu130-nightly
-  # gpu_memory_utilization: 0.75
-  # max_model_len: 131072
-  # kv_cache_dtype: fp8
-  # max_num_seqs: 32
-  # tool_call_parser: hermes
-  # reasoning_parser: qwen3
-  #
-  # Previous: Qwen3.5-27B-FP8 (dense, 105.6GB used, ~50 tok/s)
+  # Dense 27B (slower but higher quality per active param):
   # name: qwen35-27b-fp8
   # hf_repo: Qwen/Qwen3.5-27B-FP8
   # local_path: /opt/models/qwen35-27b-fp8
-  # docker_image: vllm/vllm-openai:cu130-nightly
   # gpu_memory_utilization: 0.75
   # max_model_len: 262144
-  # kv_cache_dtype: fp8
   # max_num_seqs: 32
   # tool_call_parser: qwen3_coder
   # reasoning_parser: qwen3
+  #
+  # MXFP4 variant (~70 tok/s, requires custom vllm 0.17.0 + SM121 patches):
+  # name: qwen35-35b-a3b-mxfp4
+  # hf_repo: Qwen/Qwen3.5-35B-A3B-MXFP4
+  # local_path: /opt/models/qwen35-35b-a3b-mxfp4
+  # gpu_memory_utilization: 0.75
+  # max_model_len: 131072
 
 # -----------------------------------------------------------------------------
 # SUB-AGENTS — not used (Brain handles all tasks at 50+ tok/s single model)
@@ -151,7 +139,7 @@ infrastructure:
 # MEMORY MAP (128GB unified — April 2026)
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Nemotron-3-Nano FP8          ~91 GB   0.75 util (~30GB weights + ~60GB KV cache)
+# Qwen3.5-35B-A3B FP8         91.3 GB   0.75 util (~55GB weights + ~36GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
 # Embeddings (nomic)           0.4 GB   always-on
@@ -160,5 +148,8 @@ infrastructure:
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL (estimated)           ~95 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM (estimated)        ~27 GB   ✅ much more than prior 16.1GB
+# TOTAL                       105.6 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     16.1 GB   ✅ safe — MoE only activates 3B/token
+# NOTE: Effective weight memory is ~55GB (vs ~105GB for dense 27B).
+#       The remaining ~36GB within the 0.75 util goes to KV cache,
+#       which is MORE KV cache than the 27B had — better for long contexts.
