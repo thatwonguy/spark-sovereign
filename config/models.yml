@@ -33,8 +33,6 @@ brain:
   kv_cache_dtype: fp8
   max_num_seqs: 16                    # Single-user — lower = less scheduling overhead per decode step
   max_num_batched_tokens: 8192        # Large batch for improved throughput
-  num_scheduler_steps: 8              # Multi-step scheduling — batches decode steps, ~15-25% throughput boost
-  enable_chunked_prefill: true        # Interleaves prefill with decode — faster time-to-first-token
   tool_call_parser: qwen3_coder       # Same parser as Qwen3.5-27B — same family
   reasoning_parser: qwen3             # Same parser as Qwen3.5-27B — same family
   extra_env:
