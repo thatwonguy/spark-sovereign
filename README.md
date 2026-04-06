@@ -13,6 +13,8 @@ A fully self-contained, private AI stack running on the **NVIDIA DGX Spark** (12
 
 No cloud. No API keys. No rate limits. No surveillance. No subscriptions. No data leaving your machine. Ever.
 
+Brain serves a standard **OpenAI-compatible API** — any agentic framework that speaks this protocol works out of the box. We test with [OpenClaw](https://github.com/openclaw/openclaw), but you can plug in LangChain, AutoGen, CrewAI, Open Interpreter, LobeChat, or anything else. The infrastructure layer doesn't care what's on top.
+
 ---
 
 ## Why This Exists
@@ -89,14 +91,16 @@ For the full build journey and every decision made, see [docs/LESSONS.md](docs/L
 ## Architecture
 
 ```
-vLLM (Brain)  →  http://localhost:8000/v1
+vLLM (Brain)  →  http://localhost:8000/v1  (OpenAI-compatible API)
       |
-OpenClaw  →  agent orchestration, memory, tools, voice, web search
+Agentic layer  →  OpenClaw, LangChain, AutoGen, CrewAI, or any framework
       |
-You  →  Terminal (TUI), Telegram, browser UI at http://localhost:18789
+You  →  Terminal, Telegram, browser UI, CLI, whatever your framework supports
 ```
 
-Brain runs as a Docker container serving the model via vLLM. OpenClaw connects to it and provides everything on top. One model. One endpoint. Fully self-contained.
+Brain runs as a Docker container serving the model via vLLM on a standard OpenAI-compatible endpoint. Any framework that can call `/v1/chat/completions` works — tool calling, streaming, multimodal, all supported at the API level.
+
+We test and document with **OpenClaw** (open source, fully local, no API key). But this is a plug-and-play infrastructure layer — swap in whatever agentic framework fits your workflow.
 
 ---
 
@@ -136,21 +140,22 @@ As NVIDIA improves the DGX Spark hardware and the open-source community releases
 
 ---
 
-## What OpenClaw Provides
+## What the Agentic Layer Provides
 
-| Capability | How |
-|---|---|
-| **Voice I/O** | Speak → transcribe → Brain responds → speaks back |
-| **STT (Speech-to-Text)** | Local Whisper CLI (GPU-accelerated) or cloud providers |
-| **TTS (Text-to-Speech)** | Provider-based (ElevenLabs, Microsoft, OpenAI) |
-| **Talk Mode** | Continuous voice conversation with streaming TTS |
-| **Image / video** | Send photo or video → Brain analyzes natively |
-| **Memory** | Persistent across sessions — learns from every conversation |
-| **Web search** | Live search, results fed to Brain |
-| **Telegram** | Message your bot → Brain responds. Voice notes, images, text |
-| **MCP tools** | Files, git, GitHub, browser, HTTP, shell, AWS, Stripe, Slack |
-| **Agent orchestration** | Brain spawns parallel workers for long tasks |
-| **TUI** | `openclaw tui` — interactive terminal chat |
+The capabilities below depend on your chosen framework. OpenClaw provides all of these out of the box. Other frameworks may offer different subsets or equivalents.
+
+| Capability | OpenClaw | Other Frameworks |
+|---|---|---|
+| **Voice I/O** | Speak → transcribe → Brain responds → speaks back | Varies by framework |
+| **STT (Speech-to-Text)** | Local Whisper CLI (GPU-accelerated) or cloud providers | Framework-dependent |
+| **TTS (Text-to-Speech)** | Provider-based (ElevenLabs, Microsoft, OpenAI) | Framework-dependent |
+| **Image / video** | Send photo or video → Brain analyzes natively | Any framework can pass multimodal to the API |
+| **Memory** | Persistent across sessions — learns from every conversation | Framework-dependent |
+| **Web search** | Live search, results fed to Brain | Framework-dependent |
+| **Telegram** | Message your bot → Brain responds. Voice notes, images, text | Varies |
+| **MCP tools** | Files, git, GitHub, browser, HTTP, shell, AWS, Stripe, Slack | Growing MCP ecosystem |
+| **Agent orchestration** | Brain spawns parallel workers for long tasks | LangChain, AutoGen, CrewAI, etc. |
+| **TUI / Chat** | `openclaw tui` — interactive terminal chat | Most frameworks include a chat interface |
 
 ---
 
@@ -203,9 +208,13 @@ bash scripts/02_download_models.sh # Downloads model → /opt/models (~55GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 
-Then open OpenClaw, run the onboard wizard, and point it at `http://localhost:8000/v1`.
+Then connect your agentic framework of choice to `http://localhost:8000/v1`.
 
-That's it. OpenClaw handles everything from there.
+**With OpenClaw (recommended):** `openclaw onboard` → enter `http://localhost:8000/v1` as the base URL.
+
+**With any other framework:** Point it at `http://localhost:8000/v1` using the OpenAI-compatible API. Model ID is the `served_name` from `config/models.yml`. API key can be any string.
+
+See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for detailed connection examples (curl, Python, Node.js).
 
 > **Script 02 automatically prunes old models.** Any model directory in `/opt/models` not listed in `config/models.yml` is deleted before the new download.
 
@@ -255,6 +264,7 @@ spark-sovereign/
 │   └── check_stack.sh         ← Health check
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
+│   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
 │   └── TROUBLESHOOTING.md
 ├── .env.example            ← Copy to .env, fill in HF_TOKEN at minimum
 └── .gitignore
@@ -274,15 +284,29 @@ Common fixes:
 
 ---
 
-## OpenClaw Integration
+## Agentic Layer — OpenClaw and Beyond
 
-**spark-sovereign is the brain — [OpenClaw](https://github.com/openclaw/openclaw) is the lobster body it controls.** Think of it this way: spark-sovereign is the sovereign private intelligence that replaces ChatGPT, Claude, and every other paid API endpoint. It's the brain you own — running on your hardware, serving your model, answering to no one. OpenClaw is the lobster — the claws that grip tools, the legs that walk through your filesystem, the nervous system that connects voice, Telegram, agents, memory, and MCP. The brain thinks, the lobster acts. Without spark-sovereign, OpenClaw needs someone else's brain (a cloud API). Without OpenClaw, spark-sovereign is just a model sitting on a port with no way to reach the world. Together, they're a fully autonomous AI that belongs to you.
+**spark-sovereign is the brain — your agentic framework is the body it controls.** spark-sovereign is the sovereign private intelligence that replaces ChatGPT, Claude, and every other paid API endpoint. It's the brain you own — running on your hardware, serving your model, answering to no one. Your agentic framework is the body — the claws that grip tools, the legs that walk through your filesystem, the nervous system that connects voice, chat, agents, memory, and MCP. The brain thinks, the body acts.
 
-We've proposed adding spark-sovereign as a community hardware reference for DGX Spark users:
+Without spark-sovereign, your framework needs someone else's brain (a cloud API). Without an agentic framework, spark-sovereign is just a model sitting on a port with no way to reach the world. Together, they're a fully autonomous AI that belongs to you.
 
-**Feature request:** [openclaw/openclaw#60792](https://github.com/openclaw/openclaw/issues/60792)
+### Why we test with OpenClaw
 
-If you're an OpenClaw user with a DGX Spark, this is a tested drop-in setup — clone, run 4 scripts, `openclaw onboard`, done.
+[OpenClaw](https://github.com/openclaw/openclaw) is open source, requires no API key, and runs fully local — matching spark-sovereign's zero-cloud philosophy. It provides voice, memory, Telegram, MCP tools, and agent orchestration in a single package.
+
+**Feature request:** [openclaw/openclaw#60792](https://github.com/openclaw/openclaw/issues/60792) — we've proposed spark-sovereign as a community hardware reference for DGX Spark users.
+
+### Using a different framework
+
+Any framework that supports OpenAI-compatible endpoints works. Point it at:
+
+```
+Base URL:  http://localhost:8000/v1
+Model ID:  qwen35-35b  (or your served_name from config/models.yml)
+API key:   any string
+```
+
+See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for connection examples in curl, Python, and Node.js.
 
 ---
 
