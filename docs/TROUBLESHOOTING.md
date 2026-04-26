@@ -38,7 +38,7 @@ bash scripts/start_brain_ad_hoc.sh
 ## Brain is running but not responding on port 8000
 
 Model is still loading — it takes 3–5 minutes after container start to load
-weights into memory (varies by model — ~55GB for the current Qwen3.6-35B-A3B-FP8). Check progress:
+weights into memory (varies by model — ~35GB for the current Qwen3.6-35B-A3B-FP8). Check progress:
 ```bash
 docker logs brain -f
 ```

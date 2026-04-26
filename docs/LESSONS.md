@@ -223,7 +223,7 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 - ~49 tok/s on Spark — 3x faster than the dense 27B, faster than Nemotron-3-Nano
 - Community-confirmed: surpasses Qwen3-235B-A22B (22B active) with only 3B active params — better RL and architecture, not bigger parameter counts
 - Same `qwen3_coder` tool parser and `qwen3` reasoning parser as the 27B — no custom parser plugins needed (unlike Nemotron-3-Nano which required nano_v3_reasoning_parser.py)
-- ~55GB FP8 weights vs ~30GB for Nemotron — uses more memory but still fits comfortably at 0.80 util
+- ~55GB FP8 weights vs ~30GB for Nemotron — uses more memory but fits comfortably at 0.80 util
 - Both more intelligent AND faster than the previous two release models
 
 **Tuning applied:**
@@ -264,7 +264,9 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 - Qwen3.6 uses Gated DeltaNet + MoE: linear attention for 3/4 of layers, full attention for 1/4
 - This directly addresses the long-context quadratic cliff documented in Lesson #4
 - KV cache pressure dramatically reduced — 262K context fits within the same 0.80 util memory budget
-- Same 35B total / 3B active MoE shape — inference speed and memory footprint are comparable
+- Weights dropped from ~55GB to ~35GB (34.23 GiB observed) — frees ~20GB more for KV cache
+- KV cache: 57.6 GiB available → 1,509,120 tokens → 22.3x concurrent 262K requests
+- Total VRAM: 109 of 128 GB utilized on DGX Spark (confirmed via dashboard)
 
 **What changed in config:**
 - `hf_repo`: `Qwen/Qwen3.5-35B-A3B-FP8` → `Qwen/Qwen3.6-35B-A3B-FP8`
