@@ -45,7 +45,7 @@ This setup lets you pick the best available open-weight model, serve it locally 
 - **Multimodal** — send images and video, Brain analyzes natively
 - **MCP tools** — git, GitHub, browser, shell, databases, Slack, Stripe, and more
 - **Auto-start on boot** — plug in power, walk away, it's ready in 5 minutes
-- **111 of 128 GB VRAM utilized** — this setup pushes a single DGX Spark to its limit
+- **109 of 128 GB VRAM utilized** — this setup pushes a single DGX Spark to its limit
 
 ### How This Compares (April 2026 — Honest Assessment)
 
@@ -109,14 +109,14 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 
 | Component | Model | Weights | Port | tok/s |
 |---|---|---|---|---|
-| **Brain** | Qwen/Qwen3.6-35B-A3B-FP8 | ~55 GB | 8000 | ~53 |
+| **Brain** | Qwen/Qwen3.6-35B-A3B-FP8 | ~35 GB | 8000 | ~53 |
 
 **Key specs:**
 - Gated DeltaNet + MoE hybrid: 35B total, 3B active per token — fast inference, high intelligence
 - `vllm/vllm-openai:cu130-nightly` — standard image, no custom builds (requires vLLM >= 0.19.0)
 - `qwen3_coder` tool parser + `qwen3` reasoning parser
 - FP8 weights + FP8 KV cache
-- `gpu_memory_utilization: 0.80` (~97GB to vLLM, ~24GB left for OS/Docker)
+- `gpu_memory_utilization: 0.80` (~97GB to vLLM — ~35GB weights + ~58GB KV cache, ~24GB left for OS/Docker)
 - 262K native context — DeltaNet linear attention keeps KV cache manageable
 - Prefix caching enabled — fast repeated prompts
 
@@ -124,17 +124,17 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 
 ## Memory Map
 
-This setup uses **~111 of 128 GB** — pushing a single DGX Spark close to its limit.
+This setup uses **~109 of 128 GB** — pushing a single DGX Spark close to its limit.
 
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ===============================================================
- Qwen3.6-35B-A3B FP8 (Brain)  ~97.4 GB    0.80 util (~55GB weights + ~42GB KV cache)
+ Qwen3.6-35B-A3B FP8 (Brain)  ~97.4 GB    0.80 util (~35GB weights + ~58GB KV cache)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ---------------------------------------------------------------
- TOTAL ALLOCATED (est.)       ~105.4 GB
- HEADROOM (est.)               ~16.3 GB   safe — MoE only activates 3B/token
+ TOTAL ALLOCATED (est.)       ~109.0 GB
+ HEADROOM (est.)               ~12.7 GB   safe — MoE only activates 3B/token
 ===============================================================
 ```
 
@@ -206,7 +206,7 @@ nano .env   # set HF_TOKEN at minimum
 # Run these four scripts in order (idempotent, safe to re-run)
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service
-bash scripts/02_download_models.sh # Downloads model → /opt/models (~55GB)
+bash scripts/02_download_models.sh # Downloads model → /opt/models (~35GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
 ```
 
@@ -226,7 +226,7 @@ See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for detailed connection exa
 
 Script 01 installs a systemd service that starts Brain automatically on every power cycle. No manual intervention needed.
 
-Brain takes **3–5 minutes to load** after a cold boot (~55GB of weights loading into memory). OpenClaw reconnects automatically once ready.
+Brain takes **3–5 minutes to load** after a cold boot (~35GB of weights loading into memory). OpenClaw reconnects automatically once ready.
 
 ```bash
 systemctl status spark-sovereign
