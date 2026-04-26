@@ -60,17 +60,9 @@
 
     "_category_data": "=== DATA & MEMORY ===",
 
-    "postgres": {
-      "_package": "@modelcontextprotocol/server-postgres (npm)",
-      "_description": "SQL queries against any PostgreSQL DB including pgvector.",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres",
-               "postgresql://postgres:${POSTGRES_PASSWORD}@localhost/${POSTGRES_DB}"]
-    },
-
     "memory": {
       "_package": "@modelcontextprotocol/server-memory (npm)",
-      "_description": "Built-in MCP knowledge graph for in-session entity memory. Complements pgvector.",
+      "_description": "Built-in MCP knowledge graph for in-session entity memory.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory"]
     },

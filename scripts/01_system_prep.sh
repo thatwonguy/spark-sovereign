@@ -34,9 +34,8 @@ echo "    Docker restarted."
 # 2. Create persistent storage directories on 4TB NVMe
 echo ">>> Creating model/data directories on NVMe..."
 sudo mkdir -p "${MODELS_DIR}"
-sudo mkdir -p /opt/pgvector
 sudo mkdir -p /opt/searxng
-sudo chown -R "$(whoami):$(whoami)" "${MODELS_DIR}" /opt/pgvector /opt/searxng /opt/agent 2>/dev/null || true
+sudo chown -R "$(whoami):$(whoami)" "${MODELS_DIR}" /opt/searxng /opt/agent 2>/dev/null || true
 echo "    Directories created."
 
 # 3. Resolve pre-installed NeMo/pyannote package conflicts
@@ -113,7 +112,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log() { echo "[spark-boot] $*"; }
 
 log "Starting CPU-only services..."
-for name in pgvector searxng; do
+for name in searxng; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
