@@ -106,29 +106,9 @@ tts:
   # port: 8003
 
 # -----------------------------------------------------------------------------
-# EMBEDDINGS — vector encoding for RAG + pgvector memory
-# -----------------------------------------------------------------------------
-embeddings:
-  name: nomic-embed
-  hf_repo: nomic-ai/nomic-embed-text-v1.5
-  local_path: /opt/models/nomic-embed
-  port: 8004
-  dimensions: 384
-  # --- SWAP EXAMPLE (higher-quality, more RAM) ---
-  # name: nv-embed-v2
-  # hf_repo: nvidia/NV-Embed-v2
-  # local_path: /opt/models/nv-embed-v2
-  # port: 8004
-  # dimensions: 4096
-
-# -----------------------------------------------------------------------------
 # INFRASTRUCTURE — not swappable models, just reference
 # -----------------------------------------------------------------------------
 infrastructure:
-  pgvector:
-    image: pgvector/pgvector:pg17
-    port: 5432
-    data_path: /opt/pgvector
   searxng:
     image: searxng/searxng:latest
     port: 8088                        # 8080 reserved for NemoClaw OpenShell gateway
@@ -143,14 +123,12 @@ infrastructure:
 # Qwen3.6-35B-A3B FP8         97.4 GB   0.80 util (~35GB weights + ~58GB KV cache)
 # ASR (nemotron-speech)        3.0 GB   always-on
 # TTS (magpie_tts)             1.4 GB   always-on
-# Embeddings (nomic)           0.4 GB   always-on
-# pgvector + PostgreSQL        2.0 GB   always-on
 # SearXNG                      0.5 GB   always-on
 # NemoClaw + OpenClaw          1.0 GB   always-on
 # OS + Docker + vLLM           6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                       111.7 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                     10.0 GB   ✅ tight but safe — MoE only activates 3B/token
+# TOTAL                       109.3 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                     12.4 GB   ✅ comfortable — MoE only activates 3B/token
 # NOTE: Effective weight memory is ~35GB (DeltaNet hybrid is lighter than Qwen3.5's ~55GB).
 #       57.6GB available for KV cache → 1.5M tokens → 22x concurrent 262K requests.
 #       Massive KV cache improvement over v3.0 — better for long contexts.

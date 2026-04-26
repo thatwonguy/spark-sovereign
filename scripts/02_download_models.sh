@@ -74,7 +74,7 @@ ACTIVE_PATHS=$(python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
-keys = ['brain', 'subagent', 'asr', 'tts', 'embeddings']
+keys = ['brain', 'subagent', 'asr', 'tts']
 for k in keys:
     p = cfg.get(k, {}).get('local_path', '')
     if p:
@@ -95,16 +95,16 @@ echo ""
 download_model "Brain" brain
 download_model "ASR (Nemotron Speech)"           asr
 download_model "TTS (Magpie TTS)"                tts
-download_model "Embeddings (Nomic Embed)"        embeddings
 
 echo ""
 echo "All models downloaded."
 echo ""
 echo "Disk usage summary:"
-for key in brain asr tts embeddings; do
+for key in brain asr tts; do
     path=$(get_model_field "${key}" local_path)
     [ -n "${path}" ] && [ -d "${path}" ] && du -sh "${path}" 2>/dev/null || true
 done
 
 echo ""
 echo "Phase 2 complete. Proceed to: scripts/03_vllm_servers.sh"
+

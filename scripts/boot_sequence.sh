@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log() { echo "[spark-boot] $*"; }
 
 log "Starting CPU-only services..."
-for name in pgvector searxng; do
+for name in searxng; do
     docker start "${name}" 2>/dev/null && log "  started ${name}" || log "  ${name} not found, skipping"
 done
 
