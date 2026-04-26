@@ -32,9 +32,9 @@ After running `scripts/03_vllm_servers.sh`, Brain is serving at:
 | Setting | Value |
 |---|---|
 | **Base URL** | `http://localhost:8000/v1` |
-| **Model ID** | Value of `served_name` in `config/models.yml` (currently `qwen35-35b`) |
+| **Model ID** | Value of `served_name` in `config/models.yml` (currently `qwen36-35b`) |
 | **API key** | Any string (e.g. `local`) — not validated |
-| **Context window** | Value of `max_model_len` in `config/models.yml` (currently `131072`) |
+| **Context window** | Value of `max_model_len` in `config/models.yml` (currently `262144`) |
 
 ### Quick test (works from any language/framework)
 
@@ -43,7 +43,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer local" \
   -d '{
-    "model": "qwen35-35b",
+    "model": "qwen36-35b",
     "messages": [{"role": "user", "content": "Hello, who are you?"}]
   }'
 ```
@@ -55,7 +55,7 @@ from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="local")
 response = client.chat.completions.create(
-    model="qwen35-35b",
+    model="qwen36-35b",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -68,7 +68,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({ baseURL: "http://localhost:8000/v1", apiKey: "local" });
 const response = await client.chat.completions.create({
-  model: "qwen35-35b",
+  model: "qwen36-35b",
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);
@@ -96,9 +96,9 @@ When the wizard asks:
 |---|---|
 | Provider type | OpenAI-compatible endpoint |
 | Base URL | `http://localhost:8000/v1` |
-| Model ID | `qwen35-35b` (or your `served_name` from `config/models.yml`) |
+| Model ID | `qwen36-35b` (or your `served_name` from `config/models.yml`) |
 | API key | `local` (any string) |
-| Context window | `131072` (or your `max_model_len` from `config/models.yml`) |
+| Context window | `262144` (or your `max_model_len` from `config/models.yml`) |
 
 Everything else (agent name, personality, voice, memory, Telegram, workspace) is configured inside the OpenClaw wizard.
 
@@ -144,5 +144,5 @@ bash scripts/check_stack.sh
 
 ## Version
 
-- Current model: Qwen3.5-35B-A3B-FP8 (v3.0)
+- Current model: Qwen3.6-35B-A3B-FP8 (v4.0)
 - Last updated: April 2026

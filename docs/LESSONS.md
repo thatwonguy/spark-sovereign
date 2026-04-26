@@ -246,14 +246,55 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
+## 13. Model Swap: Qwen3.5-35B-A3B → Qwen3.6-35B-A3B-FP8 (Current)
+
+**Previous model:** Qwen/Qwen3.5-35B-A3B-FP8 (~49 tok/s, 131K context, standard MoE)
+
+**New model:** Qwen/Qwen3.6-35B-A3B-FP8
+
+**Why the switch:**
+- +3.4 pts SWE-bench Verified (73.4% vs 70.0%) — meaningful coding improvement
+- +11 pts Terminal-Bench 2.0 (51.5% vs 40.5%) — major agentic coding upgrade
+- Community benchmark on single DGX Spark: ~52.73 tok/s (tg32) — slightly faster than v3.0
+- Native 262K context (up from 131K) — doubles effective conversation length
+- Same parsers (`qwen3_coder`, `qwen3`), same Docker image, same scripts — true drop-in
+
+**Architecture change — Gated DeltaNet hybrid:**
+- Qwen3.5 used standard MoE with full quadratic attention at every layer
+- Qwen3.6 uses Gated DeltaNet + MoE: linear attention for 3/4 of layers, full attention for 1/4
+- This directly addresses the long-context quadratic cliff documented in Lesson #4
+- KV cache pressure dramatically reduced — 262K context fits within the same 0.80 util memory budget
+- Same 35B total / 3B active MoE shape — inference speed and memory footprint are comparable
+
+**What changed in config:**
+- `hf_repo`: `Qwen/Qwen3.5-35B-A3B-FP8` → `Qwen/Qwen3.6-35B-A3B-FP8`
+- `served_name`: `qwen35-35b` → `qwen36-35b`
+- `max_model_len`: `131072` → `262144`
+- Everything else (image, parsers, env vars, util, seqs) stays identical
+
+**vLLM requirement:** >= 0.19.0. Verify your `cu130-nightly` has this before deploying:
+```bash
+docker run --rm vllm/vllm-openai:cu130-nightly python -c "import vllm; print(vllm.__version__)"
+```
+
+**Caveats:**
+- Qwen3.6 does NOT support `/think` `/nothink` soft switches (Qwen3.5 feature removed)
+- MTP speculative decoding showed performance degradation on Spark — do not enable
+- If 262K context causes OOM, fall back to `max_model_len: 131072`
+
+**Key lesson:** Same model family, same shape, same tooling — but the DeltaNet architectural change is genuinely meaningful. It's not just benchmark points; the linear attention layers fix a real production problem (long-context degradation) that was documented in Lesson #4. This is the kind of upgrade worth taking: zero migration cost, real capability gain.
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Active Params | tok/s | Intelligence | Issue |
 |---|---|---|---|---|---|
 | v1.0 | Qwen3.5-27B-FP8 (dense) | 27B | ~14–30 | High | Too slow — bandwidth ceiling |
 | v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | 3B | ~35–45 | Medium | Weaker on coding/reasoning |
-| **v3.0** | **Qwen3.5-35B-A3B-FP8** | **3B** | **~49** | **High** | **Current — best of both** |
+| v3.0 | Qwen3.5-35B-A3B-FP8 | 3B | ~49 | High | Superseded by v4.0 |
+| **v4.0** | **Qwen3.6-35B-A3B-FP8** | **3B** | **~53** | **High** | **Current — DeltaNet hybrid, 262K context** |
 
 ---
 
-*Last updated: April 4, 2026*
+*Last updated: April 26, 2026*
