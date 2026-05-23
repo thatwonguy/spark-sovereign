@@ -314,7 +314,7 @@ free -h                         # buff/cache growing = weights still streaming i
 
 ## 15. Self-Healing Watchdog — Idempotent, Bounded, Quiet
 
-**The problem:** v4.1 added systemd-driven auto-start on boot, but the box still required SSH intervention when anything failed *after* boot (vLLM crashes, OOM, Docker daemon restarts, OpenClaw exits). Unworkable for an unattended box, especially while traveling.
+**The problem:** v4.1 added systemd-driven auto-start on boot, but the box still required SSH intervention when anything failed *after* boot (vLLM crashes, OOM, Docker daemon restarts). Unworkable for an unattended box, especially while traveling.
 
 **What we added in v4.2:** `spark-watchdog.timer` — every 2 min runs `scripts/watchdog.sh`, which checks each service and self-heals what's down.
 
@@ -322,15 +322,17 @@ free -h                         # buff/cache growing = weights still streaming i
 
 1. **Idempotent.** Healthy services are not touched. No "restart-just-in-case." The cost of an unnecessary restart on a 4-min-loading Brain is too high.
 2. **Bounded.** State tracked in `/var/lib/spark-sovereign/state/<svc>.fails`. After 3 consecutive failed recovery attempts (~6 min of trying), the service is quarantined — watchdog stops touching it until it recovers on its own or an admin clears it. Prevents crash-restart loops.
-3. **Silent on success, but with a heartbeat.** Watchdog emits exactly one log line per tick: `[watchdog] tick searxng=up brain=up openclaw=up`. Confirms it's alive without spamming.
+3. **Silent on success, but with a heartbeat.** Watchdog emits exactly one log line per tick: `[watchdog] tick searxng=up brain=up asr-server=absent tts-server=absent`. Confirms it's alive without spamming.
 4. **Boot path stays simple.** `boot_sequence.sh` does first-time startup (and tolerates failures — `set -e` removed, bounded Brain wait). After that, the watchdog owns steady-state.
-5. **Linger enabled.** `loginctl enable-linger` so user-level units (OpenClaw gateway) survive power cycles without an SSH session.
+5. **Linger enabled.** `loginctl enable-linger` so user-level units survive power cycles without an SSH session.
 
 **Why no Docker `--restart unless-stopped`?** Considered and rejected. Docker's policy would respawn Brain forever underneath us and defeat the quarantine logic. Centralizing lifecycle decisions in one place (the watchdog) is worth one extra layer.
 
+**Scope boundary — framework-agnostic by design (v4.2.1):** The watchdog monitors *spark-sovereign-owned Docker containers only* (`searxng`, `brain`, `asr-server`, `tts-server`). It does **not** monitor agent frameworks (OpenClaw, LibreChat, n8n, Continue, AnythingLLM, etc.) — those own their own lifecycle. Recommended pattern for the framework layer: a systemd user unit with `Restart=on-failure` (linger is already enabled). For containerized frameworks, add `check_container <name> "docker start <name>"` to the tick block at the bottom of `watchdog.sh`. An earlier draft had a hard-coded `check_openclaw` that depended on the `openclaw` CLI being on PATH — it broke under systemd's reduced PATH (openclaw ships via npm under `~/.nvm/versions/node/<ver>/bin`) and, more fundamentally, leaked framework choice into infrastructure code. Removed.
+
 **Storage cost:** ~80 bytes per heartbeat × 30 ticks/hr ≈ 21 MB/year worst case. systemd-journald rotates the journal at 4 GB / 10% of `/var/log` automatically — physically cannot grow indefinitely.
 
-**Key lesson:** "Self-healing" without bounded retries is just "restart loop with extra steps." The quarantine flag is the most important part of the design, not the auto-restart.
+**Key lesson:** "Self-healing" without bounded retries is just "restart loop with extra steps." The quarantine flag is the most important part of the design, not the auto-restart. Equally important: infrastructure code should not name specific frameworks; each layer owns its own lifecycle.
 
 ---
 
