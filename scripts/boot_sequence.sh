@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Sequenced boot — CPU services first, then Brain, then voice.
-set -euo pipefail
+# Tolerates failures: if any single step fails, continue with the rest.
+# Steady-state health is owned by spark-watchdog.timer (every 2 min).
+
+set -uo pipefail   # NOTE: no -e — one failure must not abort the chain.
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log() { echo "[spark-boot] $*"; }
@@ -11,17 +15,28 @@ for name in searxng; do
 done
 
 log "Starting Brain..."
-bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
+if ! bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"; then
+    log "  Brain start failed — watchdog will retry"
+fi
 
-log "Waiting for Brain to be ready (port 8000)..."
-until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
-        log "ERROR: brain container exited. Check: docker logs brain"
-        exit 1
+# Bounded wait — up to 12 min for Brain to answer on port 8000.
+# If it doesn't, continue: voice + OpenClaw still come up, watchdog takes over.
+log "Waiting for Brain to be ready (port 8000, up to 12 min)..."
+DEADLINE=$(( $(date +%s) + 720 ))
+while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
+    if curl -sf --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; then
+        log "Brain ready."
+        break
     fi
-    sleep 5
+    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
+        log "  brain container not running — leaving recovery to watchdog"
+        break
+    fi
+    sleep 10
 done
-log "Brain ready."
+if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
+    log "  Brain not ready within 12 min — leaving recovery to watchdog"
+fi
 
 log "Starting voice services..."
 for name in asr-server tts-server; do
@@ -29,6 +44,7 @@ for name in asr-server tts-server; do
 done
 
 log "Starting OpenClaw gateway..."
-openclaw gateway start 2>/dev/null || true
+openclaw gateway start 2>/dev/null || log "  openclaw gateway start failed — watchdog will retry"
 
-log "Stack is up."
+log "Boot sequence complete — watchdog owns steady-state health."
+exit 0
