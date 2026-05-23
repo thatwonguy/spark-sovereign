@@ -203,11 +203,12 @@ cd ~/spark-sovereign
 cp .env.example .env
 nano .env   # set HF_TOKEN at minimum
 
-# Run these four scripts in order (idempotent, safe to re-run)
+# Run these scripts in order (idempotent, safe to re-run)
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
-bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service
+bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service, watchdog timer
 bash scripts/02_download_models.sh # Downloads model → /opt/models (~35GB)
 bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
+bash scripts/04_voice_stt.sh       # Optional — local Whisper STT (~450MB)
 ```
 
 Then connect your agentic framework of choice to `http://localhost:8000/v1`.
@@ -242,7 +243,7 @@ The watchdog is intentionally **framework-agnostic** — it does not monitor age
 ```bash
 # Live heartbeat — one summary line every 2 min
 sudo journalctl -u spark-watchdog -f
-# e.g.  [watchdog] tick searxng=up brain=up asr-server=absent openclaw=up
+# e.g.  [watchdog] tick searxng=up brain=up asr-server=absent tts-server=absent
 
 # Inspect state
 ls -la /var/lib/spark-sovereign/state/
@@ -282,7 +283,8 @@ spark-sovereign/
 │   ├── 02_download_models.sh  ← Download model from HF → /opt/models (prunes unused)
 │   ├── 03_vllm_servers.sh     ← Start Brain (port 8000)
 │   ├── 04_voice_stt.sh        ← Local Whisper STT setup (optional)
-│   ├── boot_sequence.sh       ← Auto-start on boot
+│   ├── boot_sequence.sh       ← Auto-start on boot (oneshot, runs once at boot)
+│   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   └── check_stack.sh         ← Health check
 ├── docs/
