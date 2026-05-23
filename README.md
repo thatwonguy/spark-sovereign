@@ -235,7 +235,9 @@ journalctl -u spark-sovereign -f
 
 ### Self-Healing Watchdog
 
-`spark-watchdog.timer` runs every 2 min after boot and self-heals unhealthy services (`searxng`, `brain`, `asr-server`, `tts-server`, OpenClaw gateway). It is **idempotent** — healthy services are never touched — and **bounded**: after 3 consecutive failed recoveries, a service is quarantined to prevent restart loops.
+`spark-watchdog.timer` runs every 2 min after boot and self-heals the Docker containers spark-sovereign manages (`searxng`, `brain`, `asr-server`, `tts-server`). It is **idempotent** — healthy services are never touched — and **bounded**: after 3 consecutive failed recoveries, a service is quarantined to prevent restart loops.
+
+The watchdog is intentionally **framework-agnostic** — it does not monitor agent layers (OpenClaw, LibreChat, n8n, etc.). Run your agent framework as a systemd user unit with `Restart=on-failure` (user linger is already enabled). To monitor an additional container, add `check_container <name> "docker start <name>"` to the tick block at the bottom of `scripts/watchdog.sh`.
 
 ```bash
 # Live heartbeat — one summary line every 2 min

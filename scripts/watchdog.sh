@@ -107,25 +107,18 @@ check_brain() {
     attempt_recovery brain "bash '${REPO_ROOT}/scripts/start_brain_ad_hoc.sh'"
 }
 
-check_openclaw() {
-    if ! command -v openclaw >/dev/null 2>&1; then
-        record_status openclaw "absent"
-        return
-    fi
-    if openclaw gateway status 2>/dev/null | grep -qi "running"; then
-        mark_healthy openclaw
-        record_status openclaw "up"
-        return
-    fi
-    attempt_recovery openclaw "openclaw gateway start"
-}
-
 # ── Tick ─────────────────────────────────────────────────────────────────────
+# spark-sovereign owns the Docker containers below. Agent frameworks
+# (OpenClaw, LibreChat, n8n, etc.) own their own lifecycle — typically via a
+# systemd user unit with `Restart=on-failure`, or Docker's own restart
+# policies if they ship as containers.
+#
+# To monitor an additional containerized service, add a line below:
+#     check_container <name> "docker start <name>"
 check_container searxng    "docker start searxng"
 check_brain
 check_container asr-server "docker start asr-server"
 check_container tts-server "docker start tts-server"
-check_openclaw
 
 log "tick ${TICK_STATUS}"
 exit 0
