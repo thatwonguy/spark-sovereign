@@ -288,6 +288,52 @@ docker run --rm vllm/vllm-openai:cu130-nightly python -c "import vllm; print(vll
 
 ---
 
+## 14. Brain Takes 4–5 Min to Load — That's Normal, Not Broken
+
+**The recurring panic:** Telegram returns "LLM response error" right after a boot or restart, the DGX Spark dashboard shows ~45 GB unified memory used, and the instinct is "something didn't auto-start."
+
+**What's actually happening:** vLLM's load pipeline takes 4–5 min on Spark:
+- ~3.5 min to load ~35 GB of FP8 weights off NVMe into memory
+- ~30 s for torch.compile, cudagraph capture, KV cache profiling
+- Port 8000 only binds *after* both finish
+
+During this window the brain container shows `Up` but `curl /v1/models` fails. Expected, not broken.
+
+**Diagnose in 5 seconds:**
+```bash
+docker logs brain --tail 20    # look for "Loading safetensors..." progress
+                                # or "Uvicorn running on http://0.0.0.0:8000" at the end
+free -h                         # buff/cache growing = weights still streaming in
+```
+
+**Why the watchdog doesn't restart Brain during load:** `scripts/watchdog.sh` has `BRAIN_LOAD_GRACE_SECONDS=600` (10 min). If brain is up but port-silent and younger than 10 min, the watchdog leaves it alone (logs `brain=loading(Ns)` in its heartbeat). Only after the grace window does it count as a real failure and trigger recovery.
+
+**Key lesson:** Treat the first ~10 min after a fresh brain container as a load window. Two diagnostic sessions in two days were spent re-discovering this. The watchdog already knows; future-you should too.
+
+---
+
+## 15. Self-Healing Watchdog — Idempotent, Bounded, Quiet
+
+**The problem:** v4.1 added systemd-driven auto-start on boot, but the box still required SSH intervention when anything failed *after* boot (vLLM crashes, OOM, Docker daemon restarts, OpenClaw exits). Unworkable for an unattended box, especially while traveling.
+
+**What we added in v4.2:** `spark-watchdog.timer` — every 2 min runs `scripts/watchdog.sh`, which checks each service and self-heals what's down.
+
+**Design constraints — deliberate, not accidental:**
+
+1. **Idempotent.** Healthy services are not touched. No "restart-just-in-case." The cost of an unnecessary restart on a 4-min-loading Brain is too high.
+2. **Bounded.** State tracked in `/var/lib/spark-sovereign/state/<svc>.fails`. After 3 consecutive failed recovery attempts (~6 min of trying), the service is quarantined — watchdog stops touching it until it recovers on its own or an admin clears it. Prevents crash-restart loops.
+3. **Silent on success, but with a heartbeat.** Watchdog emits exactly one log line per tick: `[watchdog] tick searxng=up brain=up openclaw=up`. Confirms it's alive without spamming.
+4. **Boot path stays simple.** `boot_sequence.sh` does first-time startup (and tolerates failures — `set -e` removed, bounded Brain wait). After that, the watchdog owns steady-state.
+5. **Linger enabled.** `loginctl enable-linger` so user-level units (OpenClaw gateway) survive power cycles without an SSH session.
+
+**Why no Docker `--restart unless-stopped`?** Considered and rejected. Docker's policy would respawn Brain forever underneath us and defeat the quarantine logic. Centralizing lifecycle decisions in one place (the watchdog) is worth one extra layer.
+
+**Storage cost:** ~80 bytes per heartbeat × 30 ticks/hr ≈ 21 MB/year worst case. systemd-journald rotates the journal at 4 GB / 10% of `/var/log` automatically — physically cannot grow indefinitely.
+
+**Key lesson:** "Self-healing" without bounded retries is just "restart loop with extra steps." The quarantine flag is the most important part of the design, not the auto-restart.
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Active Params | tok/s | Intelligence | Issue |
@@ -299,4 +345,4 @@ docker run --rm vllm/vllm-openai:cu130-nightly python -c "import vllm; print(vll
 
 ---
 
-*Last updated: April 26, 2026*
+*Last updated: May 22, 2026*
