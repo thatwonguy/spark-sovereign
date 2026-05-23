@@ -106,7 +106,11 @@ EOF
 cat > "${SPARK_REPO}/scripts/boot_sequence.sh" << 'BOOT'
 #!/usr/bin/env bash
 # Sequenced boot — CPU services first, then Brain, then voice.
-set -euo pipefail
+# Tolerates failures: if any single step fails, continue with the rest.
+# Steady-state health is owned by spark-watchdog.timer (every 2 min).
+
+set -uo pipefail   # NOTE: no -e — one failure must not abort the chain.
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log() { echo "[spark-boot] $*"; }
@@ -117,17 +121,26 @@ for name in searxng; do
 done
 
 log "Starting Brain..."
-bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"
+if ! bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh"; then
+    log "  Brain start failed — watchdog will retry"
+fi
 
-log "Waiting for Brain to be ready (port 8000)..."
-until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
-        log "ERROR: brain container exited. Check: docker logs brain"
-        exit 1
+log "Waiting for Brain to be ready (port 8000, up to 12 min)..."
+DEADLINE=$(( $(date +%s) + 720 ))
+while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
+    if curl -sf --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; then
+        log "Brain ready."
+        break
     fi
-    sleep 5
+    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
+        log "  brain container not running — leaving recovery to watchdog"
+        break
+    fi
+    sleep 10
 done
-log "Brain ready."
+if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
+    log "  Brain not ready within 12 min — leaving recovery to watchdog"
+fi
 
 log "Starting voice services..."
 for name in asr-server tts-server; do
@@ -135,15 +148,60 @@ for name in asr-server tts-server; do
 done
 
 log "Starting OpenClaw gateway..."
-openclaw gateway start 2>/dev/null || true
+openclaw gateway start 2>/dev/null || log "  openclaw gateway start failed — watchdog will retry"
 
-log "Stack is up."
+log "Boot sequence complete — watchdog owns steady-state health."
+exit 0
 BOOT
 
 chmod +x "${SPARK_REPO}/scripts/boot_sequence.sh"
+chmod +x "${SPARK_REPO}/scripts/watchdog.sh" 2>/dev/null || true
+
+# Watchdog state directory (writable by the runtime user)
+echo ">>> Creating watchdog state directory..."
+sudo mkdir -p /var/lib/spark-sovereign/state
+sudo chown -R "$(whoami):$(whoami)" /var/lib/spark-sovereign
+
+# Install the watchdog service + timer (idempotent, bounded self-heal).
+echo ">>> Installing spark-watchdog service and timer..."
+sudo tee /etc/systemd/system/spark-watchdog.service > /dev/null << EOF
+[Unit]
+Description=spark-sovereign service watchdog (idempotent self-heal)
+After=docker.service spark-sovereign.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=$(whoami)
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/$(whoami)/.local/bin
+ExecStart=${SPARK_REPO}/scripts/watchdog.sh
+StandardOutput=journal
+StandardError=journal
+EOF
+
+sudo tee /etc/systemd/system/spark-watchdog.timer > /dev/null << EOF
+[Unit]
+Description=Run spark-sovereign watchdog every 2 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=2min
+Unit=spark-watchdog.service
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Linger lets any --user services (e.g. openclaw-gateway) survive a power
+# cycle without an interactive SSH session.
+echo ">>> Enabling user-level service persistence (linger)..."
+sudo loginctl enable-linger "$(whoami)" || true
+
 sudo systemctl daemon-reload
 sudo systemctl enable spark-sovereign.service
-echo "    Startup service installed and enabled."
+sudo systemctl enable --now spark-watchdog.timer
+echo "    Startup service + watchdog installed and enabled."
 
 echo ""
 echo "Phase 1 complete. Proceed to: scripts/02_download_models.sh"
