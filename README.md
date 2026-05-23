@@ -233,6 +233,25 @@ systemctl status spark-sovereign
 journalctl -u spark-sovereign -f
 ```
 
+### Self-Healing Watchdog
+
+`spark-watchdog.timer` runs every 2 min after boot and self-heals unhealthy services (`searxng`, `brain`, `asr-server`, `tts-server`, OpenClaw gateway). It is **idempotent** — healthy services are never touched — and **bounded**: after 3 consecutive failed recoveries, a service is quarantined to prevent restart loops.
+
+```bash
+# Live heartbeat — one summary line every 2 min
+sudo journalctl -u spark-watchdog -f
+# e.g.  [watchdog] tick searxng=up brain=up asr-server=absent openclaw=up
+
+# Inspect state
+ls -la /var/lib/spark-sovereign/state/
+cat /var/lib/spark-sovereign/state/*.fails
+
+# Clear a quarantine after fixing the underlying issue
+sudo rm /var/lib/spark-sovereign/state/<svc>.quarantined
+```
+
+Brain gets a 10-min load grace window — the watchdog will not restart Brain mid-load (see [docs/LESSONS.md](docs/LESSONS.md#14-brain-takes-45-min-to-load--thats-normal-not-broken)).
+
 ---
 
 ## Swapping the Model
