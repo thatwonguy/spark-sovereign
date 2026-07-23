@@ -61,6 +61,7 @@ BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
 BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
 BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
 BRAIN_EAGER=$(get_field brain enforce_eager)
@@ -87,6 +88,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ -n "${BRAIN_REASON_PLUGIN}" ] && EXTRA_ARGS+=" --reasoning-parser-plugin ${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"
     [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
     [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
+    [ -n "${BRAIN_MOE_BACKEND}" ]  && EXTRA_ARGS+=" --moe-backend ${BRAIN_MOE_BACKEND}"
     [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
     [ -n "${BRAIN_SPEC_TOKENS}" ]  && EXTRA_ARGS+=" --num-speculative-tokens ${BRAIN_SPEC_TOKENS}"
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
@@ -123,6 +125,7 @@ else
             --kv-cache-dtype "${BRAIN_KV}" \
             ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
             ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+            ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
             ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
             ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
             $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
