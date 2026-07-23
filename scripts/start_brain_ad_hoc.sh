@@ -47,6 +47,8 @@ BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
+BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -74,6 +76,8 @@ docker run -d --name brain \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
+        ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+        ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
