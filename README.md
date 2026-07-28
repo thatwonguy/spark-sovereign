@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-NVIDIA_DGX_Spark-76B900?logo=nvidia&logoColor=white)](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)
 [![OpenClaw](https://img.shields.io/badge/agentic_layer-OpenClaw-blueviolet?logo=lobster&logoColor=white)](https://github.com/openclaw/openclaw)
-[![Model](https://img.shields.io/badge/model-Qwen3.6--35B--A3B--FP8-orange)](https://huggingface.co/Qwen/Qwen3.6-35B-A3B-FP8)
-[![Speed](https://img.shields.io/badge/speed-~53_tok%2Fs-brightgreen)](config/models.yml)
+[![Model](https://img.shields.io/badge/model-Qwen3.6--35B--A3B--NVFP4-orange)](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
+[![Speed](https://img.shields.io/badge/speed-~53_tok%2Fs_(FP8_measured)-brightgreen)](config/models.yml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25_local-critical)](README.md)
 
 **Your AI. Your hardware. Your rules.**
@@ -35,7 +35,7 @@ This setup lets you pick the best available open-weight model, serve it locally 
 
 **TLDR:** As of April 2026, this setup is a practical replacement for Claude Code and ChatGPT Codex for day-to-day engineering work. CLI coding, agentic tool use, parallel agents, chat, voice, Telegram, MCP integrations — all running locally, 24/7, with zero API dependency. An engineer can go fully off-grid and still get professional work done. Now running Qwen3.6 with 73.4% SWE-bench Verified and 262K native context.
 
-- **~53 tokens/sec** sustained inference — no queue, no throttling, no network latency
+- **~53 tokens/sec** sustained inference (measured on the FP8 build; the NVFP4 swap targets more but is not yet measured) — no queue, no throttling, no network latency
 - **262K context window** — long conversations, full codebase analysis, deep reasoning
 - **Agentic coding** — tool calling, code execution, file management, web search
 - **Parallel agents** — OpenClaw spawns multiple workers for complex tasks simultaneously
@@ -81,9 +81,12 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v1.0 | Qwen3.5-27B-FP8 (dense) | 27B | ~14–30 | High | Too slow — hit memory bandwidth ceiling |
 | v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | 3B | ~35–45 | Medium | Fast but weaker on coding/reasoning |
 | v3.0 | Qwen3.5-35B-A3B-FP8 | 3B | ~49 | High | Retired — superseded by v4.0 |
-| **v4.0** | **Qwen3.6-35B-A3B-FP8** | **3B** | **~53** | **High** | **Current — drop-in upgrade from v3.0** |
+| v4.0 | Qwen3.6-35B-A3B-FP8 | 3B | ~53 | High | Retired — same weights, superseded by v4.1 |
+| **v4.1** | **Qwen3.6-35B-A3B-NVFP4** | **3B** | **TBD** | **High** | **Current — quantization-only swap, speed not yet measured** |
 
-The current model (Qwen3.6-35B-A3B-FP8) is a Gated DeltaNet + MoE hybrid that activates only 3B parameters per token while having 35B total params to draw from. The DeltaNet architecture uses linear attention for 3/4 of layers, dramatically reducing KV cache pressure at long contexts — native 262K context vs 131K on the previous Qwen3.5. Scores 73.4% on SWE-bench Verified (+3.4 over v3.0) and 51.5% on Terminal-Bench 2.0 (+11 over v3.0).
+v4.1 is the *same model and weights* as v4.0, re-quantized to NVFP4 (Blackwell-native 4-bit) by Unsloth. Intelligence is unchanged — no benchmark moves. The intended win is decode speed, but that gain depends on vLLM actually selecting the `flashinfer_b12x` MoE kernel on this hardware; if it falls back to Marlin, NVFP4 is *slower* than FP8. See the blocker note in [config/models.yml](config/models.yml) — the `tok/s` figure stays TBD until measured on the Spark.
+
+The current model (Qwen3.6-35B-A3B) is a Gated DeltaNet + MoE hybrid that activates only 3B parameters per token while having 35B total params to draw from. The DeltaNet architecture uses linear attention for 3/4 of layers, dramatically reducing KV cache pressure at long contexts — native 262K context vs 131K on the previous Qwen3.5. Scores 73.4% on SWE-bench Verified (+3.4 over v3.0) and 51.5% on Terminal-Bench 2.0 (+11 over v3.0).
 
 For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md).
 
@@ -109,11 +112,11 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 
 | Component | Model | Weights | Port | tok/s |
 |---|---|---|---|---|
-| **Brain** | Qwen/Qwen3.6-35B-A3B-FP8 | ~35 GB | 8000 | ~53 |
+| **Brain** | unsloth/Qwen3.6-35B-A3B-NVFP4 | ~24 GB (est.) | 8000 | TBD |
 
 **Key specs:**
 - Gated DeltaNet + MoE hybrid: 35B total, 3B active per token — fast inference, high intelligence
-- `vllm/vllm-openai:cu130-nightly` — standard image, no custom builds (requires vLLM >= 0.19.0)
+- `vllm/vllm-openai:cu130-nightly` — standard image, no custom builds. ⚠️ This tag has not been rebuilt since 2026-04-23 and predates the `--moe-backend` guidance NVFP4 depends on; see the blocker note in [config/models.yml](config/models.yml) before relying on it.
 - `qwen3_coder` tool parser + `qwen3` reasoning parser
 - FP8 weights + FP8 KV cache
 - `gpu_memory_utilization: 0.80` (~97GB to vLLM — ~35GB weights + ~58GB KV cache, ~24GB left for OS/Docker)
@@ -129,7 +132,7 @@ This setup uses **~109 of 128 GB** — pushing a single DGX Spark close to its l
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ===============================================================
- Qwen3.6-35B-A3B FP8 (Brain)  ~97.4 GB    0.80 util (~35GB weights + ~58GB KV cache)
+ Qwen3.6-35B-A3B NVFP4 (Brain) ~97.4 GB   0.80 util (~24GB weights + ~73GB KV cache, est.)
  OS + Docker + vLLM             6.0 GB    always-on
  OpenClaw + overhead            2.0 GB    always-on
 ---------------------------------------------------------------

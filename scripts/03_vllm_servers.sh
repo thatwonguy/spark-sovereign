@@ -34,6 +34,24 @@ for k, v in env.items():
 " 2>/dev/null || true
 }
 
+# Emit a field as compact JSON. Accepts either a YAML mapping or a pre-formatted
+# JSON string in models.yml. Compact separators keep the result space-free so it
+# survives the word-splitting VLLM_EXTRA_ARGS path below without extra quoting.
+get_json_field() {
+    python3 -c "
+import yaml, json
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+val = cfg.get('$1', {}).get('$2', None)
+if val is None or val == '':
+    print('')
+elif isinstance(val, str):
+    print(''.join(val.split()))
+else:
+    print(json.dumps(val, separators=(',', ':')))
+"
+}
+
 echo "========================================================"
 echo " spark-sovereign — Phase 3: vLLM Inference Server"
 echo "========================================================"
@@ -62,8 +80,7 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
-BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
-BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
+BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
 BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
 BRAIN_ASYNC=$(get_field brain async_scheduling)
@@ -89,8 +106,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
     [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
     [ -n "${BRAIN_MOE_BACKEND}" ]  && EXTRA_ARGS+=" --moe-backend ${BRAIN_MOE_BACKEND}"
-    [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
-    [ -n "${BRAIN_SPEC_TOKENS}" ]  && EXTRA_ARGS+=" --num-speculative-tokens ${BRAIN_SPEC_TOKENS}"
+    [ -n "${BRAIN_SPEC_CONFIG}" ]  && EXTRA_ARGS+=" --speculative-config ${BRAIN_SPEC_CONFIG}"
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
@@ -126,8 +142,7 @@ else
             ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
             ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
             ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
-            ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
-            ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
+            ${BRAIN_SPEC_CONFIG:+--speculative-config "${BRAIN_SPEC_CONFIG}"} \
             $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
             --trust-remote-code \
             --enable-auto-tool-choice \

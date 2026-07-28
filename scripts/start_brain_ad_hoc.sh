@@ -35,6 +35,22 @@ for k, v in env.items():
 " 2>/dev/null || true
 }
 
+# Emit a field as compact JSON. Accepts either a YAML mapping or a JSON string.
+get_json_field() {
+    python3 -c "
+import yaml, json
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+val = cfg.get('$1', {}).get('$2', None)
+if val is None or val == '':
+    print('')
+elif isinstance(val, str):
+    print(''.join(val.split()))
+else:
+    print(json.dumps(val, separators=(',', ':')))
+"
+}
+
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
 BRAIN_NAME=$(get_field brain served_name)
@@ -49,6 +65,7 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
+BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -78,6 +95,7 @@ docker run -d --name brain \
         ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
         ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
         ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
+        ${BRAIN_SPEC_CONFIG:+--speculative-config "${BRAIN_SPEC_CONFIG}"} \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
