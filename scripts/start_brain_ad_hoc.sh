@@ -107,31 +107,13 @@ docker run -d --name brain \
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
 
-# Wait for the server to actually answer before reporting success. boot_sequence.sh
-# runs this on every boot, so without the check a container that dies on a bad flag
-# (unsupported --moe-backend, OOM, wrong parser) exits 0 and leaves OpenClaw pointed
-# at nothing, with no indication of what went wrong. Bounded so a model that loads
-# forever can't stall the whole boot.
-BRAIN_READY_TIMEOUT="${BRAIN_READY_TIMEOUT:-600}"
-echo "    Waiting up to $((BRAIN_READY_TIMEOUT / 60))m for Brain to load (typically 3-5m)..."
-
-waited=0
-until curl -sf "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
-    if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
-        echo "ERROR: brain container exited during startup. Last 40 log lines:"
-        docker logs brain --tail 40 2>&1 | sed 's/^/       /' || true
-        exit 1
-    fi
-    if [ "${waited}" -ge "${BRAIN_READY_TIMEOUT}" ]; then
-        echo "ERROR: brain container is up but not serving after ${BRAIN_READY_TIMEOUT}s."
-        echo "       Check: docker logs brain -f"
-        exit 1
-    fi
-    sleep 5
-    waited=$((waited + 5))
-done
-
-echo "    Brain ready → http://localhost:${BRAIN_PORT}/v1"
+# NOTE: deliberately fire-and-return — do NOT add a readiness wait here.
+# Both callers already bound the wait themselves, and each needs a fast return:
+#   - boot_sequence.sh treats a failed start as non-fatal, then does its own
+#     bounded 12-min wait on port 8000.
+#   - watchdog.sh runs every 2 min and calls this for recovery; blocking here
+#     would stretch its MAX_FAILS quarantine window far past the intended ~6 min.
+echo "    Brain takes 3-5 minutes to load. Watchdog owns steady-state health."
 echo "    Serving model ID: ${BRAIN_NAME}"
 echo ""
 echo "    OpenClaw reconnects automatically ONLY if its configured model ID still"
