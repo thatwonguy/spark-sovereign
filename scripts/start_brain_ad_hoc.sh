@@ -99,7 +99,7 @@ docker run -d --name brain \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
-        --reasoning-parser "${BRAIN_REASON}" \
+        ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
         --enable-prefix-caching \
         --max-num-seqs "${BRAIN_SEQS}" \
         ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}

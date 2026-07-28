@@ -87,29 +87,56 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # limit_mm_per_prompt: '{"image": 10}'
   #
-  # OPTION 2 — Qwen3-Coder-Next-80B-A3B (coding-specialized swap, NOT speed-only):
-  # 80B total / 3B active (2.3x more experts than the 35B, same active-param
-  # cost). SWE-Bench Verified 74.2% vs 73.4% above — small delta on paper; the
-  # real case is agentic tool-use recovery / long-horizon coding, which SWE-Bench
-  # doesn't fully capture. Trade-off: FP8 weights are ~2.3x heavier, so context
-  # must shrink to fit on one Spark. Community-tested (NVIDIA dev forum): ~45
-  # tok/s at these settings. Treat gpu_memory_utilization/max_model_len as a
-  # starting point, not gospel — watch `check_stack.sh` / nvidia-smi and dial
-  # down if it OOMs. reasoning_parser is UNVERIFIED for this model — test it.
-  # name: qwen3-coder-next-80b-fp8
-  # hf_repo: unsloth/Qwen3-Coder-Next-FP8-Dynamic
-  # local_path: /opt/models/qwen3-coder-next-fp8
+  # OPTION 2 — Qwen3-Coder-Next-80B-A3B (coding specialist — a TRADE, not an upgrade):
+  # 80B total / 3B active, built on Qwen3-Next-80B-A3B-Base. Corrected against
+  # the official Qwen model card (huggingface.co/Qwen/Qwen3-Coder-Next) — an
+  # earlier version of this note used a third-party 74.2% SWE-bench figure that
+  # made it look like a straight win. It isn't. Official numbers:
+  #
+  #   Benchmark              Coder-Next    Qwen3.6-35B (current)
+  #   SWE-Bench Verified        70.6            73.4      <- current model WINS
+  #   Terminal-Bench 2.0        36.2            51.5      <- current model WINS BIG
+  #   SWE-Bench Pro             44.3             n/a
+  #
+  # Reported SWE-bench values for this model range 70.6 / 71.3 / 74.2 depending
+  # on scaffold. Only compare same-scaffold numbers; 70.6 is Qwen's own.
+  #
+  # The genuine case for it is what benchmarks measure poorly: it is RL-trained
+  # for long-horizon agentic coding — sustained tool use and recovery from failed
+  # tool calls. That maps directly onto OpenClaw. Worth it ONLY if agentic coding
+  # is overwhelmingly your primary use.
+  #
+  # What you GIVE UP by switching:
+  #   - Vision. Coder-Next is TEXT-ONLY. Do not carry limit_mm_per_prompt over.
+  #   - Thinking mode entirely. The card is explicit: "supports only non-thinking
+  #     mode and does not generate <think></think> blocks." Leave reasoning_parser
+  #     unset — there is no reasoning output to parse. (The launch scripts now
+  #     pass --reasoning-parser conditionally, so blank is safe.)
+  #   - Context: 256K native, but see memory notes below.
+  #   - General (non-coding) chat and reasoning quality — it's a specialist.
+  #
+  # Use the 4-bit build, NOT FP8. Unsloth's own guidance puts Coder-Next at
+  # ~85GB in 8-bit, which would eat the entire GPU budget and leave ~nothing for
+  # KV cache — the FP8 config previously listed here would likely fail to boot.
+  # The NVFP4 GB10 build is ~46GB and is quantized specifically for Spark.
+  # Caveat: an NVIDIA forum thread reports slow perf on RedHatAI's NVFP4 build of
+  # this model, so measure before trusting. Values below are a STARTING POINT.
+  # name: qwen3-coder-next-nvfp4
+  # hf_repo: saricles/Qwen3-Coder-Next-NVFP4-GB10   # GB10-tuned; ~46GB weights
+  # local_path: /opt/models/qwen3-coder-next-nvfp4
   # served_name: qwen3-coder-80b
-  # gpu_memory_utilization: 0.70        # community-tuned for single Spark — verify
-  # max_model_len: 130000               # down from 262144 — FP8 weights leave much less room for KV cache
+  # gpu_memory_utilization: 0.80        # ~97GB; ~46GB weights leaves ~51GB KV cache — VERIFY with nvidia-smi
+  # max_model_len: 262144               # 256K native; drop to 131072 first if it OOMs
   # kv_cache_dtype: fp8
   # max_num_seqs: 16
   # max_num_batched_tokens: 8192
   # tool_call_parser: qwen3_coder       # confirmed same parser family
-  # reasoning_parser: qwen3             # UNVERIFIED — Coder-Next may not support /think the same way as 3.6
+  # reasoning_parser:                   # INTENTIONALLY BLANK — no thinking mode
+  # moe_backend: flashinfer_b12x        # NVFP4 on Spark — same requirement as the current model
   # extra_env:
+  #   CUTE_DSL_ARCH: sm_121a
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
-  # limit_mm_per_prompt: '{"image": 10}'
+  # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
   #
   # Dense 27B (slower but higher quality per active param):
   # name: qwen36-27b-fp8
@@ -198,7 +225,9 @@ infrastructure:
 #       + ~58GB KV cache; NVFP4's smaller weight footprint should free extra KV cache
 #       headroom, but exact split depends on vLLM's NVFP4 memory accounting.
 #
-# If/when swapping to OPTION 2 (Qwen3-Coder-Next-80B FP8, see commented block above):
-# weights alone are ~80GB. At gpu_memory_utilization 0.70 (~85GB reserved), that leaves
-# only ~5GB for KV cache at max_model_len 130000 — tight. Community Spark testing
-# confirms it works at ~45 tok/s, but treat as an experiment, not a settled config.
+# If/when swapping to OPTION 2 (Qwen3-Coder-Next-80B, see commented block above):
+# Do NOT use the FP8 build. Unsloth puts Coder-Next at ~85GB in 8-bit, and 0.70 util
+# reserves ~85GB — weights would consume the entire budget and leave ~nothing for KV
+# cache, so 130K context x 16 seqs would not fit. That config was wrong and has been
+# replaced above with the NVFP4 GB10 build (~46GB weights, ~51GB KV cache at 0.80).
+# Still an experiment: measure with check_stack.sh / nvidia-smi before trusting it.
