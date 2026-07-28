@@ -101,7 +101,8 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     EXTRA_ARGS+=" --trust-remote-code"
     EXTRA_ARGS+=" --enable-auto-tool-choice"
     EXTRA_ARGS+=" --tool-call-parser ${BRAIN_TOOL}"
-    EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
+    # Optional: models with no thinking mode (e.g. Qwen3-Coder-Next) leave this blank.
+    [ -n "${BRAIN_REASON}" ]       && EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
     [ -n "${BRAIN_REASON_PLUGIN}" ] && EXTRA_ARGS+=" --reasoning-parser-plugin ${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"
     [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
     [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
@@ -147,7 +148,7 @@ else
             --trust-remote-code \
             --enable-auto-tool-choice \
             --tool-call-parser "${BRAIN_TOOL}" \
-            --reasoning-parser "${BRAIN_REASON}" \
+            ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
             ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
             --max-num-seqs "${BRAIN_SEQS}" \
             ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
