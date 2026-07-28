@@ -121,10 +121,18 @@ brain:
   # The NVFP4 GB10 build is ~46GB and is quantized specifically for Spark.
   # Caveat: an NVIDIA forum thread reports slow perf on RedHatAI's NVFP4 build of
   # this model, so measure before trusting. Values below are a STARTING POINT.
+  # ⚠️  NOT a config-only swap end to end: served_name changes below, so after the
+  # brain comes up you MUST re-run the OpenClaw config manually on the Spark to
+  # point it at the new model ID. Until you do, OpenClaw is aimed at a model ID
+  # that no longer exists and will fail to connect even though the brain is
+  # healthy. (The current NVFP4 swap keeps served_name: qwen36-35b, so it does
+  # NOT need this step — this applies only to switching to Coder-Next.)
+  # If you'd rather skip the reconfig, set served_name: qwen36-35b below instead
+  # and OpenClaw will reconnect untouched.
   # name: qwen3-coder-next-nvfp4
   # hf_repo: saricles/Qwen3-Coder-Next-NVFP4-GB10   # GB10-tuned; ~46GB weights
   # local_path: /opt/models/qwen3-coder-next-nvfp4
-  # served_name: qwen3-coder-80b
+  # served_name: qwen3-coder-80b        # CHANGED -> requires manual OpenClaw reconfig (see above)
   # gpu_memory_utilization: 0.80        # ~97GB; ~46GB weights leaves ~51GB KV cache — VERIFY with nvidia-smi
   # max_model_len: 262144               # 256K native; drop to 131072 first if it OOMs
   # kv_cache_dtype: fp8
