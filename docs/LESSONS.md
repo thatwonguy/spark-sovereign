@@ -348,12 +348,12 @@ free -h                         # buff/cache growing = weights still streaming i
 
 | | v4.2.1 (Qwen3.6-35B-A3B FP8) | v5.0 (Qwen3.8-27B NVFP4) |
 |---|---|---|
-| Decode | ~53 tok/s | **~17 tok/s** (min 14.3, max 18.5 across two runs) |
-| TTFT | — | ~283 ms |
+| Decode | ~53 tok/s | **15–17 tok/s** (median 15.5 / 16.9 across three independent runs, range 14.3–18.5) |
+| TTFT | — | ~280 ms (range 262–289 ms) |
 | VRAM reserved | 0.80 util (~97 GB) | 0.45 util (**~55 GB — verified via `nvidia-smi`**) |
 | Weights on disk | ~35 GB (FP8) | ~22 GB (NVFP4 4-bit) |
 
-Numbers were reproduced twice: once by `scripts/benchmark_brain.sh` after a benchmark-script fix (commit `9cd2f2d`), and again by a self-diagnostic the model ran on itself. Both landed in the 15–17 tok/s window.
+Numbers were reproduced three times independently — `scripts/benchmark_brain.sh` after the benchmark-script fix (commit `9cd2f2d`), a self-diagnostic the Brain agent ran on itself, and a third confirmation run the same day. All landed in the 15–17 tok/s median window with consistent TTFT and prompt-size accounting. Consistent enough to publish.
 
 ### Why the drop
 
