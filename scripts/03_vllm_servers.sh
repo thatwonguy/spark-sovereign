@@ -19,6 +19,9 @@ import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
 val = cfg.get('$1', {}).get('$2', '')
+# YAML true -> Python True prints as 'True'; callers test for 'true'.
+if isinstance(val, bool):
+    val = str(val).lower()
 print(val if val is not None else '')
 "
 }
@@ -85,6 +88,7 @@ BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
 BRAIN_ASYNC=$(get_field brain async_scheduling)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
+BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -111,6 +115,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
+    [ "${BRAIN_PREFIX_CACHE}" = "true" ] && EXTRA_ARGS+=" --enable-prefix-caching"
 
     # shellcheck disable=SC2086
     docker run -d --name brain \
@@ -152,6 +157,7 @@ else
             ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
             --max-num-seqs "${BRAIN_SEQS}" \
             ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
+            $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
             $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling")
 fi
 
@@ -172,7 +178,7 @@ echo "========================================================"
 echo " Brain loaded and serving."
 echo "  Model : ${BRAIN_NAME}"
 echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
-echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (~30GB weights + KV cache)"
+echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (weights + KV cache)"
 echo "========================================================"
 echo ""
 echo " NEXT STEP: Open OpenClaw → run the onboard setup wizard"
