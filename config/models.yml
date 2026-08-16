@@ -13,16 +13,18 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# NOT YET RUN ON THE SPARK. Every value below is from the model card, the vLLM
-# recipe, and a third-party GB10 report — none of it is confirmed on our
-# hardware. Verify before trusting. Rollback: `git checkout v4.2.1`.
+# STATUS (2026-08-16): measured on the Spark. Median decode 15–17 tok/s
+# across three independent runs (14.3–18.5 range), TTFT ~280 ms, VRAM
+# ~55 GB at 0.45 util (nvidia-smi confirmed). Full write-up in
+# docs/LESSONS.md #16. Rollback path: `git checkout v4.2.1` restores the
+# v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-27b-nvfp4
   hf_repo: unsloth/Qwen3.8-27B-NVFP4
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
-  served_name: qwen38-27b             # changed from qwen36-35b — OpenClaw must be re-pointed by hand, see below
+  served_name: qwen38-27b             # arbitrary label independent of model weights; if you change it, re-point OpenClaw
   docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 build — GB10 is an ARM host
   gpu_memory_utilization: 0.45
   max_model_len: 262144
@@ -37,11 +39,6 @@ brain:
     CUTE_DSL_ARCH: sm_121a
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   limit_mm_per_prompt: '{"image":10}'   # keep space-free: the `serve` entrypoint branch word-splits VLLM_EXTRA_ARGS
-  #
-  # served_name changed, so OpenClaw is pointed at a model ID that no longer
-  # exists and will fail to connect even while the brain is healthy. Either
-  # re-run the OpenClaw config on the Spark, or set served_name back to
-  # qwen36-35b — the ID is only a label and need not match the model.
   #
   # --- SWAP EXAMPLES ---
   # ROLLBACK — tag v4.2.1 is the last release verified on this hardware
