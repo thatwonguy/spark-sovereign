@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-NVIDIA_DGX_Spark-76B900?logo=nvidia&logoColor=white)](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)
 [![OpenClaw](https://img.shields.io/badge/agentic_layer-OpenClaw-blueviolet?logo=lobster&logoColor=white)](https://github.com/openclaw/openclaw)
-[![Model](https://img.shields.io/badge/model-Qwen3.6--35B--A3B--NVFP4-orange)](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
-[![Speed](https://img.shields.io/badge/speed-~53_tok%2Fs_(FP8_measured)-brightgreen)](config/models.yml)
+[![Model](https://img.shields.io/badge/model-Qwen3.8--27B--NVFP4-orange)](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4)
+[![Speed](https://img.shields.io/badge/speed-~17_tok%2Fs_(NVFP4_measured)-yellow)](config/models.yml)
 [![Privacy](https://img.shields.io/badge/privacy-100%25_local-critical)](README.md)
 
 **Your AI. Your hardware. Your rules.**
@@ -33,28 +33,29 @@ This setup lets you pick the best available open-weight model, serve it locally 
 
 ## What You Get
 
-**TLDR:** As of April 2026, this setup is a practical replacement for Claude Code and ChatGPT Codex for day-to-day engineering work. CLI coding, agentic tool use, parallel agents, chat, voice, Telegram, MCP integrations — all running locally, 24/7, with zero API dependency. An engineer can go fully off-grid and still get professional work done. Now running Qwen3.6 with 73.4% SWE-bench Verified and 262K native context.
+**TLDR:** As of August 2026, this setup is a practical replacement for Claude Code and ChatGPT Codex for day-to-day engineering work. CLI coding, agentic tool use, parallel agents, chat, voice, Telegram, MCP integrations, **native image input** — all running locally, 24/7, with zero API dependency. An engineer can go fully off-grid and still get professional work done. Currently running Qwen3.8-27B NVFP4 — dense multimodal, 262K context, slower than the previous MoE but more capable per token.
 
-- **~53 tokens/sec** sustained inference (measured on the FP8 build; the NVFP4 swap targets more but is not yet measured) — no queue, no throttling, no network latency
+- **~17 tokens/sec** sustained decode, ~283 ms TTFT (measured, single-stream, 256-token generation on an idle Spark). Slower than v4.2.1 (~53 tok/s FP8 MoE) — see the [Model Evolution](#model-evolution) trade below.
 - **262K context window** — long conversations, full codebase analysis, deep reasoning
+- **Native vision** — send images directly to Brain (up to 10 per prompt); dense multimodal model, no separate vision encoder
 - **Agentic coding** — tool calling, code execution, file management, web search
 - **Parallel agents** — OpenClaw spawns multiple workers for complex tasks simultaneously
 - **Voice I/O** — speak to it, it speaks back (local Whisper STT, configurable TTS)
 - **Telegram bot** — message your AI from your phone, send voice notes, images, text
 - **Persistent memory** — remembers across sessions, learns your codebase and preferences
-- **Multimodal** — send images and video, Brain analyzes natively
 - **MCP tools** — git, GitHub, browser, shell, databases, Slack, Stripe, and more
 - **Auto-start on boot** — plug in power, walk away, it's ready in 5 minutes
-- **109 of 128 GB VRAM utilized** — this setup pushes a single DGX Spark to its limit
+- **~55 GB of 128 GB unified memory** reserved by vLLM at `gpu_memory_utilization: 0.45` — leaves ~55 GB free for other workloads on the same Spark
 
-### How This Compares (April 2026 — Honest Assessment)
+### How This Compares (August 2026 — Honest Assessment)
 
-|  | **spark-sovereign** (Qwen3.6-35B-A3B) | **Claude Code** (Opus 4.6) | **ChatGPT Codex** (GPT-5.4) |
+|  | **spark-sovereign** (Qwen3.8-27B NVFP4) | **Claude Code** (Opus 4.8) | **ChatGPT Codex** (GPT-5.6 Sol) |
 |---|---|---|---|
-| **Speed** | ~53 tok/s sustained, zero latency | Variable — depends on server load and queue | Variable — depends on server load and queue |
+| **Speed** | ~17 tok/s sustained decode, zero network latency | Variable — depends on server load and queue | Variable — depends on server load and queue |
 | **Coding** | Strong — handles day-to-day engineering, debugging, refactoring, and generation | Best-in-class for complex multi-step coding | Strong, comparable to Claude on most tasks |
 | **Hard reasoning** | Good for most tasks; frontier models still lead on the hardest problems | Strongest on complex architectural reasoning | Strong, especially on math and long-chain logic |
 | **Agentic** | Full — parallel agents, tool calling, MCP, code execution via OpenClaw | Full — native tool use, computer use | Full — native tool use, code interpreter |
+| **Vision** | Native — up to 10 images per prompt, no separate encoder | Native | Native |
 | **Context window** | 262K tokens | 200K tokens | 128K–1M tokens |
 | **Chat / conversation** | Unlimited — no session limits, no token caps | Session-limited, rate-limited on heavy use | Generous but usage-capped on Pro tier |
 | **Voice** | Local STT + configurable TTS, Telegram voice notes | Not available in CLI | Voice mode available |
@@ -66,9 +67,11 @@ This setup lets you pick the best available open-weight model, serve it locally 
 | **Bans / ToS risk** | Zero — no terms of service, no content policy, no account to lose | Subject to Anthropic's acceptable use policy | Subject to OpenAI's usage policies |
 | **Model upgrades** | Swap in newer open-weight models as they release — instant | Automatic but you have no choice or control | Automatic but you have no choice or control |
 
-**The honest take:** Frontier models like Opus 4.6 and GPT-5.4 still lead on the hardest reasoning tasks — the kind where you need 500B+ active parameters grinding through a complex multi-file refactor or novel algorithm design. But for the vast majority of professional engineering work — writing code, debugging, reviewing PRs, chatting, running agents, using tools — this local setup gets the job done at ~53 tok/s with zero ongoing cost, total privacy, and no one standing between you and your AI.
+**The honest take:** On **coding**, this model punches genuinely hard. Qwen3.8-27B posts **79.0% on QwenSWEBench, 61.7% on SWE-Bench Pro, 90.3% on LiveCodeBench v6, 73.0 Terminal-Bench 2.1, 84.3% OSWorld-Verified, and 89.2% GPQA Diamond** — numbers competitive with Opus 4.6-era flagships and Sonnet 4.6 / GPT-5.6 Terra on the code axis, and ahead of them on several agentic-execution and computer-use benchmarks. **Opus 4.8** and **GPT-5.6 Sol** still lead on the very hardest architectural reasoning and pure-knowledge questions — that gap is real, and shows up on cross-repo refactors and open-ended research. But for the daily work of a professional engineer — writing code, debugging, tool use, PR review, agent orchestration, image analysis — this is not a toy. It's a serious daily driver that a self-respecting developer can absolutely 5–10× themselves with, especially once you factor in **24/7 availability, zero rate limits, unlimited context reuse, parallel agents, and total privacy**. The 17 tok/s throughput is slower than cloud APIs but not disabling for interactive work.
 
-The gap is closing fast. Every few weeks, a new open-weight model drops that's smarter and faster than the last. This hardware will only get more capable over time.
+**What you're trading:** the current model is a deliberate speed-for-capability swap from the previous MoE baseline — **~3× slower decode (~17 vs ~53 tok/s), in exchange for native multimodal input (text + images + video, up to 10 images per prompt), a 27B dense reasoning core, and 262K native context.** If sustained single-stream throughput matters more to you than vision + dense reasoning, `git checkout v4.2.1` puts you on the faster MoE unchanged — see [Model Evolution](#model-evolution).
+
+The gap to frontier models is closing fast. Every few weeks a new open-weight model drops that's smarter or faster than the last. This hardware will only get more capable over time.
 
 ---
 
@@ -76,19 +79,19 @@ The gap is closing fast. Every few weeks, a new open-weight model drops that's s
 
 We tested multiple models to find the best intelligence-to-speed ratio on Spark hardware. The open-source ecosystem moves fast — what was best last month gets surpassed the next.
 
-| Release | Model | Active Params | tok/s | Intelligence | Status |
-|---|---|---|---|---|---|
-| v1.0 | Qwen3.5-27B-FP8 (dense) | 27B | ~14–30 | High | Too slow — hit memory bandwidth ceiling |
-| v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | 3B | ~35–45 | Medium | Fast but weaker on coding/reasoning |
-| v3.0 | Qwen3.5-35B-A3B-FP8 | 3B | ~49 | High | Retired — superseded by v4.0 |
-| v4.0 | Qwen3.6-35B-A3B-FP8 | 3B | ~53 | High | Retired — same weights, superseded by v4.1 |
-| **v4.1** | **Qwen3.6-35B-A3B-NVFP4** | **3B** | **TBD** | **High** | **Current — quantization-only swap, speed not yet measured** |
+| Release | Model | Architecture | Active Params | tok/s | Vision | Status |
+|---|---|---|---|---|---|---|
+| v1.0 | Qwen3.5-27B-FP8 | Dense | 27B | ~14–30 | No | Too slow — hit memory bandwidth ceiling |
+| v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | MoE | 3B | ~35–45 | No | Fast but weaker on coding/reasoning |
+| v3.0 | Qwen3.5-35B-A3B-FP8 | MoE | 3B | ~49 | No | Retired — superseded by v4.0 |
+| **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline — fastest measured. Available via `git checkout v4.2.1`** |
+| **v5.0** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — traded speed for vision + higher intelligence per token** |
 
-v4.1 is the *same model and weights* as v4.0, re-quantized to NVFP4 (Blackwell-native 4-bit) by Unsloth. Intelligence is unchanged — no benchmark moves. The intended win is decode speed, but that gain depends on vLLM actually selecting the `flashinfer_b12x` MoE kernel on this hardware; if it falls back to Marlin, NVFP4 is *slower* than FP8. See the blocker note in [config/models.yml](config/models.yml) — the `tok/s` figure stays TBD until measured on the Spark.
+**v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
-The current model (Qwen3.6-35B-A3B) is a Gated DeltaNet + MoE hybrid that activates only 3B parameters per token while having 35B total params to draw from. The DeltaNet architecture uses linear attention for 3/4 of layers, dramatically reducing KV cache pressure at long contexts — native 262K context vs 131K on the previous Qwen3.5. Scores 73.4% on SWE-bench Verified (+3.4 over v3.0) and 51.5% on Terminal-Bench 2.0 (+11 over v3.0).
+The current model (Qwen3.8-27B) is a dense NVFP4 build quantized by Unsloth specifically for Blackwell (SM12.1) hardware. Native 262K context, integrated vision encoder, `qwen3_coder` tool-call parser, `qwen3` reasoning parser, and MTP (Multi-Token Prediction) speculative-decoding heads shipped with the checkpoint.
 
-For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md).
+For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md) — Lesson #16 covers the v4.2.1 → v5.0 trade in detail.
 
 ---
 
@@ -110,36 +113,42 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 
 ## Current Model
 
-| Component | Model | Weights | Port | tok/s |
-|---|---|---|---|---|
-| **Brain** | unsloth/Qwen3.6-35B-A3B-NVFP4 | ~24 GB (est.) | 8000 | TBD |
+| Component | Model | Weights | Port | tok/s (measured) | TTFT |
+|---|---|---|---|---|---|
+| **Brain** | unsloth/Qwen3.8-27B-NVFP4 | ~22 GB (NVFP4 4-bit) | 8000 | ~17 decode | ~283 ms |
 
 **Key specs:**
-- Gated DeltaNet + MoE hybrid: 35B total, 3B active per token — fast inference, high intelligence
-- `vllm/vllm-openai:cu130-nightly` — standard image, no custom builds. ⚠️ This tag has not been rebuilt since 2026-04-23 and predates the `--moe-backend` guidance NVFP4 depends on; see the blocker note in [config/models.yml](config/models.yml) before relying on it.
+- Dense 27.78B params, multimodal — every token touches all 27B params (see [Model Evolution](#model-evolution) for why speed is 3× slower than v4.2.1)
+- Native **text + images + video** input — up to 10 images per prompt via `limit_mm_per_prompt`
+- `vllm/vllm-openai:qwen38-arm64-cu130` — arm64 build for GB10, includes the vLLM version that handles the Qwen3.8 architecture and MTP speculative decoding
 - `qwen3_coder` tool parser + `qwen3` reasoning parser
-- FP8 weights + FP8 KV cache
-- `gpu_memory_utilization: 0.80` (~97GB to vLLM — ~35GB weights + ~58GB KV cache, ~24GB left for OS/Docker)
-- 262K native context — DeltaNet linear attention keeps KV cache manageable
+- NVFP4 4-bit weights + FP8 KV cache
+- `gpu_memory_utilization: 0.45` (~55 GB reserved by vLLM — ~22 GB weights + ~33 GB KV cache, ~55 GB free for OS / Docker / other workloads)
+- 262K native context
+- MTP speculative decoding (ships in checkpoint, no draft model needed)
 - Prefix caching enabled — fast repeated prompts
+
+Benchmark it yourself: `bash scripts/benchmark_brain.sh` (single-stream TTFT + decode tok/s from the running Brain).
 
 ---
 
 ## Memory Map
 
-This setup uses **~109 of 128 GB** — pushing a single DGX Spark close to its limit.
+Deliberately modest footprint — v5.0 reserves less than half the Spark's memory so other workloads (Immich, dashboards, dev containers) can coexist.
 
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
 ===============================================================
- Qwen3.6-35B-A3B NVFP4 (Brain) ~97.4 GB   0.80 util (~24GB weights + ~73GB KV cache, est.)
- OS + Docker + vLLM             6.0 GB    always-on
- OpenClaw + overhead            2.0 GB    always-on
+ Qwen3.8-27B NVFP4 (Brain) ~55.0 GB   0.45 util (~22GB weights + ~33GB KV cache)
+ OS + Docker + vLLM         6.0 GB    always-on
+ OpenClaw + overhead        2.0 GB    always-on
 ---------------------------------------------------------------
- TOTAL ALLOCATED (est.)       ~109.0 GB
- HEADROOM (est.)               ~12.7 GB   safe — MoE only activates 3B/token
+ TOTAL ALLOCATED          ~63.0 GB
+ HEADROOM                 ~58.7 GB   plenty for other Docker services on the same box
 ===============================================================
 ```
+
+If you want to push more memory to KV cache for very-long-context workloads, raise `gpu_memory_utilization` in `config/models.yml` — every 0.05 buys ~6 GB more cache. This *won't* increase decode speed (that's bandwidth-bound), but it does allow larger batches and longer conversations.
 
 As NVIDIA improves the DGX Spark hardware and the open-source community releases smarter, more efficiently quantized models, these numbers will only get better. The Spark is a long-term investment — the models you run on it next year will be significantly more capable than what's available today, on the same hardware.
 
@@ -330,7 +339,7 @@ Any framework that supports OpenAI-compatible endpoints works. Point it at:
 
 ```
 Base URL:  http://localhost:8000/v1
-Model ID:  qwen36-35b  (or your served_name from config/models.yml)
+Model ID:  qwen38-27b  (or your served_name from config/models.yml)
 API key:   any string
 ```
 
