@@ -336,15 +336,84 @@ free -h                         # buff/cache growing = weights still streaming i
 
 ---
 
-## Model History (Quick Reference)
+## 16. Model Swap: Qwen3.6-35B-A3B → Qwen3.8-27B NVFP4 (v5.0 — Vision Accepted, Speed Sacrificed)
 
-| Release | Model | Active Params | tok/s | Intelligence | Issue |
-|---|---|---|---|---|---|
-| v1.0 | Qwen3.5-27B-FP8 (dense) | 27B | ~14–30 | High | Too slow — bandwidth ceiling |
-| v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | 3B | ~35–45 | Medium | Weaker on coding/reasoning |
-| v3.0 | Qwen3.5-35B-A3B-FP8 | 3B | ~49 | High | Superseded by v4.0 |
-| **v4.0** | **Qwen3.6-35B-A3B-FP8** | **3B** | **~53** | **High** | **Current — DeltaNet hybrid, 262K context** |
+**Previous model:** Qwen/Qwen3.6-35B-A3B-FP8 — MoE (35B total / **3B active** per token), ~53 tok/s measured. This is what `v4.2.1` restores.
+
+**New model:** unsloth/Qwen3.8-27B-NVFP4 — **dense 27B multimodal**, NVFP4 4-bit weights, 262K context, native vision (up to 10 images per prompt), MTP speculative-decoding heads shipped in the checkpoint.
+
+**Docker image:** `vllm/vllm-openai:qwen38-arm64-cu130` (arm64 for GB10). The prior `cu130-nightly` tag from v4.2.1 predates the Qwen3.8 architecture and cannot register the model.
+
+### The measurement — clean idle, single-stream, three runs of 256 tokens
+
+| | v4.2.1 (Qwen3.6-35B-A3B FP8) | v5.0 (Qwen3.8-27B NVFP4) |
+|---|---|---|
+| Decode | ~53 tok/s | **~17 tok/s** (min 14.3, max 18.5 across two runs) |
+| TTFT | — | ~283 ms |
+| VRAM reserved | 0.80 util (~97 GB) | 0.45 util (**~55 GB — verified via `nvidia-smi`**) |
+| Weights on disk | ~35 GB (FP8) | ~22 GB (NVFP4 4-bit) |
+
+Numbers were reproduced twice: once by `scripts/benchmark_brain.sh` after a benchmark-script fix (commit `9cd2f2d`), and again by a self-diagnostic the model ran on itself. Both landed in the 15–17 tok/s window.
+
+### Why the drop
+
+Spark is **memory-bandwidth-bound**, not compute-bound. Per-token decode speed is set by how many parameter bytes have to move through the ~273 GB/s memory bus:
+
+- v4.2.1 MoE: **3B active × 8-bit ≈ 3 GB/token** → fits the bandwidth budget → ~53 tok/s.
+- v5.0 dense: **27B × 4-bit ≈ 13.5 GB/token** → ~4.5× more bytes per token → ~3× slower decode.
+
+NVFP4 4-bit weights help (would be ~27 GB/token at 8-bit), but the active-compute gap wins. This is exactly the pattern documented in **Lesson #12** ("dense 27B on Spark is the wrong choice for bandwidth-limited hardware — you hit physics, not software"). We hit it again on purpose, this time knowingly, because the trade came with something the MoE couldn't offer.
+
+### Why we kept it anyway
+
+1. **Native multimodal input (text + images + video).** Qwen3.8-27B accepts up to 10 images per prompt directly, plus video — no separate vision encoder. The previous MoE was text-only. For image-in workflows (screenshots, diagrams, photos through Telegram, video frames), this is a capability delta, not just a benchmark delta.
+2. **Coding capability actually holds up on paper.** Published benchmarks at release (Aug 14, 2026): 79.0% QwenSWEBench, 61.7% SWE-Bench Pro, 90.3% LiveCodeBench v6, 73.0 Terminal-Bench 2.1, 84.3% OSWorld-Verified, 89.2% GPQA Diamond. On the code and agentic-execution axes, competitive with Opus 4.6-era and Sonnet 4.6 / GPT-5.6 Terra. Frontier flagships (Opus 4.8, GPT-5.6 Sol) still lead on the hardest architectural reasoning, but the gap in daily-driver territory is small.
+3. **Dense per-token reasoning.** Every token routes through all 27.78B parameters instead of a 3B expert subset. For long single-thread reasoning (multi-file refactors, architectural discussion, hard-to-benchmark "coherence"), the dense model tends to hold thread better than a same-size MoE.
+4. **262K context preserved.** No regression on context window from v4.2.1.
+5. **Blackwell-native quantization.** NVFP4 is what GB10 is designed for; weights fit in ~22 GB, leaving over half the Spark's memory for other workloads.
+6. **Apache 2.0 license.** No commercial restrictions on inference or downstream use.
+
+### What OpenClaw needs on the client side — otherwise the trade is neutered
+
+OpenClaw declares the `vllm/qwen38-27b` provider with `input: ["text"]`. If left this way, **images get stripped before they reach vLLM** and you get the 3× speed penalty with none of the vision benefit. Add `"image"` to that provider's `input:` list in OpenClaw's config before relying on vision. (This is an OpenClaw config, not a repo change — flagging here so the rollback-vs-keep decision is made with full information.)
+
+### What we changed to make this land
+
+- `config/models.yml`: `hf_repo`, `local_path`, `served_name`, `docker_image`, `gpu_memory_utilization` (0.80 → 0.45), removed `moe_backend` (dense — flag is MoE-only), added `speculative_config` (MTP), promoted `enable_prefix_caching` to a first-class field.
+- Fixed two latent bugs in the scripts along the way: `get_field()` was returning Python's `"True"` for YAML `true` (would have silently dropped any bool flag the moment one was set), and `start_brain_ad_hoc.sh` hardcoded `--enable-prefix-caching` while `03_vllm_servers.sh` never passed it (so boot-time start and watchdog recovery produced different servers).
+- Added `scripts/benchmark_brain.sh` — TTFT + decode tok/s against the running Brain. **The repo had no speed tooling at all before this**, which is how the v4.1 NVFP4 attempt shipped with tok/s "TBD" for weeks. Also fixed to accept vLLM's newer `delta.reasoning` streaming field alongside the older `delta.reasoning_content` (commit `9cd2f2d`).
+- Added archive-on-prune to `scripts/02_download_models.sh` — before deleting a pruned model dir, offers to move it to `/opt/model-archive` (single-slot). Rollback no longer costs a 35 GB HuggingFace download. Non-interactive callers (boot/watchdog/systemd) keep the old delete-silently behavior (commit `e74a8c0`).
+- `02_download_models.sh` now checks `tokenizer.json` for a pinned `truncation` — that field silently caps prompt length with no error and had bitten previous swaps.
+
+### Rollback path — kept explicit
+
+The v4.2.1 tag is the last release with measured 53 tok/s and is safe to return to at any time:
+
+```bash
+git checkout v4.2.1
+bash scripts/02_download_models.sh    # re-pulls the 35GB FP8 baseline
+bash scripts/03_vllm_servers.sh
+```
+
+`/opt/model-archive/qwen36-35b-a3b-nvfp4` (the intermediate NVFP4 MoE from an earlier commit on this branch) is **not** a viable rollback target — it hit the `--moe-backend: flashinfer_b12x` blocker on this vLLM version and does not start.
+
+### Key lesson
+
+Speed and capability are not on the same axis. Lesson #12 warned that dense-on-Spark is bandwidth-limited; that lesson is still correct. What changed this time is that we had a reason to accept the trade — vision — that Lesson #12's context (chat-only text) didn't have. **Physics didn't budge; priorities did.** If your workload is text-only high-throughput, roll back to v4.2.1 and keep 53 tok/s. If you need images in the loop, v5.0 pays for itself once OpenClaw stops stripping them.
 
 ---
 
-*Last updated: May 22, 2026*
+## Model History (Quick Reference)
+
+| Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
+|---|---|---|---|---|---|---|
+| v1.0 | Qwen3.5-27B-FP8 | Dense | 27B | ~14–30 | No | Too slow — bandwidth ceiling |
+| v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | MoE | 3B | ~35–45 | No | Weaker on coding/reasoning |
+| v3.0 | Qwen3.5-35B-A3B-FP8 | MoE | 3B | ~49 | No | Superseded by v4.0 |
+| v4.0 | Qwen3.6-35B-A3B-FP8 | MoE + DeltaNet | 3B | ~53 | No | Same intelligence as v3, +DeltaNet, 262K |
+| **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
+| **v5.0** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — speed traded for vision + higher per-token reasoning** |
+
+---
+
+*Last updated: August 16, 2026 — v5.0 swap*
