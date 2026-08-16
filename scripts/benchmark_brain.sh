@@ -102,8 +102,13 @@ def one_run():
 
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
-                # Thinking models stream reasoning_content before content.
-                if delta.get("content") or delta.get("reasoning_content"):
+                # Thinking models stream reasoning before content. vLLM's field
+                # name for that stream drifted: older builds use "reasoning_content",
+                # newer builds use "reasoning". Accept either so the benchmark
+                # survives image upgrades.
+                if (delta.get("content")
+                        or delta.get("reasoning")
+                        or delta.get("reasoning_content")):
                     now = time.perf_counter()
                     if ttft is None:
                         ttft = now - start
