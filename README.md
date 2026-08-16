@@ -134,7 +134,7 @@ Benchmark it yourself: `bash scripts/benchmark_brain.sh` (single-stream TTFT + d
 
 ## Memory Map
 
-Deliberately modest footprint — v5.0 reserves less than half the Spark's memory so other workloads (Immich, dashboards, dev containers) can coexist.
+Deliberately modest footprint — v5.0 reserves less than half the Spark's memory, leaving room for other services, dashboards, or dev containers to coexist on the same box.
 
 ```
 128GB DGX Spark Unified Memory (121.69 GiB visible to CUDA)
