@@ -98,6 +98,32 @@ download_model "TTS (Magpie TTS)"                tts
 
 echo ""
 echo "All models downloaded."
+
+# A pinned `truncation` in tokenizer.json silently caps prompt length while the
+# server still advertises the full context window — no error, no warning.
+echo ""
+echo "Verifying Brain tokenizer has no hardcoded truncation..."
+BRAIN_MODEL_PATH=$(get_model_field brain local_path)
+if [ -n "${BRAIN_MODEL_PATH}" ] && [ -f "${BRAIN_MODEL_PATH}/tokenizer.json" ]; then
+    python3 - "${BRAIN_MODEL_PATH}/tokenizer.json" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as f:
+        trunc = json.load(f).get('truncation')
+except Exception as e:
+    print(f"  WARN: could not read tokenizer.json ({e}) — check manually")
+    sys.exit(0)
+if trunc:
+    print(f"  *** WARNING: tokenizer.json pins truncation: {trunc}")
+    print("  *** Prompts will be SILENTLY truncated at that length.")
+    print("  *** Re-download the model — upstream published a fix for this.")
+else:
+    print("  OK: no truncation pinned (expected None).")
+PYEOF
+else
+    echo "  SKIP: no tokenizer.json at ${BRAIN_MODEL_PATH:-<unset>}"
+fi
+
 echo ""
 echo "Disk usage summary:"
 for key in brain asr tts; do

@@ -13,68 +13,65 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# Qwen3.6-35B-A3B-NVFP4: same model/weights as the FP8 rollback below, just
-# quantized to NVFP4 (Blackwell-native 4-bit) by Unsloth (released 2026-07-10).
-# Same benchmarks, same parsers, same 262K context — this is a SPEED-ONLY swap.
-# ~1.56x faster decode than FP8 (community DGX Spark benchmark). The "-Fast"
-# variant (W4A4) is ~1.79x but trades a bit more accuracy — skip it for now.
-# CRITICAL on Spark: --moe-backend flashinfer_b12x is REQUIRED or inference is
-# 2.5x SLOWER than FP8 (falls back to Marlin W4A16). Do not omit it.
-# Do NOT set `quantization:` — vLLM auto-detects NVFP4 from the checkpoint.
-#
-# ⚠️  BLOCKER — verify the image before trusting any of the speed claims above.
-# `vllm/vllm-openai:cu130-nightly` last shipped 2026-04-23 (digest sha256:3dbe092e).
-# It is a dead nightly, ~3 months stale, and predates v0.20.0-cu130 (2026-04-28).
-# Every flag below is Unsloth guidance written against the v0.25/v0.26 era. If
-# this image doesn't know `--moe-backend`, it falls back to Marlin (W4A16) and
-# NVFP4 lands *slower* than the FP8 baseline it replaced. Confirm with:
-#     docker run --rm vllm/vllm-openai:cu130-nightly --help | grep moe-backend
-# There is no current cu130 stable tag — v0.26.0 ships cu129 only. See TODOs.
-#
-# --- TODO: unverified experiments, do NOT enable without testing on the Spark ---
-# 1. NVFP4-Fast (W4A4): hf_repo unsloth/Qwen3.6-35B-A3B-NVFP4-Fast. Card claims
-#    1.79x vs 1.56x. Accuracy is near-neutral but AIME 2025 drops 93.12 -> 91.67.
-#    The "~95 tok/s" figure circulating online is extrapolated, not measured —
-#    the only real GB10 number (~80 tok/s @ c1) was Fast *with* MTP already on.
-#    Needs flashinfer_b12x to actually be active, so it is gated on the image.
-# 2. MTP speculative decoding: the checkpoint ships an MTP module and can act as
-#    its own draft. Official syntax (now wired up in 03_vllm_servers.sh):
-#      speculative_config: '{"method":"mtp","num_speculative_tokens":2}'
-#    Community reports ~86% acceptance — but docs/LESSONS.md records MTP
-#    *degrading* perf on Spark on an earlier build. Measure before adopting.
-# 3. --linear-backend flashinfer_b12x: do NOT add. Han's tweet recommended it,
-#    but it raises ValueError on stock images and was dropped from the model
-#    card. Only works on custom builds (vLLM 0.24.1-dev + FlashInfer 0.6.13).
-# 4. --enable-prefix-caching: scripts disagree. start_brain_ad_hoc.sh hardcodes
-#    it; 03_vllm_servers.sh never passes it. A Mamba/DeltaNet prefix-caching bug
-#    is documented against vLLM 0.24.1-dev, but LESSONS.md says it was a win
-#    here. Reconcile the two scripts once the image question is settled.
+# NOT YET RUN ON THE SPARK. Every value below is from the model card, the vLLM
+# recipe, and a third-party GB10 report — none of it is confirmed on our
+# hardware. Verify before trusting. Rollback: `git checkout v4.2.1`.
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen36-35b-a3b-nvfp4
-  hf_repo: unsloth/Qwen3.6-35B-A3B-NVFP4
-  local_path: /opt/models/qwen36-35b-a3b-nvfp4
+  name: qwen38-27b-nvfp4
+  hf_repo: unsloth/Qwen3.8-27B-NVFP4
+  local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
-  served_name: qwen36-35b
-  docker_image: vllm/vllm-openai:cu130-nightly
-  gpu_memory_utilization: 0.80        # weights shrink to ~24GB (from ~35GB FP8) — same util, more KV cache headroom; re-tune later if desired
-  max_model_len: 262144               # unchanged — NVFP4 build still natively supports 262K
+  served_name: qwen38-27b             # changed from qwen36-35b — OpenClaw must be re-pointed by hand, see below
+  docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 build — GB10 is an ARM host
+  gpu_memory_utilization: 0.45
+  max_model_len: 262144
   kv_cache_dtype: fp8
-  max_num_seqs: 16                    # Single-user — lower = less scheduling overhead per decode step
-  max_num_batched_tokens: 8192        # Large batch for improved throughput
-  tool_call_parser: qwen3_coder       # Same parser as FP8 — same family
-  reasoning_parser: qwen3             # Same parser as FP8 — same family
-  moe_backend: flashinfer_b12x        # REQUIRED on Spark — see comment above
+  max_num_seqs: 16
+  max_num_batched_tokens: 8192
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3
+  enable_prefix_caching: true
+  speculative_config: '{"method":"mtp","num_speculative_tokens":5}'
   extra_env:
-    CUTE_DSL_ARCH: sm_121a                  # Required arch flag for NVFP4 on Blackwell/Spark
-    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1        # Allow 262K context without warning
-  limit_mm_per_prompt: '{"image": 10}'  # multimodal: allow up to 10 images per request
+    CUTE_DSL_ARCH: sm_121a
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
+  limit_mm_per_prompt: '{"image":10}'   # keep space-free: the `serve` entrypoint branch word-splits VLLM_EXTRA_ARGS
+  #
+  # served_name changed, so OpenClaw is pointed at a model ID that no longer
+  # exists and will fail to connect even while the brain is healthy. Either
+  # re-run the OpenClaw config on the Spark, or set served_name back to
+  # qwen36-35b — the ID is only a label and need not match the model.
+  #
   # --- SWAP EXAMPLES ---
-  # Previous FP8 model (rollback — same intelligence, ~53 tok/s instead of ~80):
+  # ROLLBACK — tag v4.2.1 is the last release verified on this hardware
+  # (~53 tok/s, FP8 MoE). `git checkout v4.2.1` restores the whole stack.
+  #
+  # Previous brain (Qwen3.6-35B-A3B MoE, NVFP4 — speed never measured):
+  # name: qwen36-35b-a3b-nvfp4
+  # hf_repo: unsloth/Qwen3.6-35B-A3B-NVFP4
+  # local_path: /opt/models/qwen36-35b-a3b-nvfp4
+  # served_name: qwen36-35b
+  # docker_image: vllm/vllm-openai:cu130-nightly   # tag not rebuilt since 2026-04-23
+  # gpu_memory_utilization: 0.80
+  # max_model_len: 262144
+  # kv_cache_dtype: fp8
+  # max_num_seqs: 16
+  # max_num_batched_tokens: 8192
+  # tool_call_parser: qwen3_coder
+  # reasoning_parser: qwen3
+  # moe_backend: flashinfer_b12x        # REQUIRED for that MoE on Spark, or it falls back to Marlin and runs 2.5x slower
+  # extra_env:
+  #   CUTE_DSL_ARCH: sm_121a
+  #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
+  # limit_mm_per_prompt: '{"image": 10}'
+  #
+  # Measured-good fallback (Qwen3.6-35B-A3B FP8 — ~53 tok/s, this is the v4.0/v4.2.1 brain):
   # name: qwen36-35b-a3b-fp8
   # hf_repo: Qwen/Qwen3.6-35B-A3B-FP8
   # local_path: /opt/models/qwen36-35b-a3b-fp8
   # served_name: qwen36-35b
+  # docker_image: vllm/vllm-openai:cu130-nightly
   # gpu_memory_utilization: 0.80
   # max_model_len: 262144
   # kv_cache_dtype: fp8
@@ -125,10 +122,10 @@ brain:
   # brain comes up you MUST re-run the OpenClaw config manually on the Spark to
   # point it at the new model ID. Until you do, OpenClaw is aimed at a model ID
   # that no longer exists and will fail to connect even though the brain is
-  # healthy. (The current NVFP4 swap keeps served_name: qwen36-35b, so it does
-  # NOT need this step — this applies only to switching to Coder-Next.)
-  # If you'd rather skip the reconfig, set served_name: qwen36-35b below instead
-  # and OpenClaw will reconnect untouched.
+  # healthy. (The active Qwen3.8 config above ALSO changes served_name, so this
+  # step is already required for the current swap regardless.)
+  # If you'd rather skip the reconfig, set served_name to whatever OpenClaw is
+  # already pointed at and it will reconnect untouched.
   # name: qwen3-coder-next-nvfp4
   # hf_repo: saricles/Qwen3-Coder-Next-NVFP4-GB10   # GB10-tuned; ~46GB weights
   # local_path: /opt/models/qwen3-coder-next-nvfp4
@@ -140,26 +137,17 @@ brain:
   # max_num_batched_tokens: 8192
   # tool_call_parser: qwen3_coder       # confirmed same parser family
   # reasoning_parser:                   # INTENTIONALLY BLANK — no thinking mode
-  # moe_backend: flashinfer_b12x        # NVFP4 on Spark — same requirement as the current model
+  # moe_backend: flashinfer_b12x        # NVFP4 MoE on Spark — the active dense brain does not use this
   # extra_env:
   #   CUTE_DSL_ARCH: sm_121a
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
-  #
-  # Dense 27B (slower but higher quality per active param):
-  # name: qwen36-27b-fp8
-  # hf_repo: Qwen/Qwen3.6-27B-FP8
-  # local_path: /opt/models/qwen36-27b-fp8
-  # gpu_memory_utilization: 0.75
-  # max_model_len: 262144
-  # max_num_seqs: 32
-  # tool_call_parser: qwen3_coder
-  # reasoning_parser: qwen3
 
 # -----------------------------------------------------------------------------
-# SUB-AGENTS — not used (Brain handles all tasks at 50+ tok/s single model)
+# SUB-AGENTS — not used
 # -----------------------------------------------------------------------------
 # Uncomment to add a fast sub-agent if concurrent throughput becomes a bottleneck.
+# Nothing here is wired into boot_sequence.sh / watchdog.sh / check_stack.sh.
 # subagent:
 #   name: nemotron-nano
 #   hf_repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
@@ -215,23 +203,19 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified — updated 2026-07-22 for NVFP4 swap)
+# MEMORY MAP (128GB unified) — PROJECTION, not measured. Replace with real
+# numbers from check_stack.sh / nvidia-smi after the first successful boot.
 # -----------------------------------------------------------------------------
 # Component                  Allocated   Note
-# Qwen3.6-35B-A3B NVFP4      ~97.4 GB   0.80 util — weights shrink to ~24GB (was ~35GB FP8);
-#                                       remaining KV cache budget grows accordingly (unverified — measure after swap)
-# ASR (nemotron-speech)        3.0 GB   always-on
-# TTS (magpie_tts)             1.4 GB   always-on
-# SearXNG                      0.5 GB   always-on
-# NemoClaw + OpenClaw          1.0 GB   always-on
-# OS + Docker + vLLM           6.0 GB   always-on
+# Qwen3.8-27B NVFP4 (Brain)   ~54.8 GB   0.45 util
+# ASR (nemotron-speech)         3.0 GB   always-on
+# TTS (magpie_tts)              1.4 GB   always-on
+# SearXNG                       0.5 GB   always-on
+# NemoClaw + OpenClaw           1.0 GB   always-on
+# OS + Docker + vLLM            6.0 GB   always-on
 # ─────────────────────────────────────────────────
-# TOTAL                      ~109.3 GB   (on 121.69GiB visible to CUDA) — same envelope as FP8 baseline
-# HEADROOM                    ~12.4 GB   ✅ comfortable — MoE only activates 3B/token
-# NOTE: run `check_stack.sh` / nvidia-smi after the swap to confirm real numbers —
-#       this is a projection, not a measurement. Prior FP8 baseline used ~35GB weights
-#       + ~58GB KV cache; NVFP4's smaller weight footprint should free extra KV cache
-#       headroom, but exact split depends on vLLM's NVFP4 memory accounting.
+# TOTAL                       ~66.7 GB   (on 121.69GiB visible to CUDA)
+# HEADROOM                    ~55.0 GB
 #
 # If/when swapping to OPTION 2 (Qwen3-Coder-Next-80B, see commented block above):
 # Do NOT use the FP8 build. Unsloth puts Coder-Next at ~85GB in 8-bit, and 0.70 util

@@ -20,6 +20,9 @@ import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
 val = cfg.get('$1', {}).get('$2', '')
+# YAML true -> Python True prints as 'True'; callers test for 'true'.
+if isinstance(val, bool):
+    val = str(val).lower()
 print(val if val is not None else '')
 "
 }
@@ -66,6 +69,7 @@ BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
 BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
+BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -100,7 +104,7 @@ docker run -d --name brain \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
         ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
-        --enable-prefix-caching \
+        $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
         --max-num-seqs "${BRAIN_SEQS}" \
         ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
 
