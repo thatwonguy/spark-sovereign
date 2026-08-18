@@ -26,18 +26,20 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 ARCHIVE_OLD_MODEL="${ARCHIVE_OLD_MODEL:-}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
 
-# Ensure user-local Python CLI tools are available (huggingface-cli, aider, etc.)
+# Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
 # Optional early check so failures are obvious
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-    echo "ERROR: huggingface-cli not found in PATH"
+# huggingface-cli was removed in huggingface_hub v1.0; `hf` replaces it.
+if ! command -v hf >/dev/null 2>&1; then
+    echo "ERROR: hf CLI not found in PATH"
     echo "PATH=${PATH}"
-    echo "Try: python3 -m pip install --user huggingface_hub[hf_transfer]"
+    echo "Try: python3 -m pip install --user -U huggingface_hub"
     exit 1
 fi
 
-export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
+# hf_transfer was removed in v1.0; HF_HUB_ENABLE_HF_TRANSFER is now a silent no-op.
+export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export HF_TOKEN="${HF_TOKEN:-}"
 
 # Helper: read a value from models.yml without requiring yq
@@ -150,14 +152,14 @@ download_model() {
     echo "  Downloading ${label} → ${local_path}"
     echo "    HF repo: ${hf_repo}"
     mkdir -p "${local_path}"
-    huggingface-cli download "${hf_repo}" --local-dir "${local_path}"
+    hf download "${hf_repo}" --local-dir "${local_path}"
     echo "  OK ${label}"
 }
 
 echo "========================================================"
 echo " spark-sovereign — Phase 2: Download Models"
 echo "========================================================"
-echo "  HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER}"
+echo "  HF_XET_HIGH_PERFORMANCE=${HF_XET_HIGH_PERFORMANCE}"
 echo ""
 
 # ── Prune model directories no longer in models.yml ──────────────────────────
