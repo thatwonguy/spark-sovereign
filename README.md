@@ -180,8 +180,19 @@ Three layers, run once, done.
 ```
 Layer 1: First boot wizard   — physical, one time, ~15 min
 Layer 2: NVIDIA Sync + SSH   — on your laptop, one time, ~10 min
-Layer 3: spark-sovereign     — on the Spark, via SSH
+Layer 3: spark-sovereign     — on the Spark, via SSH:
+
+           00_first_boot.sh       Tailscale, environment sanity checks
+           01_system_prep.sh      Docker, dirs, Python deps, systemd + watchdog
+           02_download_models.sh  Pull weights to /opt/models
+           03_vllm_servers.sh     Generate API key, start Brain, wait for ready
+           04_voice_stt.sh        Optional — local Whisper STT
+
+         then: openclaw onboard   Point it at the Brain, paste the API key
 ```
+
+Run 00 through 03 in order. Every one is idempotent, so re-running after a
+failure is safe. 04 is optional and only adds voice.
 
 ### Layer 1 — First Boot (Physical)
 
@@ -218,20 +229,91 @@ nano .env   # set HF_TOKEN at minimum
 # Run these scripts in order (idempotent, safe to re-run)
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
 bash scripts/01_system_prep.sh     # Docker config, dirs, Python deps, auto-start service, watchdog timer
-bash scripts/02_download_models.sh # Downloads model → /opt/models (~35GB)
-bash scripts/03_vllm_servers.sh    # Starts Brain on port 8000 — waits until ready
+bash scripts/02_download_models.sh # Downloads model → /opt/models (~22GB for the current NVFP4 build)
+bash scripts/03_vllm_servers.sh    # Generates the API key, starts Brain on port 8000, waits until ready
 bash scripts/04_voice_stt.sh       # Optional — local Whisper STT (~450MB)
 ```
 
-Then connect your agentic framework of choice to `http://localhost:8000/v1`.
+That is the whole sequence. Everything else in `scripts/` is a helper the
+system calls for you — `boot_sequence.sh` and `start_brain_ad_hoc.sh` run from
+systemd, `watchdog.sh` from its timer — or a diagnostic you run when you want
+it (`check_stack.sh`, `benchmark_brain.sh`). You never need to invoke those to
+get from an unboxed Spark to a working stack.
 
-**With OpenClaw (recommended):** `openclaw onboard` → enter `http://localhost:8000/v1` as the base URL.
+**Script 03 prints an API key when it finishes.** On first run it generates one
+(`openssl rand -hex 32`), stores it in `.env` (gitignored, `chmod 600`), and
+passes it to vLLM as `VLLM_API_KEY` — never as a command-line flag, so it does
+not show up in `ps aux`. Every script in this repo reads it from `.env`
+automatically. Copy it out any time with:
 
-**With any other framework:** Point it at `http://localhost:8000/v1` using the OpenAI-compatible API. Model ID is the `served_name` from `config/models.yml`. API key can be any string.
+```bash
+grep BRAIN_API_KEY .env
+```
+
+Then connect your agentic framework to `http://localhost:8000/v1`.
+
+**With OpenClaw (recommended):** `openclaw onboard` → base URL
+`http://localhost:8000/v1`, model ID = `served_name` from `config/models.yml`,
+and **paste the generated API key when asked**. OpenClaw keeps its own config
+and does not read `.env`, so this is the one value you have to carry across by
+hand. Until you do, OpenClaw gets a 401 and the Brain looks broken while being
+perfectly healthy.
+
+**With any other framework:** Same base URL and model ID, sending the key as a
+bearer token. Verify both states:
+
+```bash
+curl -s localhost:8000/v1/models                                  # 401 — auth is on
+curl -s -H "Authorization: Bearer $(grep BRAIN_API_KEY .env | cut -d= -f2)" \
+     localhost:8000/v1/models                                     # model list
+```
 
 See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for detailed connection examples (curl, Python, Node.js).
 
-> **Script 02 automatically prunes old models.** Any model directory in `/opt/models` not listed in `config/models.yml` is deleted before the new download.
+> **The Brain listens on `127.0.0.1` only.** `brain.bind_host` in
+> `config/models.yml` defaults to loopback, so nothing outside the Spark can
+> reach port 8000 — other machines on your LAN or tailnet included. Set it to
+> `0.0.0.0` if you deliberately want remote access.
+
+> **Script 02 prunes models no longer in `config/models.yml`.** In an
+> interactive terminal it offers to move the pruned model to
+> `/opt/model-archive` first, so rolling back costs a `mv` instead of another
+> download. Non-interactive callers delete without asking.
+
+### Rotating the API key
+
+`.env` is the single source of truth — every script in the repo reads
+`BRAIN_API_KEY` from it, so you change it in exactly one place. Blank the value
+and let script 03 mint a fresh one:
+
+```bash
+cd ~/spark-sovereign
+sed -i 's|^BRAIN_API_KEY=.*|BRAIN_API_KEY=|' .env   # clear it
+bash scripts/03_vllm_servers.sh                     # generates + prints the new key
+```
+
+Or set one yourself instead of generating:
+
+```bash
+sed -i "s|^BRAIN_API_KEY=.*|BRAIN_API_KEY=$(openssl rand -hex 32)|" .env
+bash scripts/03_vllm_servers.sh
+```
+
+Either way, script 03 restarts the Brain with the new key and the health checks
+(`check_stack.sh`, `watchdog.sh`, `boot_sequence.sh`, `benchmark_brain.sh`)
+pick it up on their next run with no edits.
+
+**The one place it does not propagate is OpenClaw**, which stores its own copy.
+Update it there too or it will 401 against a healthy Brain:
+
+```bash
+grep BRAIN_API_KEY .env     # read the new value
+openclaw onboard            # re-enter it when prompted for the API key
+```
+
+Rotate whenever the key has been shown somewhere it shouldn't be — pasted into
+a chat or an issue, or printed in a log you shared. Rotation is the real fix
+for a leaked credential; deleting the place it appeared is not.
 
 ---
 
@@ -239,7 +321,13 @@ See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for detailed connection exa
 
 Script 01 installs a systemd service that starts Brain automatically on every power cycle. No manual intervention needed.
 
-Brain takes **3–5 minutes to load** after a cold boot (~35GB of weights loading into memory). OpenClaw reconnects automatically once ready.
+Brain takes **3–6 minutes to load** after a cold boot — ~22GB of NVFP4 weights plus the MTP draft model, then `torch.compile` and flashinfer kernel autotuning. OpenClaw reconnects automatically once ready.
+
+The compile and autotune output is kept in a `vllm-cache` Docker volume, so only the first start after a model swap pays the full cost; later restarts skip that work. Confirm it is being reused — the log should say `0 new, N from previous config` rather than `N new, 0 from previous`:
+
+```bash
+docker logs brain 2>&1 | grep 'from previous config'
+```
 
 ```bash
 systemctl status spark-sovereign
