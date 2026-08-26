@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# RENDER BENCHMARKS — regenerate docs/BENCHMARKS.md from the JSONL ledger
+# render_report.sh — regenerate docs/BENCHMARKS.md from the JSONL ledger
 # =============================================================================
-# AD-HOC. Called by scripts/config_matrix.sh after each configuration, and
-# runnable by hand. Not part of any sequence.
+# AD-HOC. Called by scripts/benchmark.sh after each configuration, and runnable
+# by hand. Not part of any sequence.
 #
 # The Markdown is DERIVED, never authored. Editing it by hand loses the edit on
 # the next run — put durable prose in docs/LESSONS.md instead. The ledger
 # (docs/benchmarks.jsonl) is the source of truth and is append-only.
 #
-# Usage: bash scripts/render_benchmarks.sh
+# Usage: bash scripts/benchmark.sh render
 # =============================================================================
 
 set -uo pipefail
@@ -55,12 +55,12 @@ w("# Serving Configuration Benchmarks — Qwen3.8-27B on DGX Spark (GB10)")
 w("")
 w("<!-- GENERATED FILE. Do not edit by hand. -->")
 w("<!-- Source of truth: docs/benchmarks.jsonl (append-only ledger). -->")
-w("<!-- Regenerate: bash scripts/render_benchmarks.sh -->")
+w("<!-- Regenerate: bash scripts/benchmark.sh render -->")
 w("")
 w("## What this file is")
 w("")
 w("A record of serving configurations **actually measured on this machine**, ")
-w("produced by `scripts/config_matrix.sh`. It exists so that anyone — including ")
+w("produced by `scripts/benchmark.sh`. It exists so that anyone — including ")
 w("a future LLM session with no memory of this work — can answer three questions ")
 w("without re-deriving them:")
 w("")
@@ -114,7 +114,7 @@ w("## Recommendation")
 w("")
 if not ranked:
     w("**No VALID measurements yet.** Nothing here should be used to choose a ")
-    w("configuration. Run `bash scripts/config_matrix.sh` on the Spark.")
+    w("configuration. Run `bash scripts/benchmark.sh` on the Spark.")
     w("")
     blocked = [r for r in rows if r.get("validity") == "BLOCKED"]
     if blocked:
@@ -169,7 +169,7 @@ else:
               f"and reserve `{best['name']}` for batch work with no shared prefix.")
         else:
             w("> No measured configuration has working prefix reuse. Fix that "
-              "before optimising decode rate — see `scripts/serving_audit.sh`.")
+              "before optimising decode rate — see `scripts/benchmark.sh audit`.")
         w("")
 
 untrust = [r for r in rows if r.get("validity") in ("PARTIAL", "INVALID")]
@@ -196,7 +196,7 @@ w("---")
 w("")
 w(f"*Generated {datetime.datetime.now().astimezone().isoformat(timespec='seconds')} "
   f"from {len(rows)} ledger entr{'y' if len(rows)==1 else 'ies'} by "
-  f"`scripts/render_benchmarks.sh`.*")
+  f"`scripts/benchmark.sh render`.*")
 w("")
 
 with open(report, "w", encoding="utf-8", newline="\n") as fh:

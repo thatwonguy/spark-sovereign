@@ -48,7 +48,7 @@ brain:
   # command line. If that is happening here, every OpenClaw turn reprocesses
   # the entire conversation prefix — the most expensive possible failure in a
   # coding workflow, and completely silent.
-  # Measure it (does not restart Brain):  bash scripts/serving_audit.sh
+  # Measure it (does not restart Brain):  bash scripts/benchmark.sh audit
   enable_prefix_caching: true
   # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
   #
@@ -71,8 +71,8 @@ brain:
   # and it fails mid-session rather than at startup.
   #
   # Find out what is actually live and whether the context is reachable:
-  #     bash scripts/serving_audit.sh           # measures both, read-only
-  #     bash scripts/specdecode_probe.sh        # step 2 also reports the backend
+  #     bash scripts/benchmark.sh audit         # measures both, read-only
+  #     bash scripts/benchmark.sh               # sweeps backends and records the winner
   # Candidates to try, re-measuring after each:
   #     attention_backend: TRITON_ATTN   # reported to be required for FP8 KV on SM121
   #     attention_backend: FLASHINFER    # reported to fit far more context
@@ -90,9 +90,9 @@ brain:
   # and no extra weights, and tends to do well on agentic coding where output
   # echoes files already in context. The sweep compares them.
   #
-  # Before trusting it:  bash scripts/specdecode_probe.sh   (read-only)
-  # To compare methods:  bash scripts/specdecode_sweep.sh   (restarts Brain)
-  # Is a ceiling real?:  bash scripts/bandwidth_probe.sh    (read-only)
+  # Before trusting it:  bash scripts/benchmark.sh audit      (read-only)
+  # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
+  # Is a ceiling real?:  bash scripts/benchmark.sh bandwidth  (read-only)
   speculative_config: '{"method":"mtp","num_speculative_tokens":5}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a
@@ -205,7 +205,7 @@ brain:
 # The strongest reported throughput configs for this model on GB10 run SGLang
 # with a DFlash2 drafter, not vLLM. Whether that actually holds here is an open
 # question, and a comparison that could only launch vLLM would never find out —
-# so SGLang is a first-class row in scripts/config_matrix.sh rather than an
+# so SGLang is a first-class row in scripts/benchmark.sh's matrix rather than an
 # assumption.
 #
 # UNCOMMENT ONLY docker_image TO ENABLE. Everything else falls back to the
@@ -217,11 +217,11 @@ brain:
 # scenario is recorded as BLOCKED in docs/BENCHMARKS.md — visible as missing
 # data rather than silently absent. You need a build for SM121 / arm64.
 #
-# Only scripts/start_brain_sglang.sh and scripts/config_matrix.sh read this.
+# Only scripts/benchmark.sh (via scripts/lib/bench.sh) reads this.
 # boot_sequence.sh, watchdog.sh and the numbered setup scripts do not, and must
 # not: watchdog recovery calls start_brain_ad_hoc.sh, which starts vLLM, so a
 # crash during an SGLang session silently reverts the engine. Stop the watchdog
-# timer for any SGLang work (config_matrix.sh does this for you).
+# timer for any SGLang work (benchmark.sh does this for you).
 #
 # sglang:
 #   docker_image:                       # REQUIRED — SM121/arm64 build, none verified yet

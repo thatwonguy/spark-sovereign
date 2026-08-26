@@ -20,7 +20,7 @@ MODELS_DIR="${MODELS_DIR:-/opt/models}"
 # distinct and necessary case — testing "no speculation" or "let vLLM pick the
 # backend" requires the ability to blank a value, not just replace it.
 #
-# This exists so scripts/config_matrix.sh can sweep configurations through the
+# This exists so scripts/benchmark.sh can sweep configurations through the
 # SAME launcher production uses. A matrix that assembled its own `docker run`
 # would be measuring a server this repo never actually starts, and its results
 # would not transfer. Overrides are never persisted: an interrupted sweep
@@ -101,21 +101,16 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
+# Honours OVERRIDE_speculative_config via get_json_field, like every other
+# field. There used to be a separate SPEC_CONFIG_OVERRIDE variable doing only
+# this one field; the generic hook above supersedes it, and two mechanisms for
+# the same job is how they drift apart.
 BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
-# Escape hatch for scripts/specdecode_sweep.sh, which has to launch the SAME
-# server production uses while varying one flag. Set it to the empty string to
-# run a no-speculation control; unset (the normal case) means models.yml wins.
-# Deliberately not persisted anywhere — an interrupted sweep cannot leave the
-# box serving an experimental config after the next boot.
-if [ -n "${SPEC_CONFIG_OVERRIDE+set}" ]; then
-    BRAIN_SPEC_CONFIG="$(echo "${SPEC_CONFIG_OVERRIDE}" | tr -d '[:space:]')"
-    echo ">>> speculative_config OVERRIDDEN: ${BRAIN_SPEC_CONFIG:-<none>}"
-fi
 # Attention backend. Blank = let vLLM autoselect (the behaviour this repo has
 # always had). Pin it when the autoselection is wrong or unknown — on SM121
 # with kv_cache_dtype: fp8, FlashAttention cannot serve an FP8 KV cache and a
 # silent fallback to BF16 KV costs half the effective context with no error.
-# See config/models.yml for the full note. scripts/specdecode_probe.sh step 2
+# See config/models.yml for the full note. `bash scripts/benchmark.sh audit`
 # reports which backend actually loaded.
 BRAIN_ATTN=$(get_field brain attention_backend)
 BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
