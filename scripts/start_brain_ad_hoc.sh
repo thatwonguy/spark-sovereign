@@ -14,7 +14,23 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 
 MODELS_DIR="${MODELS_DIR:-/opt/models}"
 
+# Any field can be overridden for one launch by exporting OVERRIDE_<field>,
+# e.g. OVERRIDE_attention_backend=FLASHINFER, OVERRIDE_kv_cache_dtype=auto.
+# An override set to the EMPTY string means "unset this field", which is a
+# distinct and necessary case — testing "no speculation" or "let vLLM pick the
+# backend" requires the ability to blank a value, not just replace it.
+#
+# This exists so scripts/benchmark.sh can sweep configurations through the
+# SAME launcher production uses. A matrix that assembled its own `docker run`
+# would be measuring a server this repo never actually starts, and its results
+# would not transfer. Overrides are never persisted: an interrupted sweep
+# cannot leave the box running an experimental config after the next boot.
 get_field() {
+    local ov="OVERRIDE_$2"
+    if [ -n "${!ov+set}" ]; then
+        printf '%s\n' "${!ov}"
+        return
+    fi
     python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
@@ -39,7 +55,13 @@ for k, v in env.items():
 }
 
 # Emit a field as compact JSON. Accepts either a YAML mapping or a JSON string.
+# Honours OVERRIDE_<field> exactly as get_field does.
 get_json_field() {
+    local ov="OVERRIDE_$2"
+    if [ -n "${!ov+set}" ]; then
+        printf '%s\n' "${!ov}" | tr -d '[:space:]'
+        return
+    fi
     python3 -c "
 import yaml, json
 with open('${REPO_ROOT}/config/models.yml') as f:
@@ -79,7 +101,18 @@ BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
 BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
+# Honours OVERRIDE_speculative_config via get_json_field, like every other
+# field. There used to be a separate SPEC_CONFIG_OVERRIDE variable doing only
+# this one field; the generic hook above supersedes it, and two mechanisms for
+# the same job is how they drift apart.
 BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
+# Attention backend. Blank = let vLLM autoselect (the behaviour this repo has
+# always had). Pin it when the autoselection is wrong or unknown — on SM121
+# with kv_cache_dtype: fp8, FlashAttention cannot serve an FP8 KV cache and a
+# silent fallback to BF16 KV costs half the effective context with no error.
+# See config/models.yml for the full note. `bash scripts/benchmark.sh audit`
+# reports which backend actually loaded.
+BRAIN_ATTN=$(get_field brain attention_backend)
 BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
@@ -99,6 +132,7 @@ docker run -d --name brain \
     --gpus all --ipc host --network host \
     --restart no \
     ${BRAIN_API_KEY:+-e VLLM_API_KEY="${BRAIN_API_KEY}"} \
+    ${BRAIN_ATTN:+-e VLLM_ATTENTION_BACKEND="${BRAIN_ATTN}"} \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
     -v vllm-cache:/root/.cache/vllm \

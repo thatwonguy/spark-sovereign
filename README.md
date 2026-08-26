@@ -35,7 +35,7 @@ This setup lets you pick the best available open-weight model, serve it locally 
 
 **TLDR:** As of August 2026, this setup is a practical replacement for Claude Code and ChatGPT Codex for day-to-day engineering work. CLI coding, agentic tool use, parallel agents, chat, voice, Telegram, MCP integrations, **native image input** — all running locally, 24/7, with zero API dependency. An engineer can go fully off-grid and still get professional work done. Currently running Qwen3.8-27B NVFP4 — dense multimodal, 262K context, slower than the previous MoE but more capable per token.
 
-- **~17 tokens/sec** sustained decode, ~283 ms TTFT (measured, single-stream, 256-token generation on an idle Spark). Slower than v4.2.1 (~53 tok/s FP8 MoE) — see the [Model Evolution](#model-evolution) trade below.
+- **~17 tokens/sec** sustained decode, ~264 ms TTFT (measured, single-stream, 256-token generation on an idle Spark; MTP speculative decoding tuned — see [Benchmarks](#benchmarks) and `docs/BENCHMARKS.md`). Slower than v4.2.1 (~53 tok/s FP8 MoE) — see the [Model Evolution](#model-evolution) trade below.
 - **262K context window** — long conversations, full codebase analysis, deep reasoning
 - **Native vision** — send images directly to Brain (up to 10 per prompt); dense multimodal model, no separate vision encoder
 - **Agentic coding** — tool calling, code execution, file management, web search
@@ -51,7 +51,7 @@ This setup lets you pick the best available open-weight model, serve it locally 
 
 |  | **spark-sovereign** (Qwen3.8-27B NVFP4) | **Claude Code** (Opus 4.8) | **ChatGPT Codex** (GPT-5.6 Sol) |
 |---|---|---|---|
-| **Speed** | ~17 tok/s sustained decode, zero network latency | Variable — depends on server load and queue | Variable — depends on server load and queue |
+| **Speed** | ~17 tok/s sustained decode (16.7–19.7 measured), zero network latency | Variable — depends on server load and queue | Variable — depends on server load and queue |
 | **Coding** | Strong — handles day-to-day engineering, debugging, refactoring, and generation | Best-in-class for complex multi-step coding | Strong, comparable to Claude on most tasks |
 | **Hard reasoning** | Good for most tasks; frontier models still lead on the hardest problems | Strongest on complex architectural reasoning | Strong, especially on math and long-chain logic |
 | **Agentic** | Full — parallel agents, tool calling, MCP, code execution via OpenClaw | Full — native tool use, computer use | Full — native tool use, code interpreter |
@@ -67,7 +67,7 @@ This setup lets you pick the best available open-weight model, serve it locally 
 | **Bans / ToS risk** | Zero — no terms of service, no content policy, no account to lose | Subject to Anthropic's acceptable use policy | Subject to OpenAI's usage policies |
 | **Model upgrades** | Swap in newer open-weight models as they release — instant | Automatic but you have no choice or control | Automatic but you have no choice or control |
 
-**The honest take:** On **coding**, this model punches genuinely hard. Qwen3.8-27B posts **79.0% on QwenSWEBench, 61.7% on SWE-Bench Pro, 90.3% on LiveCodeBench v6, 73.0 Terminal-Bench 2.1, 84.3% OSWorld-Verified, and 89.2% GPQA Diamond** — numbers competitive with Opus 4.6-era flagships and Sonnet 4.6 / GPT-5.6 Terra on the code axis, and ahead of them on several agentic-execution and computer-use benchmarks. **Opus 4.8** and **GPT-5.6 Sol** still lead on the very hardest architectural reasoning and pure-knowledge questions — that gap is real, and shows up on cross-repo refactors and open-ended research. But for the daily work of a professional engineer — writing code, debugging, tool use, PR review, agent orchestration, image analysis — this is not a toy. It's a serious daily driver that a self-respecting developer can absolutely 5–10× themselves with, especially once you factor in **24/7 availability, zero rate limits, unlimited context reuse, parallel agents, and total privacy**. The 17 tok/s throughput is slower than cloud APIs but not disabling for interactive work.
+**The honest take:** On **coding**, this model punches genuinely hard. Qwen3.8-27B posts **79.0% on QwenSWEBench, 61.7% on SWE-Bench Pro, 90.3% on LiveCodeBench v6, 73.0 Terminal-Bench 2.1, 84.3% OSWorld-Verified, and 89.2% GPQA Diamond** — numbers competitive with Opus 4.6-era flagships and Sonnet 4.6 / GPT-5.6 Terra on the code axis, and ahead of them on several agentic-execution and computer-use benchmarks. **Opus 4.8** and **GPT-5.6 Sol** still lead on the very hardest architectural reasoning and pure-knowledge questions — that gap is real, and shows up on cross-repo refactors and open-ended research. But for the daily work of a professional engineer — writing code, debugging, tool use, PR review, agent orchestration, image analysis — this is not a toy. It's a serious daily driver that a self-respecting developer can absolutely 5–10× themselves with, especially once you factor in **24/7 availability, zero rate limits, unlimited context reuse, parallel agents, and total privacy**. The ~17 tok/s throughput is slower than cloud APIs but not disabling for interactive work.
 
 **What you're trading:** the current model is a deliberate speed-for-capability swap from the previous MoE baseline — **~3× slower decode (~17 vs ~53 tok/s), in exchange for native multimodal input (text + images + video, up to 10 images per prompt), a 27B dense reasoning core, and 262K native context.** If sustained single-stream throughput matters more to you than vision + dense reasoning, `git checkout v4.2.1` puts you on the faster MoE unchanged — see [Model Evolution](#model-evolution).
 
@@ -86,9 +86,10 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v3.0 | Qwen3.5-35B-A3B-FP8 | MoE | 3B | ~49 | No | Retired — superseded by v4.0 |
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline — fastest measured. Available via `git checkout v4.2.1`** |
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Traded speed for vision + higher intelligence per token |
-| **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model, hardened stack: loopback bind, auto-provisioned API key, persisted compile cache** |
+| v5.1 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.2 — hardened stack: loopback bind, auto-provisioned API key, persisted compile cache |
+| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model and weights. MTP draft length 5 → 3, measured across 15 configs. Output-preserving** |
 
-**v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
+**v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. (v5.2 later recovered part of that with speculative-decoding tuning, to ~17 tok/s; the non-speculative floor is a measured 12 tok/s.) We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
 The current model (Qwen3.8-27B) is a dense NVFP4 build quantized by Unsloth specifically for Blackwell (SM12.1) hardware. Native 262K context, integrated vision encoder, `qwen3_coder` tool-call parser, `qwen3` reasoning parser, and MTP (Multi-Token Prediction) speculative-decoding heads shipped with the checkpoint.
 
@@ -116,7 +117,7 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 
 | Component | Model | Weights | Port | tok/s (measured) | TTFT |
 |---|---|---|---|---|---|
-| **Brain** | unsloth/Qwen3.8-27B-NVFP4 | ~22 GB (NVFP4 4-bit) | 8000 | ~17 decode | ~283 ms |
+| **Brain** | unsloth/Qwen3.8-27B-NVFP4 | ~22 GB (NVFP4 4-bit) | 8000 | ~17 decode (16.7–19.7) | ~251–264 ms |
 
 **Key specs:**
 - Dense 27.78B params, multimodal — every token touches all 27B params (see [Model Evolution](#model-evolution) for why speed is 3× slower than v4.2.1)
@@ -126,10 +127,75 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 - NVFP4 4-bit weights + FP8 KV cache
 - `gpu_memory_utilization: 0.45` (~55 GB reserved by vLLM — ~22 GB weights + ~33 GB KV cache, ~55 GB free for OS / Docker / other workloads)
 - 262K native context
-- MTP speculative decoding (ships in checkpoint, no draft model needed)
+- MTP speculative decoding at `num_speculative_tokens: 3` (ships in checkpoint, no draft model needed) — **verified live, 64.4% acceptance; 5 was measurably worse, see below**
 - Prefix caching enabled — fast repeated prompts
 
-Benchmark it yourself: `bash scripts/benchmark_brain.sh` (single-stream TTFT + decode tok/s from the running Brain).
+Benchmark it yourself: `bash scripts/benchmark.sh quick` (single-stream TTFT + decode tok/s from the running Brain).
+
+**On the throughput number — answered, 2026-08-26.**
+Measured across 15 serving configurations; full detail in `docs/LESSONS.md` #18.
+
+The old 15–17 tok/s was a **mistuned draft length**, not a hardware wall and not
+a broken serving path. `num_speculative_tokens` shipped at 5, and 5 was the worst
+of the three settings tested:
+
+| MTP draft tokens | Decode | Acceptance |
+|---|---|---|
+| off | 12.04 tok/s | — |
+| 2 | 18.47 tok/s | 60.3% |
+| **3** *(current)* | **19.66 tok/s** | **64.4%** |
+| 5 *(v5.0–v5.1)* | 15.18 tok/s | 39.5% |
+
+Acceptance falls off with draft position and rejected tokens still cost their
+verification pass — so longer is not better. Output is unchanged: speculative
+decoding verifies every draft against the real model.
+
+**The roofline is real, and it sits at 12 tok/s.** Non-speculative decode measures
+12.04 tok/s, which against a measured 245 GB/s (not the 273 spec sheet) and ~23.4
+GB of weights is the bandwidth limit almost exactly. Speculation is what beats it;
+attention backend, KV dtype and utilisation moved decode by under 1% between them.
+
+Treat the table as a **ranking**, not a guarantee — all four rows were measured
+back-to-back under identical conditions. Absolute decode tracks acceptance, which
+tracks the sampled continuation: re-measuring later gave 46.5% and 17.1 tok/s.
+**Expect ~17 tok/s day to day.** Four runs measured 16.74, 17.06, 17.13 and 19.66; the 19.66 was the sweep, on an idle box with the watchdog stopped.
+
+Decode is bandwidth-bound, so *aggregate* throughput rises with concurrency for
+free: multi-stream figures like ~148 tok/s at 8 streams are ordinary batching and
+say nothing about single-stream speed. This box does 108.9 tok/s at 8 streams.
+
+To re-measure at any time:
+
+```bash
+bash scripts/benchmark.sh audit       # is prefix caching live? is 262K context reachable?
+bash scripts/benchmark.sh bandwidth   # is the roofline real, or is the path moving too many bytes?
+bash scripts/benchmark.sh quick       # decode + TTFT of whatever is running now
+```
+
+All but the last are read-only and safe against a running Brain.
+
+To test configurations **systematically** rather than one at a time, run the
+whole thing. One command audits, sweeps every configuration, verifies each one
+actually took effect before trusting its numbers, and writes
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md):
+
+```bash
+bash scripts/benchmark.sh list   # show what would be tested
+bash scripts/benchmark.sh        # run everything (hours; resumable; Brain is down)
+```
+
+It is **ad-hoc only** — nothing calls it, and it must never be added to the boot
+sequence or watchdog. `docs/BENCHMARKS.md` is the durable answer to "what did we
+already try, which numbers can be trusted, and what should we actually use" —
+written to be read later by someone, or something, with no memory of this work.
+
+The audit runs first because it can find something that makes the rest
+moot. Two failures are reported for this model on this hardware and neither has
+been checked here: vLLM silently disabling prefix caching despite the flag being
+accepted (which makes every agent turn reprocess the whole conversation prefix),
+and the default attention backend capping usable context far below the advertised
+262K. A dead prefix cache costs more in real agentic use than any amount of
+draft-token tuning wins back.
 
 ---
 
@@ -238,7 +304,7 @@ bash scripts/04_voice_stt.sh       # Optional — local Whisper STT (~450MB)
 That is the whole sequence. Everything else in `scripts/` is a helper the
 system calls for you — `boot_sequence.sh` and `start_brain_ad_hoc.sh` run from
 systemd, `watchdog.sh` from its timer — or a diagnostic you run when you want
-it (`check_stack.sh`, `benchmark_brain.sh`). You never need to invoke those to
+it (`check_stack.sh`, `benchmark.sh`). You never need to invoke those to
 get from an unboxed Spark to a working stack.
 
 **Script 03 prints an API key when it finishes.** On first run it generates one
@@ -301,7 +367,7 @@ bash scripts/03_vllm_servers.sh
 ```
 
 Either way, script 03 restarts the Brain with the new key and the health checks
-(`check_stack.sh`, `watchdog.sh`, `boot_sequence.sh`, `benchmark_brain.sh`)
+(`check_stack.sh`, `watchdog.sh`, `boot_sequence.sh`, `benchmark.sh`)
 pick it up on their next run with no edits.
 
 **The one place it does not propagate is OpenClaw**, which stores its own copy.
@@ -387,7 +453,11 @@ spark-sovereign/
 │   ├── boot_sequence.sh       ← Auto-start on boot (oneshot, runs once at boot)
 │   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
-│   └── check_stack.sh         ← Health check
+│   ├── check_stack.sh         ← Health check
+│   └── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
+│                                  Self-contained. `benchmark.sh` alone fills
+│                                  docs/BENCHMARKS.md; subcommands audit / quick /
+│                                  bandwidth / matrix / render / list
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
