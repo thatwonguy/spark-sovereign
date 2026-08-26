@@ -13,11 +13,13 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-16): measured on the Spark. Median decode 15–17 tok/s
-# across three independent runs (14.3–18.5 range), TTFT ~280 ms, VRAM
-# ~55 GB at 0.45 util (nvidia-smi confirmed). Full write-up in
-# docs/LESSONS.md #16. Rollback path: `git checkout v4.2.1` restores the
-# v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
+# STATUS (2026-08-26): 17–20 tok/s decode, TTFT ~264 ms, VRAM ~55 GB at 0.45
+# util. The earlier 15–17 was a mistuned MTP draft length, not a hardware
+# limit — see the speculative_config block below and docs/LESSONS.md #18.
+# The non-speculative floor is a measured 12.0 tok/s at 245 GB/s achieved
+# bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
+# configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
+# restores the v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-27b-nvfp4
@@ -43,42 +45,50 @@ brain:
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  # UNCONFIRMED AT RUNTIME. vLLM is reported to silently disable prefix caching
-  # for this model's card parameters even when the flag is accepted on the
-  # command line. If that is happening here, every OpenClaw turn reprocesses
-  # the entire conversation prefix — the most expensive possible failure in a
-  # coding workflow, and completely silent.
+  # CONFIRMED LIVE (2026-08-26). vLLM was reported to silently disable prefix
+  # caching for this model's card parameters even when the flag is accepted.
+  # That does not reproduce here: measured 37.4% of a repeated identical prefix
+  # served from cache, via vllm:prefix_cache_hits_total / _queries_total.
+  #
+  # Judge it on the hit-rate counter, never on a TTFT speedup. The TTFT ratio
+  # for the same working cache has measured anywhere from 0.90x to 4.51x
+  # depending on server state, and an early version of the audit called a
+  # working cache "INERT" on the strength of one low reading.
+  #
+  # NOTE: this cannot currently be turned OFF. Prefix caching is on by default
+  # in vLLM V1, so omitting the flag does not disable it — that needs
+  # --no-enable-prefix-caching, which the launcher does not yet emit. The
+  # benchmark matrix's prefix-off row is marked PARTIAL for exactly this reason.
   # Measure it (does not restart Brain):  bash scripts/benchmark.sh audit
   enable_prefix_caching: true
   # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
   #
-  # BLANK ON PURPOSE = vLLM autoselects, which is what this repo has always
-  # done. Left blank because nobody has yet checked what it autoselects here,
-  # and pinning a guess is worse than an honest unknown.
+  # BLANK ON PURPOSE = vLLM autoselects. Measured 2026-08-26: it selects
+  # FLASHINFER, out of candidates ['FLASHINFER', 'TRITON_ATTN'], and pinning
+  # FLASHINFER explicitly measured identically (15.15 vs 15.15 tok/s). Blank is
+  # the same thing with one less thing to keep in sync.
   #
-  # Why it matters: `kv_cache_dtype: fp8` above is only actually served by some
-  # backends. On SM121 (GB10), FlashAttention is reported not to support an FP8
-  # KV cache — triton_attn is. If vLLM quietly falls back to BF16 KV, the FP8
-  # setting above is a no-op, KV cache entries are twice the size, and NOTHING
-  # ERRORS. The ~55 GB measured at 0.45 util does not distinguish the two cases.
+  # Two worries that motivated this block did NOT reproduce:
+  #   - FP8 KV is genuinely served. The log confirms
+  #     kv_cache_dtype=torch.float8_e4m3fn alongside decode_backend=
+  #     flashinfer-native, so FLASHINFER and fp8 KV coexist here rather than
+  #     trading against each other as reported elsewhere.
+  #   - Context is reachable with room to spare. The KV cache holds ~745,000
+  #     tokens against a declared max_model_len of 262144 — 2.8x headroom, at
+  #     0.45 utilisation, not the ~60K cap that was reported.
   #
-  # It also governs how much context actually fits. The default backend is
-  # reported to cap usable context near 60K at 0.80 utilisation on this
-  # hardware, with FLASHINFER fitting ~170K instead — and that report is at
-  # 0.80, while we run 0.45, roughly half the memory budget, against a
-  # declared max_model_len of 262144 below. If the KV cache cannot hold that
-  # many tokens, the advertised window is a number the server cannot honour,
-  # and it fails mid-session rather than at startup.
+  # STILL UNTESTED: TRITON_ATTN. Setting attention_backend=TRITON_ATTN does not
+  # take effect — the server logs "Using FLASHINFER attention backend" anyway,
+  # so the matrix rows that requested it are marked PARTIAL and measured
+  # FlashInfer twice. Whatever the launcher passes is not reaching vLLM in a
+  # form it honours. Fix that before drawing any conclusion about Triton.
   #
-  # Find out what is actually live and whether the context is reachable:
-  #     bash scripts/benchmark.sh audit         # measures both, read-only
-  #     bash scripts/benchmark.sh               # sweeps backends and records the winner
-  # Candidates to try, re-measuring after each:
-  #     attention_backend: TRITON_ATTN   # reported to be required for FP8 KV on SM121
-  #     attention_backend: FLASHINFER    # reported to fit far more context
-  # FLASHINFER's reported context win is measured WITHOUT an FP8 KV cache, so
-  # it trades against kv_cache_dtype below rather than stacking with it. Change
-  # one of the two at a time or the result is uninterpretable.
+  # Also measured: the attention backend does not move single-stream decode on
+  # this model at all. Every backend/KV/utilisation row landed in a 15.07–15.19
+  # tok/s band. Speculative decoding is the lever that matters; see below.
+  #
+  #     bash scripts/benchmark.sh audit         # what is live, read-only
+  #     bash scripts/benchmark.sh               # sweeps and records the winner
   attention_backend:
   # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
   #
