@@ -129,14 +129,14 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 - MTP speculative decoding configured (ships in checkpoint, no draft model needed) — **but unverified, see below**
 - Prefix caching enabled — fast repeated prompts
 
-Benchmark it yourself: `bash scripts/benchmark_brain.sh` (single-stream TTFT + decode tok/s from the running Brain).
+Benchmark it yourself: `bash scripts/benchmark.sh quick` (single-stream TTFT + decode tok/s from the running Brain).
 
 **On the 15–17 tok/s number, and on faster configs quoted elsewhere.**
 Open question, currently being tested — see `docs/LESSONS.md` #18.
 
 Decode here is bandwidth-bound, so *aggregate* throughput rises with concurrency
 for free: multi-stream figures like ~148 tok/s at 8 streams are ordinary batching
-and say nothing about single-stream speed (`benchmark_concurrency.sh` checks
+and say nothing about single-stream speed (`benchmark.sh` measures the curve and checks
 whether this box reproduces them). What needs explaining is single-stream.
 
 The tempting answer — 13.5 GB/token over a 273 GB/s bus ⇒ ~20 tok/s ceiling ⇒
@@ -151,22 +151,21 @@ headroom. This repo has already been bitten by exactly that failure mode once
 So measure the ceiling before believing it:
 
 ```bash
-bash scripts/serving_audit.sh            # FIRST: is prefix caching live? is 262K context reachable?
-bash scripts/bandwidth_probe.sh          # is the roofline real, or is the path moving too many bytes?
-bash scripts/specdecode_probe.sh         # is the speculation we ship actually live?
-bash scripts/benchmark_concurrency.sh    # does batching reproduce the multi-stream claims?
-bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured not assumed
+bash scripts/benchmark.sh audit       # is prefix caching live? is 262K context reachable?
+bash scripts/benchmark.sh bandwidth   # is the roofline real, or is the path moving too many bytes?
+bash scripts/benchmark.sh quick       # decode + TTFT of whatever is running now
 ```
 
 All but the last are read-only and safe against a running Brain.
 
 To test configurations **systematically** rather than one at a time, run the
-matrix — it sweeps parameters, verifies each one actually took effect before
-trusting its numbers, and writes [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md):
+whole thing. One command audits, sweeps every configuration, verifies each one
+actually took effect before trusting its numbers, and writes
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md):
 
 ```bash
-bash scripts/config_matrix.sh --list   # show what would be tested
-bash scripts/config_matrix.sh          # run it (hours; resumable; Brain is down)
+bash scripts/benchmark.sh list   # show what would be tested
+bash scripts/benchmark.sh        # run everything (hours; resumable; Brain is down)
 ```
 
 It is **ad-hoc only** — nothing calls it, and it must never be added to the boot
@@ -174,7 +173,7 @@ sequence or watchdog. `docs/BENCHMARKS.md` is the durable answer to "what did we
 already try, which numbers can be trusted, and what should we actually use" —
 written to be read later by someone, or something, with no memory of this work.
 
-`serving_audit.sh` runs first because it can find something that makes the rest
+The audit runs first because it can find something that makes the rest
 moot. Two failures are reported for this model on this hardware and neither has
 been checked here: vLLM silently disabling prefix caching despite the flag being
 accepted (which makes every agent turn reprocess the whole conversation prefix),
@@ -289,7 +288,7 @@ bash scripts/04_voice_stt.sh       # Optional — local Whisper STT (~450MB)
 That is the whole sequence. Everything else in `scripts/` is a helper the
 system calls for you — `boot_sequence.sh` and `start_brain_ad_hoc.sh` run from
 systemd, `watchdog.sh` from its timer — or a diagnostic you run when you want
-it (`check_stack.sh`, `benchmark_brain.sh`). You never need to invoke those to
+it (`check_stack.sh`, `benchmark.sh`). You never need to invoke those to
 get from an unboxed Spark to a working stack.
 
 **Script 03 prints an API key when it finishes.** On first run it generates one
@@ -352,7 +351,7 @@ bash scripts/03_vllm_servers.sh
 ```
 
 Either way, script 03 restarts the Brain with the new key and the health checks
-(`check_stack.sh`, `watchdog.sh`, `boot_sequence.sh`, `benchmark_brain.sh`)
+(`check_stack.sh`, `watchdog.sh`, `boot_sequence.sh`, `benchmark.sh`)
 pick it up on their next run with no edits.
 
 **The one place it does not propagate is OpenClaw**, which stores its own copy.
@@ -439,15 +438,11 @@ spark-sovereign/
 │   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   ├── check_stack.sh         ← Health check
-│   ├── benchmark_brain.sh     ← TTFT + decode tok/s from the running Brain
-│   ├── config_matrix.sh       ← AD-HOC: sweep configs, validate, benchmark → docs/BENCHMARKS.md
-│   ├── render_benchmarks.sh   ← AD-HOC: regenerate BENCHMARKS.md from the JSONL ledger
-│   ├── start_brain_sglang.sh  ← AD-HOC: SGLang engine, for head-to-head comparison
-│   ├── serving_audit.sh       ← Declared config vs what vLLM actually did (read-only)
-│   ├── bandwidth_probe.sh     ← Measure the real roofline: achieved GB/s + bytes/token (read-only)
-│   ├── benchmark_concurrency.sh ← Aggregate vs per-stream throughput across N streams (read-only)
-│   ├── specdecode_probe.sh    ← Is speculative decoding actually engaging? (read-only)
-│   └── specdecode_sweep.sh    ← Compare mtp / ngram / off (restarts Brain repeatedly)
+│   ├── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
+│   │                              `benchmark.sh` alone fills docs/BENCHMARKS.md;
+│   │                              subcommands audit / quick / bandwidth / matrix / render / list
+│   ├── render_report.sh       ← AD-HOC: regenerates BENCHMARKS.md from the ledger
+│   └── lib/bench.sh           ← shared measurement library (sourced, not run)
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide

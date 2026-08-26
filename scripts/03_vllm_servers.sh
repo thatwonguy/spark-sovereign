@@ -124,7 +124,7 @@ BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 # always had). Pin it when the autoselection is wrong or unknown — on SM121
 # with kv_cache_dtype: fp8, FlashAttention cannot serve an FP8 KV cache and a
 # silent fallback to BF16 KV costs half the effective context with no error.
-# See config/models.yml for the full note. scripts/specdecode_probe.sh step 2
+# See config/models.yml for the full note. `bash scripts/benchmark.sh audit`
 # reports which backend actually loaded. Must stay in sync with
 # start_brain_ad_hoc.sh — a boot start and a watchdog recovery have to produce
 # the same server.

@@ -473,7 +473,7 @@ Community configs for this same model on this same hardware circulate with a cla
 
 Decode is bandwidth-bound, and one forward pass reads the whole weight set regardless of batch size. At batch N, that single read emits N tokens. So aggregate throughput rises with concurrency **for free**, until KV cache capacity or `max_num_seqs` binds.
 
-148 @ 8 and 258 @ 32 therefore need no special technique and say nothing about single-stream speed. `scripts/benchmark_concurrency.sh` checks whether this box reproduces that curve. If it does, two thirds of the original claim is explained and only the 50 tok/s single-stream figure still needs an account.
+148 @ 8 and 258 @ 32 therefore need no special technique and say nothing about single-stream speed. `scripts/benchmark.sh` measures that curve and checks whether this box reproduces it. If it does, two thirds of the original claim is explained and only the 50 tok/s single-stream figure still needs an account.
 
 ### The hypothesis, stated so it can be wrong
 
@@ -490,11 +490,11 @@ The second row is not hypothetical. `config/models.yml` already documents this e
 
 ### The test that decides it
 
-`scripts/bandwidth_probe.sh` measures the denominator and derives the numerator:
+`scripts/benchmark.sh bandwidth` measures the denominator and derives the numerator:
 
 ```
 achieved bandwidth          <- GPU memcpy benchmark, actual not spec
-measured decode rate        <- benchmark_brain.sh
+measured decode rate        <- benchmark.sh quick
 bytes/token = bandwidth / rate
 ratio       = bytes-per-token / checkpoint-size-on-disk
 ```
@@ -503,6 +503,19 @@ ratio       = bytes-per-token / checkpoint-size-on-disk
 - **ratio ≫ 1.5** — the path is moving far more data than the weights occupy. **Not a ceiling — a bug.** Chase the quant kernel, the attention backend vs `kv_cache_dtype: fp8`, and CUDA-graph state.
 
 One measurement, two very different next moves. That is why it comes before any tuning.
+
+### A note on script names in earlier lessons
+
+Lessons #16 and #17 reference `benchmark_brain.sh`, `serving_audit.sh`,
+`specdecode_probe.sh` and friends. Those were accurate when written. They have
+since been consolidated into a single entry point, `scripts/benchmark.sh`, with
+the measurement primitives in `scripts/lib/bench.sh` — eight scripts had
+accumulated, three of them carrying their own drifting copy of the credential
+redactor. The earlier text is left as written rather than retconned: it records
+what was true at the time, and the mapping is `benchmark_brain.sh` →
+`benchmark.sh quick`, `serving_audit.sh` → `benchmark.sh audit`,
+`bandwidth_probe.sh` → `benchmark.sh bandwidth`, and the sweep/probe pair →
+`benchmark.sh` (the full matrix).
 
 ### Corroboration — and two config bugs that outrank all of it
 
@@ -518,9 +531,9 @@ Later field reports on this same model, gathered after the above was written, sh
 
 2. **The advertised context may not be reachable.** The default attention backend is reported to cap usable context near 60K at **0.80** utilisation, with FLASHINFER fitting ~170K. We declare `max_model_len: 262144` at **0.45** utilisation — half that memory budget — and pin no backend at all. If the KV cache cannot hold 262144 tokens, that number is a claim the server cannot honour, and it surfaces as a mid-session failure rather than a startup one.
 
-Both are measurable from outside the container, so `scripts/serving_audit.sh` measures them rather than reading the log and hoping. Prefix caching is tested by sending a long prefix twice and comparing TTFT; context is tested by comparing vLLM's actual allocated KV cache size in tokens against the advertised `max_model_len`.
+Both are measurable from outside the container, so `scripts/benchmark.sh audit` measures them rather than reading the log and hoping. Prefix caching is tested by sending a long prefix twice and comparing TTFT; context is tested by comparing vLLM's actual allocated KV cache size in tokens against the advertised `max_model_len`.
 
-**Order changed as a result.** Run `serving_audit.sh` first. A dead prefix cache or an unreachable context window is worth more than the entire speculative-decoding question, and both are cheaper to fix.
+**Order changed as a result.** The audit runs first. A dead prefix cache or an unreachable context window is worth more than the entire speculative-decoding question, and both are cheaper to fix.
 
 **Why the attention backend matters unusually much on this model.** It is a hybrid: ~48 GatedDeltaNet linear-attention layers plus ~16 full-attention layers. The backend choice governs the full-attention layers and the KV cache they need, which is why it shows up as a *context capacity* limit rather than only a speed one — and why the reported FLASHINFER context win is measured **without** an FP8 KV cache. That trades against our `kv_cache_dtype: fp8` rather than stacking with it, so those two settings must be changed one at a time or the result is uninterpretable.
 
@@ -532,7 +545,7 @@ This also retires an earlier claim that NVFP4 was vLLM-only and unsupported on S
 
 If the roofline turns out to be real, these still break it — a ceiling on *plain* decode is not a ceiling on *throughput*:
 
-1. **MTP speculative decoding** — shipped since v5.0, in `speculative_config`, **never verified**. `scripts/specdecode_probe.sh` diffs `vllm:spec_decode_*` counters across a known generation; zero drafts is conclusive.
+1. **MTP speculative decoding** — shipped since v5.0, in `speculative_config`, **never verified**. `scripts/benchmark.sh audit` diffs `vllm:spec_decode_*` counters across a known generation; zero drafts is conclusive.
 2. **N-gram / prompt-lookup decoding** — needs no drafter and no extra weights: it proposes continuations by finding repeats of the current suffix earlier in context. Nearly free, and unusually strong on **agentic coding**, where the model reproduces long verbatim spans from files already in context. **This was omitted from the first pass at this analysis, which is precisely the kind of gap that makes "no config can beat X" an unsafe claim.** Now a first-class candidate in the sweep.
 3. **Draft length** — `num_speculative_tokens: 5` was never compared against anything; the community day-zero recipe used 2. Rejected tokens still cost verification, so longer is not monotonically better.
 4. **Attention backend / KV dtype** — `kv_cache_dtype: fp8` is only honoured by some backends. A silent BF16 fallback doubles KV bytes read per token, with no error.
@@ -546,16 +559,22 @@ The default benchmark prompt writes fresh prose and code from nothing — close 
 ### Order of operations
 
 ```bash
-bash scripts/serving_audit.sh            # FIRST: is prefix caching live? is 262K reachable?
-bash scripts/bandwidth_probe.sh          # ceiling real, or path moving too many bytes?
-bash scripts/specdecode_probe.sh         # is the speculation we ship live?
-bash scripts/benchmark_concurrency.sh    # does batching reproduce 148@8?
-bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured
+bash scripts/benchmark.sh            # everything: audit, full matrix, then the report
 ```
 
-`serving_audit.sh` comes first because it can find a problem that makes the
-rest moot: a dead prefix cache dominates real agentic cost, and an
-unreachable context window invalidates the headline spec in README.
+Or one piece at a time:
+
+```bash
+bash scripts/benchmark.sh audit      # is prefix caching live? is 262K reachable?
+bash scripts/benchmark.sh bandwidth  # ceiling real, or path moving too many bytes?
+bash scripts/benchmark.sh quick      # decode + TTFT of the running config
+bash scripts/benchmark.sh list       # what is in the matrix, what has been measured
+```
+
+The audit runs first because it can find a problem that makes the rest moot:
+a dead prefix cache dominates real agentic cost, and an unreachable context
+window invalidates the headline spec in README. Results accumulate in
+`docs/BENCHMARKS.md`, which is generated, never authored.
 
 The first two are read-only and safe against production. The sweep restarts Brain repeatedly.
 

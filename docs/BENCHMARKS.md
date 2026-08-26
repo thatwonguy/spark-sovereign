@@ -2,12 +2,12 @@
 
 <!-- GENERATED FILE. Do not edit by hand. -->
 <!-- Source of truth: docs/benchmarks.jsonl (append-only ledger). -->
-<!-- Regenerate: bash scripts/render_benchmarks.sh -->
+<!-- Regenerate: bash scripts/benchmark.sh render -->
 
 ## What this file is
 
 A record of serving configurations **actually measured on this machine**, 
-produced by `scripts/config_matrix.sh`. It exists so that anyone — including 
+produced by `scripts/benchmark.sh`. It exists so that anyone — including 
 a future LLM session with no memory of this work — can answer three questions 
 without re-deriving them:
 
@@ -47,10 +47,10 @@ configured but dead**. *KV cache* is the real context ceiling in tokens; if it i
 ## Recommendation
 
 **No VALID measurements yet.** Nothing here should be used to choose a 
-configuration. Run `bash scripts/config_matrix.sh` on the Spark.
+configuration. Run `bash scripts/benchmark.sh` on the Spark.
 
 ## Detail
 
 ---
 
-*Generated 2026-08-26T12:03:14-07:00 from 0 ledger entries by `scripts/render_benchmarks.sh`.*
+*Generated 2026-08-26T12:10:46-07:00 from 0 ledger entries by `scripts/benchmark.sh render`.*
