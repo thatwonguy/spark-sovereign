@@ -504,6 +504,30 @@ ratio       = bytes-per-token / checkpoint-size-on-disk
 
 One measurement, two very different next moves. That is why it comes before any tuning.
 
+### Corroboration — and two config bugs that outrank all of it
+
+Later field reports on this same model, gathered after the above was written, sharpen the picture considerably. Treating them as claims to test rather than facts:
+
+**The cross-check that matters most.** One reported recipe took an **FP8** build of this model from 7.88 to **58.5 tok/s** single-stream through decode strategy alone — speculative decoding plus prefix caching, weights untouched, output-preserving. FP8 weights are roughly **twice the bytes per token** of our NVFP4 build. If that box sustains 58.5 tok/s while reading ~27 GB/token, then our 15–17 tok/s while reading ~13.5 GB/token is not a bandwidth wall. Same hardware, half the bytes, a third of the speed. **That is the strongest independent evidence yet that our number is config-limited, and it does not depend on trusting any single benchmark.**
+
+**But calibrate the expectation honestly.** That 7.4× headline is partly the repair of a broken baseline, not pure technique. 7.88 tok/s is *below* the non-speculative roofline for an FP8 27B on this bus (~10 tok/s), which means their starting point was already malfunctioning — plausibly the exact prefix-caching bug below. Ours at 15–17 against a ~20 tok/s NVFP4 roofline is a *healthy* baseline. **Expect roughly 2–3× from working speculation here, not 7×.** Anyone quoting 58 tok/s as our target is comparing against someone else's broken starting point.
+
+**Two configuration bugs, both of which apply to us, and both of which outrank speculative decoding:**
+
+1. **Prefix caching silently disabled.** vLLM is reported to turn prefix caching off for this model's card parameters *even though the flag is accepted*. We pass `--enable-prefix-caching` and have never confirmed it took effect. If it is inert, every OpenClaw turn reprocesses the entire conversation prefix. In agentic coding — long shared context, many short turns — that costs far more than draft-token tuning can ever win back, and it fails completely silently.
+
+2. **The advertised context may not be reachable.** The default attention backend is reported to cap usable context near 60K at **0.80** utilisation, with FLASHINFER fitting ~170K. We declare `max_model_len: 262144` at **0.45** utilisation — half that memory budget — and pin no backend at all. If the KV cache cannot hold 262144 tokens, that number is a claim the server cannot honour, and it surfaces as a mid-session failure rather than a startup one.
+
+Both are measurable from outside the container, so `scripts/serving_audit.sh` measures them rather than reading the log and hoping. Prefix caching is tested by sending a long prefix twice and comparing TTFT; context is tested by comparing vLLM's actual allocated KV cache size in tokens against the advertised `max_model_len`.
+
+**Order changed as a result.** Run `serving_audit.sh` first. A dead prefix cache or an unreachable context window is worth more than the entire speculative-decoding question, and both are cheaper to fix.
+
+**Why the attention backend matters unusually much on this model.** It is a hybrid: ~48 GatedDeltaNet linear-attention layers plus ~16 full-attention layers. The backend choice governs the full-attention layers and the KV cache they need, which is why it shows up as a *context capacity* limit rather than only a speed one — and why the reported FLASHINFER context win is measured **without** an FP8 KV cache. That trades against our `kv_cache_dtype: fp8` rather than stacking with it, so those two settings must be changed one at a time or the result is uninterpretable.
+
+**On DFlash2.** The strongest reported configs (~50 tok/s greedy median, 148 at 8 streams, 258 at 32) run **SGLang**, not vLLM. That is a different serving engine: different container, different arguments, and every launcher, watchdog, and health check in this repo is vLLM-shaped. It is a plausible future direction and explicitly **out of scope** for this branch — chasing it means porting the stack, not editing a config field. Exhaust the vLLM-side levers first; they are free and they are already instrumented.
+
+This also retires an earlier claim that NVFP4 was vLLM-only and unsupported on SGLang. Multiple reported SGLang+NVFP4 configs contradict it. Noted so that it is not carried forward as a constraint that no longer holds.
+
 ### Levers, including the one initially missed
 
 If the roofline turns out to be real, these still break it — a ceiling on *plain* decode is not a ceiling on *throughput*:
@@ -522,11 +546,16 @@ The default benchmark prompt writes fresh prose and code from nothing — close 
 ### Order of operations
 
 ```bash
-bash scripts/bandwidth_probe.sh          # ceiling real, or path broken?
+bash scripts/serving_audit.sh            # FIRST: is prefix caching live? is 262K reachable?
+bash scripts/bandwidth_probe.sh          # ceiling real, or path moving too many bytes?
 bash scripts/specdecode_probe.sh         # is the speculation we ship live?
 bash scripts/benchmark_concurrency.sh    # does batching reproduce 148@8?
 bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured
 ```
+
+`serving_audit.sh` comes first because it can find a problem that makes the
+rest moot: a dead prefix cache dominates real agentic cost, and an
+unreachable context window invalidates the headline spec in README.
 
 The first two are read-only and safe against production. The sweep restarts Brain repeatedly.
 

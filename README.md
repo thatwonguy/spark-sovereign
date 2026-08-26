@@ -151,13 +151,22 @@ headroom. This repo has already been bitten by exactly that failure mode once
 So measure the ceiling before believing it:
 
 ```bash
-bash scripts/bandwidth_probe.sh          # is the roofline real, or is the path broken?
+bash scripts/serving_audit.sh            # FIRST: is prefix caching live? is 262K context reachable?
+bash scripts/bandwidth_probe.sh          # is the roofline real, or is the path moving too many bytes?
 bash scripts/specdecode_probe.sh         # is the speculation we ship actually live?
 bash scripts/benchmark_concurrency.sh    # does batching reproduce the multi-stream claims?
 bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured not assumed
 ```
 
-The first three are read-only and safe against a running Brain.
+All but the last are read-only and safe against a running Brain.
+
+`serving_audit.sh` runs first because it can find something that makes the rest
+moot. Two failures are reported for this model on this hardware and neither has
+been checked here: vLLM silently disabling prefix caching despite the flag being
+accepted (which makes every agent turn reprocess the whole conversation prefix),
+and the default attention backend capping usable context far below the advertised
+262K. A dead prefix cache costs more in real agentic use than any amount of
+draft-token tuning wins back.
 
 ---
 
@@ -417,6 +426,7 @@ spark-sovereign/
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   ├── check_stack.sh         ← Health check
 │   ├── benchmark_brain.sh     ← TTFT + decode tok/s from the running Brain
+│   ├── serving_audit.sh       ← Declared config vs what vLLM actually did (read-only)
 │   ├── bandwidth_probe.sh     ← Measure the real roofline: achieved GB/s + bytes/token (read-only)
 │   ├── benchmark_concurrency.sh ← Aggregate vs per-stream throughput across N streams (read-only)
 │   ├── specdecode_probe.sh    ← Is speculative decoding actually engaging? (read-only)
