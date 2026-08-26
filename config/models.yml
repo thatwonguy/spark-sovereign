@@ -82,18 +82,36 @@ brain:
   attention_backend:
   # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
   #
-  # UNVERIFIED. The 5 below was never measured against 3, 2, or off, and the
-  # community day-zero recipe for this model used 2. Rejected draft tokens
-  # still cost a verification pass, so longer is not monotonically better.
+  # MEASURED 2026-08-26, full matrix, 3 runs x 256 tokens each (docs/BENCHMARKS.md):
   #
-  # MTP is also not the only option: `ngram` (prompt-lookup) needs no drafter
-  # and no extra weights, and tends to do well on agentic coding where output
-  # echoes files already in context. The sweep compares them.
+  #   off      12.04 tok/s              <- the bandwidth roofline, and it is real
+  #   mtp2     18.47 tok/s   60.3% acc
+  #   mtp3     19.66 tok/s   64.4% acc  <- chosen
+  #   mtp5     15.18 tok/s   39.5% acc  <- what shipped in v5.0/v5.1
+  #   ngram5   12.46 tok/s              <- only 10 tokens drafted; see below
   #
-  # Before trusting it:  bash scripts/benchmark.sh audit      (read-only)
+  # 5 was worse than 3 AND worse than 2. Longer drafts are not monotonically
+  # better: acceptance falls off with draft position, and every rejected token
+  # still costs its verification pass. vLLM warns about this at startup for
+  # this exact model ("will run multiple times of forward on same MTP layer,
+  # which may result in lower acceptance rate") — the warning was accurate and
+  # went unread for two releases.
+  #
+  # 3 over 2 is +6.4%, which is above run-to-run noise here but not by a wide
+  # margin. If a future change makes acceptance workload-dependent, re-measure
+  # both rather than assuming 3 still wins.
+  #
+  # DO NOT read the ngram result as "ngram is bad". It drafted 10 tokens across
+  # a whole generation, i.e. it almost never fired, because the default
+  # benchmark prompt writes fresh prose — the worst case for prompt-lookup.
+  # On agentic coding, where output echoes files already in context, it may win.
+  # Test it against a real workload before ruling it out:
+  #   PROMPT="$(cat some_real_file.py)\n\nRefactor this." bash scripts/benchmark.sh --only baseline,spec-ngram5 --redo
+  #
+  # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
   # Is a ceiling real?:  bash scripts/benchmark.sh bandwidth  (read-only)
-  speculative_config: '{"method":"mtp","num_speculative_tokens":5}'
+  speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
