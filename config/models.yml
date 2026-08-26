@@ -13,9 +13,10 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-26): 17–20 tok/s decode, TTFT ~264 ms, VRAM ~55 GB at 0.45
-# util. The earlier 15–17 was a mistuned MTP draft length, not a hardware
-# limit — see the speculative_config block below and docs/LESSONS.md #18.
+# STATUS (2026-08-26): ~17 tok/s decode (16.7–19.7 across four runs), TTFT
+# ~251–264 ms, VRAM ~55 GB at 0.45 util. The earlier 15–17 was a mistuned MTP
+# draft length, not a hardware limit — see the speculative_config block below
+# and docs/LESSONS.md #18.
 # The non-speculative floor is a measured 12.0 tok/s at 245 GB/s achieved
 # bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
 # configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
@@ -120,9 +121,12 @@ brain:
   #
   # At 3 draft tokens, tokens per forward pass is 1 + 3 x acceptance, so that
   # drop from 64.4% to 46.5% predicts ~16.1 tok/s and 17.1 was observed. The
-  # spread is fully explained by acceptance; nothing is broken. Expect roughly
-  # 17-20 tok/s in practice, against a 15.2 tok/s baseline and a 12.0 tok/s
-  # non-speculative floor.
+  # spread is fully explained by acceptance; nothing is broken.
+  #
+  # EXPECT ~17 tok/s DAY TO DAY. Four runs gave 16.74, 17.06, 17.13 and 19.66,
+  # and the 19.66 was the sweep itself — idle box, watchdog stopped. Against a
+  # 15.2 tok/s baseline and a 12.0 tok/s non-speculative floor, that is still
+  # the win; it is just not 19.66 on a working machine.
   #
   # DO NOT read the ngram result as "ngram is bad". It drafted 10 tokens across
   # a whole generation, i.e. it almost never fired, because the default
