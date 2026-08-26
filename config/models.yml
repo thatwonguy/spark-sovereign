@@ -43,6 +43,12 @@ brain:
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
+  # UNCONFIRMED AT RUNTIME. vLLM is reported to silently disable prefix caching
+  # for this model's card parameters even when the flag is accepted on the
+  # command line. If that is happening here, every OpenClaw turn reprocesses
+  # the entire conversation prefix — the most expensive possible failure in a
+  # coding workflow, and completely silent.
+  # Measure it (does not restart Brain):  bash scripts/serving_audit.sh
   enable_prefix_caching: true
   # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
   #
@@ -56,12 +62,23 @@ brain:
   # setting above is a no-op, KV cache entries are twice the size, and NOTHING
   # ERRORS. The ~55 GB measured at 0.45 util does not distinguish the two cases.
   #
-  # Find out which one is live, then decide:
-  #     bash scripts/specdecode_probe.sh        # step 2 reports it
-  #     docker logs brain 2>&1 | grep -i "attention backend"
-  # If it reports FlashAttention while kv_cache_dtype is fp8, set:
-  #     attention_backend: TRITON_ATTN
-  # and re-measure with scripts/benchmark_brain.sh before committing it.
+  # It also governs how much context actually fits. The default backend is
+  # reported to cap usable context near 60K at 0.80 utilisation on this
+  # hardware, with FLASHINFER fitting ~170K instead — and that report is at
+  # 0.80, while we run 0.45, roughly half the memory budget, against a
+  # declared max_model_len of 262144 below. If the KV cache cannot hold that
+  # many tokens, the advertised window is a number the server cannot honour,
+  # and it fails mid-session rather than at startup.
+  #
+  # Find out what is actually live and whether the context is reachable:
+  #     bash scripts/serving_audit.sh           # measures both, read-only
+  #     bash scripts/specdecode_probe.sh        # step 2 also reports the backend
+  # Candidates to try, re-measuring after each:
+  #     attention_backend: TRITON_ATTN   # reported to be required for FP8 KV on SM121
+  #     attention_backend: FLASHINFER    # reported to fit far more context
+  # FLASHINFER's reported context win is measured WITHOUT an FP8 KV cache, so
+  # it trades against kv_cache_dtype below rather than stacking with it. Change
+  # one of the two at a time or the result is uninterpretable.
   attention_backend:
   # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
   #
