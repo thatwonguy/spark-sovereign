@@ -1,0 +1,698 @@
+#!/usr/bin/env bash
+# =============================================================================
+# bench.sh — shared measurement library. SOURCE THIS, do not execute it.
+# =============================================================================
+# Every measurement primitive the benchmarking tools need, in one place.
+#
+# This exists because the same three things — credential redaction, the
+# prefix-cache reuse test, and the spec-decode counter diff — had been written
+# three separate times across three scripts. Duplicated security-relevant code
+# is code that drifts: fix the redactor in one copy and the other two keep
+# leaking. One definition, one place to fix.
+#
+# Consumed by scripts/benchmark.sh. Nothing in the boot sequence touches it.
+# =============================================================================
+
+# Guard against direct execution — this file only defines functions.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    echo "bench.sh is a library. Run: bash scripts/benchmark.sh" >&2
+    exit 1
+fi
+
+BENCH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${BENCH_LIB_DIR}/../.." && pwd)"
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.env" 2>/dev/null || true
+BRAIN_API_KEY="${BRAIN_API_KEY:-}"
+MODELS_DIR="${MODELS_DIR:-/opt/models}"
+
+# -- Config access ------------------------------------------------------------
+# Any field can be overridden for one call by exporting OVERRIDE_<field>.
+# An override set to the EMPTY string means "unset this field" — a distinct and
+# necessary case, since testing "no speculation" or "let vLLM pick the backend"
+# requires blanking a value rather than replacing it.
+get_field() {
+    local ov="OVERRIDE_$2"
+    if [ -n "${!ov+set}" ]; then printf '%s\n' "${!ov}"; return; fi
+    python3 -c "
+import yaml
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+val = cfg.get('$1', {}).get('$2', '')
+if isinstance(val, bool):
+    val = str(val).lower()
+print(val if val is not None else '')
+" 2>/dev/null
+    # Unreadable config yields empty, which every caller already treats as
+    # "not set". A genuinely broken models.yml surfaces at launch, where the
+    # values are actually required — not as a traceback per field lookup.
+}
+
+# -- Credential redaction -----------------------------------------------------
+# THE INVARIANT: container logs and inspect output are untrusted for display.
+# A server's startup output can restate its own configuration, including values
+# supplied as secrets, and does not separate those from anything else. Nothing
+# in these tools prints that output raw.
+#
+# This matters because 03_vllm_servers.sh deliberately passes the bearer token
+# as an environment variable rather than a CLI flag, to keep it out of `ps aux`.
+# A diagnostic that echoes raw server output to a terminal, a scrollback buffer,
+# or a pasted bug report hands that protection straight back.
+#
+# Pattern passes first, then a literal pass on the live key, so a shape the
+# patterns miss still cannot leak the one secret we hold. Implemented in
+# python3, not sed: the literal pass needs the secret treated as text, and
+# hand-escaping a secret into a sed expression fails in the direction that
+# matters — an unescaped metacharacter either breaks the filter or silently
+# stops matching and prints the key. str.replace() has no such mode.
+redact() {
+    BRAIN_API_KEY="${BRAIN_API_KEY}" python3 -c '
+import os, re, sys
+PATTERNS = [
+    (re.compile(r"((?:api[_-]?key|token|secret|password|passwd)[\"\x27]?\s*[=:]\s*[\"\x27]?)"
+                r"[A-Za-z0-9._~+/-]{8,}", re.I), r"\1<redacted>"),
+    (re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]{8,}", re.I), r"\1 <redacted>"),
+]
+key = os.environ.get("BRAIN_API_KEY", "")
+for line in sys.stdin:
+    for pat, repl in PATTERNS:
+        line = pat.sub(repl, line)
+    if len(key) >= 8:
+        line = line.replace(key, "<redacted>")
+    sys.stdout.write(line)
+'
+}
+
+# -- Server state -------------------------------------------------------------
+bench_init() {
+    BRAIN_PORT=$(get_field brain port)
+    BRAIN_NAME=$(get_field brain served_name)
+    BASE="http://localhost:${BRAIN_PORT}"
+    AUTH=(-H "Authorization: Bearer ${BRAIN_API_KEY}")
+}
+
+brain_ready() {
+    curl -sf --max-time 5 "${AUTH[@]}" "${BASE}/v1/models" >/dev/null 2>&1
+}
+
+require_brain() {
+    if ! brain_ready; then
+        echo "  ERROR: Brain not responding on port ${BRAIN_PORT}"
+        echo "  Check: docker logs brain --tail 50"
+        return 2
+    fi
+}
+
+brain_logs() { docker logs brain 2>&1 | head -600 || echo ""; }
+
+# -- Launching ----------------------------------------------------------------
+# Always through the engine's real launcher. A tool that assembled its own
+# `docker run` would measure a server this repo never starts, and its results
+# would not transfer to production.
+launch_engine() {
+    local engine="$1" overrides="$2"
+    LAUNCH_NOTE=""
+    case "${engine}" in
+        vllm)
+            ( for kv in ${overrides}; do export "${kv?}"; done
+              bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh" ) >/tmp/bench_launch.$$ 2>&1
+            ;;
+        sglang)
+            if [ -z "$(get_field sglang docker_image)" ]; then
+                LAUNCH_NOTE="no SGLang image pinned in config/models.yml (sglang.docker_image)"
+                rm -f /tmp/bench_launch.$$ 2>/dev/null
+                return 3
+            fi
+            ( for kv in ${overrides}; do export "${kv?}"; done
+              launch_sglang ) >/tmp/bench_launch.$$ 2>&1
+            ;;
+        *)  LAUNCH_NOTE="unknown engine ${engine}"; return 4 ;;
+    esac
+    local rc=$?
+    if [ ${rc} -ne 0 ]; then
+        LAUNCH_NOTE=$(tail -3 /tmp/bench_launch.$$ 2>/dev/null | tr '\n' ' ')
+        rm -f /tmp/bench_launch.$$ 2>/dev/null
+        return 1
+    fi
+    rm -f /tmp/bench_launch.$$ 2>/dev/null
+    return 0
+}
+
+# SGLang launcher. Kept here rather than as its own script because it is only
+# ever used by the matrix — boot and watchdog start vLLM, always.
+#
+# The strongest reported throughput configs for this model on GB10 run SGLang
+# with a DFlash2 drafter. A comparison that could only launch vLLM would be
+# structurally incapable of discovering that, and an engine excluded from the
+# test is an engine assumed worse. Measurement is engine-agnostic — SGLang
+# serves the same OpenAI /v1 surface — so only launch and validation differ.
+launch_sglang() {
+    local img path name port host util ctx quant attn tool reason radix
+    img=$(get_field sglang docker_image)
+    path=$(get_field brain local_path)
+    name=$(get_field sglang served_name);  name="${name:-$(get_field brain served_name)}"
+    port=$(get_field sglang port);         port="${port:-$(get_field brain port)}"
+    host=$(get_field sglang bind_host);    host="${host:-127.0.0.1}"
+    util=$(get_field sglang mem_fraction_static)
+    util="${util:-$(get_field brain gpu_memory_utilization)}"
+    ctx=$(get_field sglang max_model_len);  ctx="${ctx:-$(get_field brain max_model_len)}"
+    quant=$(get_field sglang quantization)
+    attn=$(get_field sglang attention_backend)
+    tool=$(get_field sglang tool_call_parser)
+    reason=$(get_field sglang reasoning_parser)
+    radix=$(get_field sglang disable_radix_cache)
+
+    for n in brain qwen-brain; do docker rm -f "${n}" >/dev/null 2>&1 || true; done
+
+    # NOTE the inverted sense: SGLang's radix cache (its prefix cache) is ON by
+    # default, so the knob is a DISABLE. vLLM's is opt-in. The two engines'
+    # defaults differ in the exact dimension this matrix tests.
+    # shellcheck disable=SC2086
+    docker run -d --name brain \
+        --gpus all --ipc host --network host --restart no \
+        ${BRAIN_API_KEY:+-e SGLANG_API_KEY="${BRAIN_API_KEY}"} \
+        $(get_extra_env_flags sglang) \
+        -v "${MODELS_DIR}:/models" -v sglang-cache:/root/.cache \
+        "${img}" python3 -m sglang.launch_server \
+            --model-path "/models/$(basename "${path}")" \
+            --served-model-name "${name}" \
+            --host "${host}" --port "${port}" \
+            --mem-fraction-static "${util}" \
+            --context-length "${ctx}" \
+            --trust-remote-code \
+            ${quant:+--quantization "${quant}"} \
+            ${attn:+--attention-backend "${attn}"} \
+            ${tool:+--tool-call-parser "${tool}"} \
+            ${reason:+--reasoning-parser "${reason}"} \
+            $([ "${radix}" = "true" ] && echo "--disable-radix-cache")
+}
+
+get_extra_env_flags() {
+    python3 -c "
+import yaml
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+for k, v in (cfg.get('$1', {}) or {}).get('extra_env', {} ).items():
+    print(f'-e {k}={v}')
+" 2>/dev/null || true
+}
+
+wait_ready() {
+    local timeout="${1:-900}" waited=0
+    printf "    loading"
+    until brain_ready; do
+        if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
+            echo ""
+            LAUNCH_NOTE="container exited during load: $(docker logs brain 2>&1 | tail -2 | redact | tr '\n' ' ')"
+            return 1
+        fi
+        if [ "${waited}" -ge "${timeout}" ]; then
+            echo ""; LAUNCH_NOTE="not ready after ${timeout}s"; return 1
+        fi
+        sleep 10; waited=$((waited + 10)); printf "."
+    done
+    echo " up (${waited}s)"
+}
+
+restore_production() {
+    ( unset "${!OVERRIDE_@}" 2>/dev/null || true
+      bash "${REPO_ROOT}/scripts/start_brain_ad_hoc.sh" >/dev/null 2>&1 ) \
+        || echo "    WARN: restore failed — run scripts/start_brain_ad_hoc.sh yourself."
+}
+
+# -- Measurements (all engine-agnostic: plain OpenAI /v1 clients) -------------
+
+# Single-stream decode rate and TTFT. Generation is pinned to exactly
+# MAX_TOKENS via ignore_eos so runs are comparable; reasoning tokens count
+# toward decode, because that is the real rate a user experiences.
+m_decode() {
+    local runs="${1:-3}" maxt="${2:-256}"
+    local prompt="${PROMPT:-Explain how a hash map handles collisions, then write one in Python.}"
+    DECODE_TOKS=""; TTFT_MS=""
+    local out
+    out=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
+          RUNS="${runs}" MAX_TOKENS="${maxt}" PROMPT="${prompt}" python3 - <<'PYEOF'
+import json, os, statistics, time, urllib.request
+base, model, key = os.environ["BASE"], os.environ["BRAIN_NAME"], os.environ["BRAIN_API_KEY"]
+runs, maxt, prompt = int(os.environ["RUNS"]), int(os.environ["MAX_TOKENS"]), os.environ["PROMPT"]
+def one():
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": maxt, "stream": True,
+            "stream_options": {"include_usage": True}, "ignore_eos": True}
+    req = urllib.request.Request(f"{base}/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    t0 = time.perf_counter(); ttft = None; completion = 0
+    with urllib.request.urlopen(req, timeout=600) as r:
+        for raw in r:
+            s = raw.decode("utf-8", "replace").strip()
+            if not s.startswith("data: "):
+                continue
+            if s[6:] == "[DONE]":
+                break
+            try: c = json.loads(s[6:])
+            except json.JSONDecodeError: continue
+            if ttft is None and c.get("choices"):
+                d = c["choices"][0].get("delta") or {}
+                if d.get("content") or d.get("reasoning") or d.get("reasoning_content"):
+                    ttft = time.perf_counter() - t0
+            if c.get("usage"):
+                completion = c["usage"].get("completion_tokens", 0)
+    el = time.perf_counter() - t0
+    return ttft or el, (completion or maxt) / el
+ttfts, rates = [], []
+for _ in range(runs):
+    t, r = one(); ttfts.append(t); rates.append(r)
+print(f"{statistics.median(rates):.2f} {statistics.median(ttfts)*1000:.0f}")
+PYEOF
+    ) || return 1
+    DECODE_TOKS=$(echo "${out}" | awk '{print $1}')
+    TTFT_MS=$(echo "${out}" | awk '{print $2}')
+}
+
+# Aggregate throughput across parallel streams. One forward pass reads the
+# whole weight set and, at batch N, emits N tokens from that single read — so
+# aggregate rises with concurrency until KV cache or max_num_seqs binds.
+# Multi-stream figures quoted for this model need no special technique; this is
+# what checks whether the box reproduces them. Distinct prompts per stream, or
+# they would all hit the prefix cache and measure cache replay.
+m_concurrency() {
+    local streams="${1:-1 4 8}" maxt="${2:-128}"
+    AGG_MAX=""; CONC_TABLE=""
+    CONC_TABLE=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
+        STREAMS="${streams}" MAX_TOKENS="${maxt}" python3 - <<'PYEOF'
+import json, os, time, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+base, model, key = os.environ["BASE"], os.environ["BRAIN_NAME"], os.environ["BRAIN_API_KEY"]
+maxt = int(os.environ["MAX_TOKENS"]); levels = [int(x) for x in os.environ["STREAMS"].split()]
+P = ["Explain how a hash map handles collisions, then write one in Python.",
+     "Write a binary search tree with insert and delete in Rust.",
+     "Describe the CAP theorem with a concrete example of each tradeoff.",
+     "Implement a token bucket rate limiter in Go.",
+     "Explain TCP congestion control, then diagram slow start.",
+     "Write a topological sort in C++ and explain cycle detection.",
+     "Compare optimistic and pessimistic locking with an example.",
+     "Implement an LRU cache in Java with O(1) get and put."]
+def one(i):
+    body = {"model": model, "messages": [{"role": "user", "content": P[i % len(P)]}],
+            "max_tokens": maxt, "stream": True,
+            "stream_options": {"include_usage": True}, "ignore_eos": True}
+    req = urllib.request.Request(f"{base}/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    t0 = time.perf_counter(); tok = 0
+    with urllib.request.urlopen(req, timeout=900) as r:
+        for raw in r:
+            s = raw.decode("utf-8", "replace").strip()
+            if s.startswith("data: ") and s[6:] != "[DONE]":
+                try: c = json.loads(s[6:])
+                except json.JSONDecodeError: continue
+                if c.get("usage"): tok = c["usage"].get("completion_tokens", 0)
+    return (tok or maxt), time.perf_counter() - t0
+best = 0.0
+for n in levels:
+    w0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        res = list(pool.map(one, range(n)))
+    wall = time.perf_counter() - w0
+    agg = sum(t for t, _ in res) / wall
+    per = sum(t / e for t, e in res) / n
+    best = max(best, agg)
+    print(f"{n} streams: {agg:.1f} tok/s aggregate, {per:.1f} tok/s per-stream")
+print(f"MAX {best:.1f}")
+PYEOF
+    ) || return 1
+    AGG_MAX=$(echo "${CONC_TABLE}" | grep "^MAX " | awk '{print $2}')
+    CONC_TABLE=$(echo "${CONC_TABLE}" | grep -v "^MAX ")
+}
+
+# Prefix-cache reuse, MEASURED not read back. The flag can be accepted while
+# the feature is inert — the documented failure for this model — so send a long
+# prefix twice with different tails and compare TTFT. Reuse shows as a sharp
+# drop; an inert cache shows ~1.0x.
+m_prefix_reuse() {
+    PREFIX_REUSE=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
+        python3 - <<'PYEOF' 2>/dev/null || echo ""
+import json, os, time, urllib.request
+base, model, key = os.environ["BASE"], os.environ["BRAIN_NAME"], os.environ["BRAIN_API_KEY"]
+prefix = ("Review this module.\n\n" + "\n".join(
+    f"def function_{i}(a, b):\n    return a * {i} + b\n" for i in range(400)))
+def ask(tail):
+    body = {"model": model, "max_tokens": 8, "stream": True, "temperature": 0,
+            "messages": [{"role": "user", "content": prefix + "\n\n" + tail}]}
+    req = urllib.request.Request(f"{base}/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=300) as r:
+        for raw in r:
+            s = raw.decode("utf-8", "replace").strip()
+            if s.startswith("data: ") and s[6:] != "[DONE]":
+                try: c = json.loads(s[6:])
+                except Exception: continue
+                if c.get("choices"):
+                    d = c["choices"][0].get("delta") or {}
+                    if d.get("content") or d.get("reasoning") or d.get("reasoning_content"):
+                        return time.perf_counter() - t0
+    return time.perf_counter() - t0
+cold = ask("Summarise function_1."); warm = ask("Summarise function_2.")
+print(f"{cold/warm:.2f}" if warm > 0 else "")
+PYEOF
+    )
+}
+
+# Speculative draft tokens emitted across one known generation. Counters are
+# cumulative and start at zero, so a single read cannot distinguish "broken"
+# from "nothing generated yet" — only a delta across known load is conclusive.
+m_spec_drafted() {
+    local before after
+    before=$(curl -sf --max-time 10 "${BASE}/metrics" 2>/dev/null \
+             | grep -E "^vllm:spec_decode_num_draft_tokens" | awk '{s+=$2} END{print s+0}')
+    curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
+        -X POST "${BASE}/v1/chat/completions" \
+        -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
+        >/dev/null 2>&1
+    after=$(curl -sf --max-time 10 "${BASE}/metrics" 2>/dev/null \
+            | grep -E "^vllm:spec_decode_num_draft_tokens" | awk '{s+=$2} END{print s+0}')
+    SPEC_DRAFTED=$(python3 -c "print(int(${after:-0} - ${before:-0}))" 2>/dev/null || echo 0)
+}
+
+# Achieved device memory bandwidth. The roofline denominator, measured rather
+# than taken from a spec sheet — real LPDDR5x sustains 70-85% of spec, and the
+# difference decides whether a decode rate is near-optimal or nowhere near it.
+# Throwaway container: no host namespaces, no network, no mounts.
+m_bandwidth() {
+    local buf="${BUF_GB:-2}" iters="${ITERS:-30}"
+    BANDWIDTH=$(docker run --rm --gpus all --network none \
+        -e BUF_GB="${buf}" -e ITERS="${iters}" \
+        --entrypoint python3 "$(get_field brain docker_image)" -c '
+import os, time, torch
+n = int(float(os.environ["BUF_GB"]) * (1 << 30) // 2)
+iters = int(os.environ["ITERS"])
+a = torch.empty(n, dtype=torch.float16, device="cuda")
+b = torch.empty(n, dtype=torch.float16, device="cuda")
+a.fill_(1.0)
+for _ in range(5): b.copy_(a)
+torch.cuda.synchronize(); t0 = time.perf_counter()
+for _ in range(iters): b.copy_(a)
+torch.cuda.synchronize(); dt = time.perf_counter() - t0
+print(f"{2 * a.numel() * a.element_size() * iters / dt / 1e9:.1f}")
+' 2>/dev/null | tail -1)
+    echo "${BANDWIDTH}" | grep -qE '^[0-9.]+$' || BANDWIDTH=""
+}
+
+# -- Validation ---------------------------------------------------------------
+# Did the requested parameters ACTUALLY take effect? This is what separates a
+# measurement from a number. vLLM accepts flags it then silently ignores, so a
+# benchmark of a config that never applied yields a real figure attributed to
+# the wrong cause — worse than no figure, because it looks like evidence.
+validate_runtime() {
+    local overrides="$1"
+    VALIDATION_NOTE=""; VALIDITY=""; KV_TOKENS=""
+    local problems=0 checks=0 logs
+    logs=$(brain_logs)
+
+    for kv in ${overrides}; do
+        local field="${kv%%=*}"; field="${field#OVERRIDE_}"
+        local want="${kv#*=}"
+        checks=$((checks + 1))
+        case "${field}" in
+            enable_prefix_caching)
+                m_prefix_reuse
+                local on want_on="yes"
+                on=$(python3 -c "print('yes' if ${PREFIX_REUSE:-0} >= 1.8 else 'no')")
+                [ "${want}" = "false" ] && want_on="no"
+                [ "${on}" != "${want_on}" ] && {
+                    VALIDATION_NOTE+="prefix_caching requested=${want} observed=${on} (${PREFIX_REUSE:-?}x); "
+                    problems=$((problems + 1)); }
+                ;;
+            attention_backend)
+                [ -n "${want}" ] && ! echo "${logs}" | grep -qi "${want%%_*}" && {
+                    VALIDATION_NOTE+="attention_backend=${want} not confirmed in log; "
+                    problems=$((problems + 1)); }
+                ;;
+            kv_cache_dtype)
+                [ "${want}" = "fp8" ] && ! echo "${logs}" | grep -qiE "kv.cache.dtype.*fp8" && {
+                    VALIDATION_NOTE+="kv_cache_dtype=fp8 not confirmed in log; "
+                    problems=$((problems + 1)); }
+                ;;
+            speculative_config)
+                m_spec_drafted
+                if [ -z "${want}" ]; then
+                    [ "${SPEC_DRAFTED:-0}" != "0" ] && {
+                        VALIDATION_NOTE+="speculation requested OFF but ${SPEC_DRAFTED} drafted; "
+                        problems=$((problems + 1)); }
+                else
+                    [ "${SPEC_DRAFTED:-0}" = "0" ] && {
+                        VALIDATION_NOTE+="speculation configured but ZERO tokens drafted; "
+                        problems=$((problems + 1)); }
+                fi
+                ;;
+        esac
+    done
+
+    # Checked every run regardless of overrides: is the advertised context
+    # actually reachable? vLLM logs the real KV cache size once allocated, and
+    # that — not max_model_len — is the true ceiling. Below it, a single
+    # request can never reach the advertised window, and it fails mid-session
+    # rather than at startup.
+    KV_TOKENS=$(echo "${logs}" | grep -ioE "GPU KV cache size: *[0-9,]+" \
+                | grep -oE "[0-9,]+" | tr -d ',' | head -1)
+    local ctx; ctx=$(get_field brain max_model_len)
+    if [ -n "${KV_TOKENS}" ] && [ -n "${ctx}" ] && [ "${KV_TOKENS}" -lt "${ctx}" ]; then
+        VALIDATION_NOTE+="KV cache holds ${KV_TOKENS} tokens < advertised max_model_len ${ctx}; "
+        problems=$((problems + 1))
+    fi
+
+    if [ "${problems}" = "0" ]; then
+        VALIDITY="VALID"
+        VALIDATION_NOTE="all ${checks} requested parameter(s) confirmed in effect"
+    elif [ "${problems}" -le "${checks}" ]; then
+        VALIDITY="PARTIAL"
+    else
+        VALIDITY="INVALID"
+    fi
+}
+
+# -- Ledger -------------------------------------------------------------------
+LEDGER="${LEDGER:-${REPO_ROOT}/docs/benchmarks.jsonl}"
+REPORT="${REPORT:-${REPO_ROOT}/docs/BENCHMARKS.md}"
+
+ledger_append() {
+    NAME="$1" ENGINE="$2" OVERRIDES="$3" \
+    VALIDITY="${VALIDITY}" VALIDATION_NOTE="${VALIDATION_NOTE}" \
+    DECODE_TOKS="${DECODE_TOKS:-}" TTFT_MS="${TTFT_MS:-}" AGG_MAX="${AGG_MAX:-}" \
+    PREFIX_REUSE="${PREFIX_REUSE:-}" SPEC_DRAFTED="${SPEC_DRAFTED:-}" \
+    KV_TOKENS="${KV_TOKENS:-}" BANDWIDTH="${BANDWIDTH:-}" \
+    RUNS="${RUNS:-3}" MAX_TOKENS="${MAX_TOKENS:-256}" LEDGER="${LEDGER}" \
+    python3 -c "
+import json, os, datetime
+def num(k):
+    try: return float(os.environ.get(k, ''))
+    except (TypeError, ValueError): return None
+rec = {'name': os.environ['NAME'], 'engine': os.environ['ENGINE'],
+       'overrides': os.environ['OVERRIDES'].strip(),
+       'validity': os.environ['VALIDITY'], 'note': os.environ['VALIDATION_NOTE'].strip(),
+       'decode_toks': num('DECODE_TOKS'), 'ttft_ms': num('TTFT_MS'),
+       'aggregate_toks': num('AGG_MAX'), 'prefix_reuse_x': num('PREFIX_REUSE'),
+       'spec_drafted': num('SPEC_DRAFTED'), 'kv_cache_tokens': num('KV_TOKENS'),
+       'bandwidth_gbps': num('BANDWIDTH'),
+       'runs': int(os.environ['RUNS']), 'max_tokens': int(os.environ['MAX_TOKENS']),
+       'measured_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds')}
+with open(os.environ['LEDGER'], 'a', encoding='utf-8') as f:
+    f.write(json.dumps(rec) + '\n')
+"
+}
+
+# -- Report generation --------------------------------------------------------
+# docs/BENCHMARKS.md is DERIVED from the ledger, never authored. Editing it by
+# hand loses the edit on the next run — durable prose belongs in docs/LESSONS.md.
+# Lives here rather than in its own script because benchmark.sh was its only
+# caller, and a top-level file that nothing but one script invokes is just
+# another thing to explain.
+render_report() {
+    [ -f "${LEDGER}" ] || { echo "no ledger at ${LEDGER}"; return 1; }
+LEDGER="${LEDGER}" REPORT="${REPORT}" python3 <<'PYEOF'
+import json, os, datetime
+
+ledger, report = os.environ["LEDGER"], os.environ["REPORT"]
+
+rows = []
+for line in open(ledger, encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rows.append(json.loads(line))
+    except json.JSONDecodeError:
+        continue
+
+# Later measurements of the same name supersede earlier ones.
+by_name = {}
+for r in rows:
+    by_name[r["name"]] = r
+rows = list(by_name.values())
+
+def f(v, spec="{:.1f}", dash="—"):
+    return dash if v is None else spec.format(v)
+
+ranked = sorted(
+    [r for r in rows if r.get("validity") == "VALID" and r.get("decode_toks")],
+    key=lambda r: r["decode_toks"], reverse=True)
+
+out = []
+w = out.append
+
+w("# Serving Configuration Benchmarks — Qwen3.8-27B on DGX Spark (GB10)")
+w("")
+w("<!-- GENERATED FILE. Do not edit by hand. -->")
+w("<!-- Source of truth: docs/benchmarks.jsonl (append-only ledger). -->")
+w("<!-- Regenerate: bash scripts/benchmark.sh render -->")
+w("")
+w("## What this file is")
+w("")
+w("A record of serving configurations **actually measured on this machine**, ")
+w("produced by `scripts/benchmark.sh`. It exists so that anyone — including ")
+w("a future LLM session with no memory of this work — can answer three questions ")
+w("without re-deriving them:")
+w("")
+w("1. **What has already been tried?** Don't re-run what's in the table below.")
+w("2. **Which numbers can be trusted?** See the Validity column. This is the important one.")
+w("3. **What should be used right now?** See Recommendation.")
+w("")
+w("### How to read the Validity column — read this before using any number")
+w("")
+w("| Validity | Meaning |")
+w("|---|---|")
+w("| `VALID` | Every requested parameter was confirmed in effect. The number measures what the config says it measures. |")
+w("| `PARTIAL` | Some parameters applied, others didn't. The number is real but is **not** attributable to the stated config. |")
+w("| `INVALID` | Requested parameters did not take effect. **Do not rank or cite this number.** |")
+w("| `BLOCKED` | Could not run — missing image or unconfigured engine. Absence of data, not evidence of badness. |")
+w("| `FAILED` | Server did not come up. The config itself may be unusable on this hardware. |")
+w("")
+w("This distinction matters more than the throughput figures. vLLM accepts flags ")
+w("it then silently ignores — prefix caching on this model is a documented case. ")
+w("A benchmark of a config that never applied yields a real number attributed to ")
+w("the wrong cause, which is worse than no number, because it looks like evidence.")
+w("")
+
+w("## Results")
+w("")
+w("| Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix reuse | Drafted | KV cache |")
+w("|---|---|---|---|---|---|---|---|---|")
+order = {"VALID": 0, "PARTIAL": 1, "FAILED": 2, "INVALID": 3, "BLOCKED": 4}
+for r in sorted(rows, key=lambda r: (order.get(r.get("validity"), 9),
+                                     -(r.get("decode_toks") or 0))):
+    w("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+        r.get("name", "?"), r.get("engine", "?"), r.get("validity", "?"),
+        f(r.get("decode_toks"), "{:.1f} tok/s"),
+        f(r.get("ttft_ms"), "{:.0f} ms"),
+        f(r.get("aggregate_toks"), "{:.1f} tok/s"),
+        f(r.get("prefix_reuse_x"), "{:.2f}x"),
+        f(r.get("spec_drafted"), "{:.0f}"),
+        f(r.get("kv_cache_tokens"), "{:,.0f} tok")))
+w("")
+w("**Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. ")
+w("*Aggregate* is total tok/s at the highest concurrency tested — what the box can do in ")
+w("parallel; it rises with batching and is not comparable to Decode. *Prefix reuse* is the ")
+w("TTFT speedup from re-sending an identical long prefix: **≥1.8x means prefix caching is ")
+w("genuinely working**, ~1.0x means it is inert regardless of what the flag says. *Drafted* ")
+w("is speculative tokens proposed during one generation — **0 means speculative decoding is ")
+w("configured but dead**. *KV cache* is the real context ceiling in tokens; if it is below ")
+w("`max_model_len`, the advertised context window cannot be reached.")
+w("")
+
+w("## Recommendation")
+w("")
+if not ranked:
+    w("**No VALID measurements yet.** Nothing here should be used to choose a ")
+    w("configuration. Run `bash scripts/benchmark.sh` on the Spark.")
+    w("")
+    blocked = [r for r in rows if r.get("validity") == "BLOCKED"]
+    if blocked:
+        w("Blocked configurations (untested, *not* ruled out):")
+        w("")
+        for r in blocked:
+            w(f"- `{r['name']}` — {r.get('note') or 'no reason recorded'}")
+        w("")
+else:
+    best = ranked[0]
+    w(f"**Fastest VALID single-stream configuration: `{best['name']}` "
+      f"({best['engine']}) at {best['decode_toks']:.1f} tok/s.**")
+    w("")
+    w("Apply it by setting these in `config/models.yml`, then ")
+    w("`bash scripts/start_brain_ad_hoc.sh`:")
+    w("")
+    w("```yaml")
+    if best.get("overrides"):
+        for kv in best["overrides"].split():
+            field, _, value = kv.partition("=")
+            field = field.replace("OVERRIDE_", "")
+            w(f"{field}: {value if value else '   # (unset — leave blank)'}")
+    else:
+        w("# baseline — config/models.yml as already committed, no changes")
+    w("```")
+    w("")
+    if len(ranked) > 1:
+        second = ranked[1]
+        delta = best["decode_toks"] - second["decode_toks"]
+        pct = 100 * delta / second["decode_toks"] if second["decode_toks"] else 0
+        w(f"Runner-up `{second['name']}` at {second['decode_toks']:.1f} tok/s "
+          f"({delta:+.1f} tok/s, {pct:+.1f}%). ")
+        if abs(pct) < 5:
+            w("That gap is within run-to-run noise — treat these two as equivalent "
+              "and prefer whichever is simpler to operate.")
+        w("")
+    # Warn only about the config being RECOMMENDED. A slow runner-up with a
+    # dead prefix cache is not actionable; the one you are about to deploy is.
+    if best.get("prefix_reuse_x") is not None and best["prefix_reuse_x"] < 1.8:
+        w(f"> **Warning — the fastest config has a dead prefix cache.** "
+          f"`{best['name']}` shows prefix reuse of {best['prefix_reuse_x']:.2f}x "
+          f"(working is >=1.8x). Single-stream decode is not the metric that "
+          f"decides agentic coding: without prefix reuse, every turn reprocesses "
+          f"the whole conversation, which costs far more wall-clock than the "
+          f"decode-rate lead wins back.")
+        w("")
+        alt = next((r for r in ranked
+                    if (r.get("prefix_reuse_x") or 0) >= 1.8), None)
+        if alt:
+            w(f"> Prefer **`{alt['name']}`** ({alt['decode_toks']:.1f} tok/s, "
+              f"{alt['prefix_reuse_x']:.2f}x reuse) for interactive and agentic use, "
+              f"and reserve `{best['name']}` for batch work with no shared prefix.")
+        else:
+            w("> No measured configuration has working prefix reuse. Fix that "
+              "before optimising decode rate — see `scripts/benchmark.sh audit`.")
+        w("")
+
+untrust = [r for r in rows if r.get("validity") in ("PARTIAL", "INVALID")]
+if untrust:
+    w("## Configurations whose numbers must not be cited")
+    w("")
+    for r in untrust:
+        w(f"- `{r['name']}` ({r['validity']}) — {r.get('note') or 'no detail recorded'}")
+    w("")
+
+w("## Detail")
+w("")
+for r in sorted(rows, key=lambda r: r.get("name", "")):
+    w(f"### `{r.get('name')}`")
+    w("")
+    w(f"- **Engine:** {r.get('engine')}")
+    w(f"- **Overrides:** `{r.get('overrides') or 'none — models.yml as committed'}`")
+    w(f"- **Validity:** {r.get('validity')} — {r.get('note') or ''}")
+    w(f"- **Measured:** {r.get('measured_at')} "
+      f"({r.get('runs')} runs x {r.get('max_tokens')} tokens)")
+    w("")
+
+w("---")
+w("")
+w(f"*Generated {datetime.datetime.now().astimezone().isoformat(timespec='seconds')} "
+  f"from {len(rows)} ledger entr{'y' if len(rows)==1 else 'ies'} by "
+  f"`scripts/benchmark.sh render`.*")
+w("")
+
+with open(report, "w", encoding="utf-8", newline="\n") as fh:
+    fh.write("\n".join(out))
+print(f"wrote {report} ({len(rows)} configurations)")
+PYEOF
+}
