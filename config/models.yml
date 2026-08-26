@@ -217,7 +217,7 @@ brain:
 # scenario is recorded as BLOCKED in docs/BENCHMARKS.md — visible as missing
 # data rather than silently absent. You need a build for SM121 / arm64.
 #
-# Only scripts/benchmark.sh (via scripts/lib/bench.sh) reads this.
+# Only scripts/benchmark.sh reads this.
 # boot_sequence.sh, watchdog.sh and the numbered setup scripts do not, and must
 # not: watchdog recovery calls start_brain_ad_hoc.sh, which starts vLLM, so a
 # crash during an SGLang session silently reverts the engine. Stop the watchdog

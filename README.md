@@ -438,11 +438,10 @@ spark-sovereign/
 │   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   ├── check_stack.sh         ← Health check
-│   ├── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
-│   │                              `benchmark.sh` alone fills docs/BENCHMARKS.md;
-│   │                              subcommands audit / quick / bandwidth / matrix / render / list
-│   ├── render_report.sh       ← AD-HOC: regenerates BENCHMARKS.md from the ledger
-│   └── lib/bench.sh           ← shared measurement library (sourced, not run)
+│   └── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
+│                                  Self-contained. `benchmark.sh` alone fills
+│                                  docs/BENCHMARKS.md; subcommands audit / quick /
+│                                  bandwidth / matrix / render / list
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
