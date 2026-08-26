@@ -458,19 +458,21 @@ metric_sum() {
 # that is always rejected still costs its verification pass. The acceptance
 # rate is the number that decides, so it is measured here too.
 m_spec_drafted() {
-    local d0 d1 a0 a1
+    local d0 d1 a0 a1 n0 n1
     d0=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
     a0=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
+    n0=$(metric_sum "vllm:spec_decode_num_drafts_total")
     curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
         -X POST "${BASE}/v1/chat/completions" \
         -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
         >/dev/null 2>&1
     d1=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
     a1=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
+    n1=$(metric_sum "vllm:spec_decode_num_drafts_total")
 
     # Absent counters yield empty, which every caller must treat as UNKNOWN.
     if [ -z "${d0}" ] || [ -z "${d1}" ]; then
-        SPEC_DRAFTED=""; SPEC_ACCEPT_RATE=""
+        SPEC_DRAFTED=""; SPEC_ACCEPT_RATE=""; TOKENS_PER_PASS=""
         return 0
     fi
     SPEC_DRAFTED=$((d1 - d0))
@@ -478,6 +480,29 @@ m_spec_drafted() {
     if [ -n "${a0}" ] && [ -n "${a1}" ] && [ "${SPEC_DRAFTED}" -gt 0 ]; then
         SPEC_ACCEPT_RATE=$(python3 -c \
             "print(f'{($a1 - $a0) / ${SPEC_DRAFTED}:.3f}')" 2>/dev/null || echo "")
+    fi
+
+    # Tokens emitted per full forward pass through the weights. This is the
+    # conversion factor between a decode RATE and a bytes-per-pass figure, and
+    # without it the roofline arithmetic in cmd_bandwidth is simply wrong.
+    #
+    # Non-speculative decode emits one token per pass, so rate and pass count
+    # are the same number and the distinction is invisible. MTP speculation
+    # breaks that: one verification pass over the full weights emits the bonus
+    # token plus every accepted draft. Measured here that is 1 + 186/70 = 3.66
+    # tokens per weight read, so dividing bandwidth by the token rate
+    # understates bytes-per-pass by 3.66x — enough to turn "moving 3x more data
+    # than the weights occupy" into "at the roofline, nothing to find".
+    #
+    # drafts_total counts verification steps, which is the quantity wanted.
+    # Steps that ran without speculation are not counted, so this slightly
+    # overstates tokens-per-pass; it is an approximation and is labelled as one
+    # wherever it is reported.
+    TOKENS_PER_PASS=""
+    if [ -n "${n0}" ] && [ -n "${n1}" ] && [ -n "${a0}" ] && [ -n "${a1}" ] \
+       && [ "$((n1 - n0))" -gt 0 ]; then
+        TOKENS_PER_PASS=$(python3 -c \
+            "print(f'{1 + ($a1 - $a0) / ($n1 - $n0):.3f}')" 2>/dev/null || echo "")
     fi
 }
 
@@ -931,25 +956,50 @@ cmd_bandwidth() {
     echo "   achieved: ${BANDWIDTH} GB/s"
     if require_brain 2>/dev/null; then
         m_decode 1 128
+        # Speculation must be measured before the arithmetic, not after. The
+        # roofline compares bytes read per FORWARD PASS against the weights;
+        # the decode rate counts TOKENS. Those are the same number only when
+        # each pass emits one token, which is exactly what speculative decoding
+        # stops being true. Getting this wrong does not produce a slightly-off
+        # ratio, it flips the verdict.
+        m_spec_drafted
         local wpath; wpath=$(get_field brain local_path)
         local wgb=""; [ -d "${wpath}" ] && wgb=$(du -sb "${wpath}" 2>/dev/null | awk '{printf "%.1f", $1/1e9}')
-        BANDWIDTH="${BANDWIDTH}" DECODE_TOKS="${DECODE_TOKS}" WGB="${wgb}" python3 -c "
+        BANDWIDTH="${BANDWIDTH}" DECODE_TOKS="${DECODE_TOKS}" WGB="${wgb}" \
+        TPP="${TOKENS_PER_PASS:-}" ACC="${SPEC_ACCEPT_RATE:-}" python3 -c "
 import os
 bw, toks = float(os.environ['BANDWIDTH']), float(os.environ['DECODE_TOKS'])
-per = bw / toks
+tpp_raw = os.environ.get('TPP') or ''
+tpp = float(tpp_raw) if tpp_raw else 1.0
 print(f'   decode  : {toks:.1f} tok/s')
-print(f'   => bytes per token: {per:.1f} GB')
+if tpp_raw and tpp > 1.01:
+    acc = os.environ.get('ACC') or '?'
+    print(f'   speculation ACTIVE: {tpp:.2f} tokens per forward pass '
+          f'(acceptance {acc})')
+    print(f'   => forward passes  : {toks / tpp:.1f} /s')
+elif tpp_raw:
+    print('   speculation measured, but ~1 token per pass (drafts not landing)')
+else:
+    print('   speculation NOT measurable — assuming 1 token per forward pass.')
+    print('   If speculation is in fact running, every figure below understates')
+    print('   bytes-per-pass and the verdict may be inverted.')
+per = bw * tpp / toks
+print(f'   => bytes per FORWARD PASS: {per:.1f} GB')
 w = os.environ.get('WGB') or ''
 if not w:
     raise SystemExit(0)
 weights = float(w); ratio = per / weights
 print(f'   checkpoint on disk: {weights:.1f} GB   ratio: {ratio:.2f}x')
 print('')
+# The ceiling is per-pass. What a user feels is per-token, which speculation
+# multiplies, so both are reported and neither is allowed to stand for the other.
+ceil_pass = bw / weights
 if ratio < 1.25:
     print(f'   Weights are read at roughly their quantized width. The roofline is')
-    print(f'   REAL: ~{bw/weights:.1f} tok/s single-stream. Config tuning cannot beat it —')
-    print('   going faster needs FEWER BYTES (lower-bit quant) or FEWER PASSES')
-    print('   (speculative decoding).')
+    print(f'   REAL: ~{ceil_pass:.1f} forward passes/s, i.e. ~{ceil_pass * tpp:.1f} tok/s')
+    print(f'   at the measured {tpp:.2f} tokens per pass. Config tuning cannot beat')
+    print('   it — going faster needs FEWER BYTES (lower-bit quant), or MORE TOKENS')
+    print('   PER PASS (higher speculative acceptance).')
 elif ratio < 1.6:
     print('   Somewhat more traffic than the weights occupy. Some is legitimate')
     print('   (KV reads, activations). Check the attention backend and quant')
@@ -959,7 +1009,8 @@ else:
     print('   This is NOT a bandwidth ceiling, it is a serving-path problem, and')
     print('   ordinary config work has real headroom. Check the quant kernel')
     print('   fallback, the attention backend vs kv_cache_dtype, and CUDA-graph')
-    print(f'   state. A correct path would sustain ~{bw/weights:.1f} tok/s.')
+    print(f'   state. A correct path would sustain ~{ceil_pass * tpp:.1f} tok/s')
+    print(f'   at the measured {tpp:.2f} tokens per pass.')
 "
     fi
 }
