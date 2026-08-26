@@ -160,6 +160,20 @@ bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured not ass
 
 All but the last are read-only and safe against a running Brain.
 
+To test configurations **systematically** rather than one at a time, run the
+matrix — it sweeps parameters, verifies each one actually took effect before
+trusting its numbers, and writes [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md):
+
+```bash
+bash scripts/config_matrix.sh --list   # show what would be tested
+bash scripts/config_matrix.sh          # run it (hours; resumable; Brain is down)
+```
+
+It is **ad-hoc only** — nothing calls it, and it must never be added to the boot
+sequence or watchdog. `docs/BENCHMARKS.md` is the durable answer to "what did we
+already try, which numbers can be trusted, and what should we actually use" —
+written to be read later by someone, or something, with no memory of this work.
+
 `serving_audit.sh` runs first because it can find something that makes the rest
 moot. Two failures are reported for this model on this hardware and neither has
 been checked here: vLLM silently disabling prefix caching despite the flag being
@@ -426,6 +440,9 @@ spark-sovereign/
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   ├── check_stack.sh         ← Health check
 │   ├── benchmark_brain.sh     ← TTFT + decode tok/s from the running Brain
+│   ├── config_matrix.sh       ← AD-HOC: sweep configs, validate, benchmark → docs/BENCHMARKS.md
+│   ├── render_benchmarks.sh   ← AD-HOC: regenerate BENCHMARKS.md from the JSONL ledger
+│   ├── start_brain_sglang.sh  ← AD-HOC: SGLang engine, for head-to-head comparison
 │   ├── serving_audit.sh       ← Declared config vs what vLLM actually did (read-only)
 │   ├── bandwidth_probe.sh     ← Measure the real roofline: achieved GB/s + bytes/token (read-only)
 │   ├── benchmark_concurrency.sh ← Aggregate vs per-stream throughput across N streams (read-only)

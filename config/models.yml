@@ -200,6 +200,46 @@ brain:
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
 
 # -----------------------------------------------------------------------------
+# SGLANG — second engine, for head-to-head comparison. NOT WIRED INTO BOOT.
+# -----------------------------------------------------------------------------
+# The strongest reported throughput configs for this model on GB10 run SGLang
+# with a DFlash2 drafter, not vLLM. Whether that actually holds here is an open
+# question, and a comparison that could only launch vLLM would never find out —
+# so SGLang is a first-class row in scripts/config_matrix.sh rather than an
+# assumption.
+#
+# UNCOMMENT ONLY docker_image TO ENABLE. Everything else falls back to the
+# brain: block above, so the two engines serve the same weights at the same
+# port with the same served name — which is what makes the comparison fair.
+#
+# No image is pinned because none has been verified on this box, and guessing a
+# tag costs a 5-minute load to learn nothing. Until one is set, every SGLang
+# scenario is recorded as BLOCKED in docs/BENCHMARKS.md — visible as missing
+# data rather than silently absent. You need a build for SM121 / arm64.
+#
+# Only scripts/start_brain_sglang.sh and scripts/config_matrix.sh read this.
+# boot_sequence.sh, watchdog.sh and the numbered setup scripts do not, and must
+# not: watchdog recovery calls start_brain_ad_hoc.sh, which starts vLLM, so a
+# crash during an SGLang session silently reverts the engine. Stop the watchdog
+# timer for any SGLang work (config_matrix.sh does this for you).
+#
+# sglang:
+#   docker_image:                       # REQUIRED — SM121/arm64 build, none verified yet
+#   mem_fraction_static: 0.45           # SGLang's name for gpu_memory_utilization
+#   quantization: modelopt_fp4          # NVFP4 path; confirm against the build you pin
+#   attention_backend: flashinfer       # SGLang's own backend names, not vLLM's
+#   tool_call_parser: qwen25
+#   reasoning_parser: qwen3
+#   disable_radix_cache: false          # radix cache = SGLang's prefix cache, ON by default.
+#                                       # Note the inverted sense vs vLLM's enable_prefix_caching.
+#   # --- Speculative decoding (the reason SGLang is on the list at all) ---
+#   # DFlash2 needs a drafter checkpoint downloaded separately; leave the path
+#   # blank and this falls back to whatever the build supports natively.
+#   speculative_algorithm:              # e.g. EAGLE / NEXTN — depends on the build
+#   speculative_num_steps:
+#   speculative_draft_model_path:
+
+# -----------------------------------------------------------------------------
 # SUB-AGENTS — not used
 # -----------------------------------------------------------------------------
 # Uncomment to add a fast sub-agent if concurrent throughput becomes a bottleneck.
