@@ -208,7 +208,7 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-## 12. Model Swap: Nemotron-3-Nano → Qwen3.5-35B-A3B-FP8 (Current)
+## 12. Model Swap: Nemotron-3-Nano → Qwen3.5-35B-A3B-FP8 (v3.0 — superseded)
 
 **Previous model:** nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 (~35–45 tok/s, qwen3_coder + nano_v3 custom parser)
 
@@ -246,7 +246,7 @@ bash scripts/04_voice_stt.sh  # Downloads model, installs CLI, outputs config
 
 ---
 
-## 13. Model Swap: Qwen3.5-35B-A3B → Qwen3.6-35B-A3B-FP8 (Current)
+## 13. Model Swap: Qwen3.5-35B-A3B → Qwen3.6-35B-A3B-FP8 (v4.0–v4.2.1 — superseded, rollback baseline)
 
 **Previous model:** Qwen/Qwen3.5-35B-A3B-FP8 (~49 tok/s, 131K context, standard MoE)
 
@@ -336,7 +336,7 @@ free -h                         # buff/cache growing = weights still streaming i
 
 ---
 
-## 16. Model Swap: Qwen3.6-35B-A3B → Qwen3.8-27B NVFP4 (v5.0 — Vision Accepted, Speed Sacrificed)
+## 16. Model Swap: Qwen3.6-35B-A3B → Qwen3.8-27B NVFP4 (v5.0 — Current; Vision Accepted, Speed Sacrificed)
 
 **Previous model:** Qwen/Qwen3.6-35B-A3B-FP8 — MoE (35B total / **3B active** per token), ~53 tok/s measured. This is what `v4.2.1` restores.
 
