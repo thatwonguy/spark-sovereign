@@ -401,6 +401,55 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
 
+  # OPTION 3 — Qwen3.8-Flash-Next (STAGED — weights land 2026-08-26):
+  # 125B total / ~6B active MoE, plus a separate ~51B N-gram embedding table.
+  # Architecture preview of Qwen4. Unsloth is shipping day-zero quants.
+  #
+  # Uncomment this block only after preflight returns CLEAR. It prints every
+  # value marked LOOKUP below, and resolves whichever repo name Unsloth used:
+  #   bash scripts/preflight_model.sh \
+  #       unsloth/Qwen3.8-Flash-Next-NVFP4 \
+  #       unsloth/Qwen3.8-Flash-Next-125B-A6B-NVFP4 \
+  #       unsloth/Qwen3.8-Flash-Next
+  #
+  # GO/NO-GO: 176B parameters have to be stored (125B MoE + 51B N-gram), which
+  # is ~92 GiB at NVFP4 and leaves ~18 GiB for KV cache. If the N-gram table
+  # ships BF16 it is ~95 GiB on its own and will not fit on one GB10 at any
+  # context length. Preflight's shard total answers this before you download.
+  #
+  # name: qwen38-flash-next-nvfp4
+  # # LOOKUP: exact repo — preflight step 1 reports which candidate resolved
+  # hf_repo: unsloth/Qwen3.8-Flash-Next-NVFP4
+  # local_path: /opt/models/qwen38-flash-next-nvfp4
+  # served_name: qwen38-flash-next      # CHANGED -> re-point OpenClaw, or set to the current ID to skip
+  # # LOOKUP: needs a build that registers the Qwen4 arch. Unsloth's NVFP4
+  # #         quantizes lm_head to FP8, so vLLM MAIN is required — the tag
+  # #         below predates both and is a placeholder.
+  # docker_image: vllm/vllm-openai:qwen38-arm64-cu130
+  # # LOOKUP: preflight step 4 prints the max safe value for the real weights
+  # gpu_memory_utilization: 0.90
+  # # LOOKUP: preflight step 2 prints max_position_embeddings
+  # max_model_len: 65536                # conservative start; raise once nvidia-smi confirms KV headroom
+  # kv_cache_dtype: fp8
+  # max_num_seqs: 4                     # 16 will not fit in ~18 GiB of KV cache
+  # max_num_batched_tokens: 8192
+  # # LOOKUP: confirm on the model card
+  # tool_call_parser: qwen3_coder
+  # # LOOKUP: leave blank if the card says no thinking mode (as Coder-Next does)
+  # reasoning_parser:
+  # moe_backend: flashinfer_b12x        # MoE — omitting this cost 2.5x on the last MoE brain
+  # enable_prefix_caching: true
+  # extra_env:
+  #   CUTE_DSL_ARCH: sm_121a
+  #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
+  # # LOOKUP: preflight step 2 reports whether a vision block exists; delete if text-only
+  # limit_mm_per_prompt: '{"image":10}'
+  #
+  # Swap:
+  #   bash scripts/02_download_models.sh   # answer Y to archive the 27B — no re-download to roll back
+  #   bash scripts/03_vllm_servers.sh
+  # Roll back: sudo mv /opt/model-archive/qwen38-27b-nvfp4 /opt/models/ and re-point this block.
+
 # -----------------------------------------------------------------------------
 # SGLANG — second engine, for head-to-head comparison. NOT WIRED INTO BOOT.
 # -----------------------------------------------------------------------------
