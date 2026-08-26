@@ -128,7 +128,8 @@ fi
 log "Waiting for Brain to be ready (port 8000, up to 12 min)..."
 DEADLINE=$(( $(date +%s) + 720 ))
 while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
-    if curl -sf --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; then
+    if curl -sf --max-time 5 -H "Authorization: Bearer ${BRAIN_API_KEY:-}" \
+            http://localhost:8000/v1/models >/dev/null 2>&1; then
         log "Brain ready."
         break
     fi
