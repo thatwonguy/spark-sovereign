@@ -882,26 +882,74 @@ cmd_audit() {
     m_prefix_reuse
     m_spec_drafted
     validate_runtime ""
-    echo "    prefix reuse   : ${PREFIX_REUSE:-?}x  (>=1.8 means prefix caching is live)"
-    echo "    tokens drafted : ${SPEC_DRAFTED:-?}   (0 means speculation is configured but dead)"
-    echo "    KV cache       : ${KV_TOKENS:-?} tokens vs advertised $(get_field brain max_model_len)"
+
+    # Every check reports one of three states, never two. A check that could
+    # not run is UNKNOWN, not a pass — collapsing those into "fine" is how a
+    # green result stops meaning anything (LESSONS #17). An earlier version of
+    # this function did exactly that: it printed the drafted-token count but
+    # never failed on zero, so a dead speculative decoder produced a clean bill
+    # of health.
+    local problems=0 unknowns=0
+    check() {  # check <label> <state OK|PROBLEM|UNKNOWN> <detail>
+        printf "    %-16s %-8s %s\n" "$1" "[$2]" "$3"
+        [ "$2" = "PROBLEM" ] && problems=$((problems + 1))
+        [ "$2" = "UNKNOWN" ] && unknowns=$((unknowns + 1))
+        return 0
+    }
+
+    local want_prefix; want_prefix=$(get_field brain enable_prefix_caching)
+    if [ -z "${PREFIX_REUSE}" ]; then
+        check "prefix cache" UNKNOWN "reuse could not be measured — Brain busy, or the request failed"
+    elif [ "$(python3 -c "print(1 if ${PREFIX_REUSE} < 1.8 else 0)")" = "1" ]; then
+        if [ "${want_prefix}" = "true" ]; then
+            check "prefix cache" PROBLEM "reuse ${PREFIX_REUSE}x — flag is true but the feature is INERT"
+        else
+            check "prefix cache" OK "reuse ${PREFIX_REUSE}x — off, and not requested"
+        fi
+    else
+        check "prefix cache" OK "reuse ${PREFIX_REUSE}x — working"
+    fi
+
+    local want_spec; want_spec=$(get_field brain speculative_config)
+    if [ -z "${SPEC_DRAFTED}" ]; then
+        check "speculation" UNKNOWN "no vllm:spec_decode_* counters exported by this build"
+    elif [ -n "${want_spec}" ] && [ "${SPEC_DRAFTED}" = "0" ]; then
+        check "speculation" PROBLEM "configured, but ZERO tokens drafted — it is not running"
+    elif [ -n "${want_spec}" ]; then
+        check "speculation" OK "${SPEC_DRAFTED} tokens drafted"
+    else
+        check "speculation" OK "not configured, ${SPEC_DRAFTED} drafted"
+    fi
+
+    local ctx; ctx=$(get_field brain max_model_len)
+    if [ -z "${KV_TOKENS}" ]; then
+        check "context" UNKNOWN "no 'GPU KV cache size' line found in the log"
+    elif [ "${KV_TOKENS}" -lt "${ctx}" ]; then
+        check "context" PROBLEM "KV cache holds ${KV_TOKENS} tokens < advertised ${ctx}"
+    else
+        check "context" OK "KV cache holds ${KV_TOKENS} tokens >= advertised ${ctx}"
+    fi
+
     echo ""
-    local rc=0
-    if [ -n "${PREFIX_REUSE}" ] && \
-       [ "$(python3 -c "print(1 if ${PREFIX_REUSE} < 1.8 else 0)")" = "1" ] && \
-       [ "$(get_field brain enable_prefix_caching)" = "true" ]; then
-        echo "  *** enable_prefix_caching is true but reuse is ${PREFIX_REUSE}x."
-        echo "  *** The flag is accepted and the feature is NOT taking effect."
-        echo "  *** Every agent turn reprocesses the whole conversation prefix."
-        rc=1
+    if [ "${problems}" -gt 0 ]; then
+        echo "  ${problems} PROBLEM(S) FOUND — fix these before tuning anything else."
+        [ "${want_prefix}" = "true" ] && [ -n "${PREFIX_REUSE}" ] && \
+          [ "$(python3 -c "print(1 if ${PREFIX_REUSE} < 1.8 else 0)")" = "1" ] && {
+            echo "  A dead prefix cache means every agent turn reprocesses the whole"
+            echo "  conversation. That costs more in real use than any decode tuning wins."; }
+        echo "============================================================"
+        return 1
     fi
-    if [ -n "${VALIDATION_NOTE}" ] && [ "${VALIDITY}" != "VALID" ]; then
-        echo "  *** ${VALIDATION_NOTE}"
-        rc=1
+    if [ "${unknowns}" -gt 0 ]; then
+        echo "  No problems found, but ${unknowns} check(s) could not be evaluated."
+        echo "  This is NOT a clean bill of health — an UNKNOWN is a check that did"
+        echo "  not run, not one that passed. Resolve those before trusting results."
+        echo "============================================================"
+        return 2
     fi
-    [ "${rc}" = "0" ] && echo "  Declared config matches observed behaviour."
+    echo "  All checks passed. Declared config matches observed behaviour."
     echo "============================================================"
-    return ${rc}
+    return 0
 }
 
 cmd_matrix() {
