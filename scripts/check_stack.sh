@@ -114,29 +114,57 @@ if command -v openclaw &>/dev/null; then
         echo "     Fix: openclaw gateway start"
     fi
 
-    # Telegram + session status — strip ANSI codes before parsing
-    OC_STATUS=$(openclaw status 2>/dev/null | sed 's/\x1B\[[0-9;]*[mK]//g' || echo "")
-    TG_LINE=$(echo "${OC_STATUS}" | grep "Telegram:" | head -1 || echo "")
-    if echo "${TG_LINE}" | grep -q " ok "; then
-        BOT=$(echo "${TG_LINE}" | grep -oP '\(@\S+\)' | tr -d '()')
-        printf "  ✅ Telegram: connected  %s\n" "${BOT}"
-    elif [ -n "${TG_LINE}" ]; then
-        printf "  ⚠️  Telegram: %s\n" "${TG_LINE}"
+    # Telegram — use `openclaw config get channels.telegram.enabled` as the
+    # source of truth. The `openclaw status` text format drifted between
+    # OpenClaw versions and previously produced false "not connected"
+    # warnings here even when Telegram was working perfectly.
+    TG_ENABLED=$(openclaw config get channels.telegram.enabled 2>/dev/null || echo "")
+    if [ "${TG_ENABLED}" = "true" ]; then
+        # Best-effort live probe for the bot @handle via structured JSON.
+        # Safe if the JSON shape drifts — we just omit the handle on failure.
+        TG_BOT=$(openclaw status --deep --json --timeout 5000 2>/dev/null | \
+            python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+def walk(x):
+    if isinstance(x, dict):
+        for _, v in x.items():
+            if isinstance(v, str) and v.startswith('@'):
+                yield v
+            yield from walk(v)
+    elif isinstance(x, list):
+        for i in x:
+            yield from walk(i)
+for h in walk(data):
+    print(h); break
+" 2>/dev/null || echo "")
+        if [ -n "${TG_BOT}" ]; then
+            printf "  ✅ Telegram: enabled  (%s)\n" "${TG_BOT}"
+        else
+            printf "  ✅ Telegram: enabled\n"
+        fi
+    elif [ "${TG_ENABLED}" = "false" ]; then
+        printf "  ℹ️  Telegram: disabled in config\n"
     else
-        printf "  ⚠️  Telegram: not connected — check TELEGRAM_BOT_TOKEN in .env\n"
+        printf "  ⚠️  Telegram: config unreadable (is openclaw on PATH?)\n"
     fi
 
-    SESSIONS=$(echo "${OC_STATUS}" | grep "Session store" | grep -oP '\d+ entr' || echo "")
+    # Session count — pull from the text status if available; skip on drift.
+    SESSIONS=$(openclaw status 2>/dev/null | sed 's/\x1B\[[0-9;]*[mK]//g' | grep "Session store" | grep -oP '\d+ entr' || echo "")
     [ -n "${SESSIONS}" ] && echo "  Sessions: ${SESSIONS}ies"
 
-    # Telegram group policy warning
+    # Telegram group policy — informational only. In allowlist mode with no
+    # entries, group messages are dropped but 1:1 DMs still work. Only
+    # relevant if you want the bot to respond in group chats.
     GROUP_POLICY=$(openclaw config get channels.telegram.groupPolicy 2>/dev/null || echo "")
     GROUP_ALLOW=$(openclaw config get channels.telegram.groupAllowFrom 2>/dev/null || echo "")
     if [ "${GROUP_POLICY}" = "allowlist" ] && [ -z "${GROUP_ALLOW}" ]; then
         echo ""
-        echo "  ⚠️  Telegram groupPolicy='allowlist' but groupAllowFrom is empty"
-        echo "     Group messages are silently dropped."
-        echo "     Fix: openclaw config set channels.telegram.groupPolicy open"
+        echo "  ℹ️  Telegram groups: allowlist mode with no entries (DMs work; group messages dropped)"
+        echo "     If you want the bot to answer in groups: openclaw config set channels.telegram.groupPolicy open"
     fi
 else
     # Fallback: plain HTTP probe
