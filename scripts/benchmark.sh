@@ -1326,8 +1326,21 @@ cmd_matrix() {
     while IFS='|' read -r NAME ENGINE OVERRIDES; do
         [ -z "${NAME}" ] && continue
         if [ -n "${ONLY}" ] && ! echo ",${ONLY}," | grep -q ",${NAME},"; then continue; fi
-        if [ "${REDO}" = "0" ] && grep -q "\"name\": \"${NAME}\"" "${LEDGER}" 2>/dev/null; then
-            echo ""; echo "SKIP ${NAME} — already measured (--redo to repeat)"; continue
+        # Skip only rows that actually HOLD a measurement. BLOCKED and FAILED
+        # record the absence of one — a missing image, an engine that would not
+        # start — and those are exactly the rows you return to after fixing the
+        # blocker. Treating them as "already measured" means pinning the SGLang
+        # image and re-running silently skips the row you just enabled, and
+        # reports success while measuring nothing.
+        PRIOR=$(grep "\"name\": \"${NAME}\"" "${LEDGER}" 2>/dev/null | tail -1)
+        if [ "${REDO}" = "0" ] && [ -n "${PRIOR}" ]; then
+            if echo "${PRIOR}" | grep -qE '"validity": "(BLOCKED|FAILED)"'; then
+                echo ""
+                echo "RETRY ${NAME} — previously $(echo "${PRIOR}" \
+                    | grep -oE '"validity": "[A-Z]+"' | grep -oE '[A-Z]+'), not a measurement"
+            else
+                echo ""; echo "SKIP ${NAME} — already measured (--redo to repeat)"; continue
+            fi
         fi
 
         echo ""
