@@ -367,16 +367,25 @@ PYEOF
 # as a delta across the two requests below. It answers "is the cache running?"
 #
 # PREFIX_REUSE is the TTFT speedup from re-sending the identical prefix. It
-# answers a different question — "does the cache make prefill faster?" — and on
-# a hybrid model the answer can be NO while the cache is working perfectly.
-# This model is ~48 GatedDeltaNet linear-attention layers plus ~16 full
-# attention layers. Only the full-attention layers have cacheable KV; the
-# recurrent layers must re-scan the prefix on every request no matter what is
-# cached. So a full cache hit removes only a minority of the prefill work and
-# TTFT barely moves. Measured here: 55.9% hit rate at 0.90x TTFT reuse.
+# answers a different question — "does the cache make prefill faster?" — and it
+# is a NOISY answer, which is the whole reason it must not gate a verdict.
 #
-# Judge the cache by the hit rate. Report the TTFT ratio as what it is — an
-# effect size, not an on/off switch.
+# Two audit runs against this same config, minutes apart, measured 0.90x and
+# then 4.51x. The hit-rate counter over the same pair of runs stayed in a
+# sensible band (delta 37.4%). One run of the TTFT ratio is not evidence of
+# anything: it moves with server state, concurrent load, and how much of the
+# prefix survived eviction.
+#
+# An earlier version of this comment explained the 0.90x as structural — only
+# the ~16 full-attention layers of this hybrid have cacheable KV, so a hit was
+# supposed to remove only a minority of prefill work. The 4.51x reading refutes
+# that: cached prefill IS substantially faster here. The architecture argument
+# was plausible and wrong, and it is recorded rather than deleted because it
+# was reached the same way the two false PROBLEMs were — reasoning from one
+# measurement instead of measuring twice.
+#
+# Judge the cache by the hit rate. Report the TTFT ratio as what it is — a
+# noisy effect size, not an on/off switch.
 m_prefix_reuse() {
     local q0 h0 q1 h1
     q0=$(metric_sum "vllm:prefix_cache_queries_total")
@@ -742,13 +751,10 @@ w("parallel; it rises with batching and is not comparable to Decode. ")
 w("")
 w("*Prefix hit* is the share of queried tokens served from cache when an identical long ")
 w("prefix is re-sent — **this is the column that says whether prefix caching is running**. ")
-w("*Prefix TTFT* is the wall-clock speedup that hit rate actually bought. The two come ")
-w("apart on this model and that is not a fault: it is a hybrid of ~48 GatedDeltaNet ")
-w("linear-attention layers and ~16 full-attention layers, and only the full-attention ")
-w("layers have cacheable KV. The recurrent layers re-scan the prefix on every request no ")
-w("matter what is cached, so a working cache can show a high hit rate and almost no TTFT ")
-w("win. Read the hit rate as the on/off switch and the TTFT ratio as the effect size — ")
-w("never the reverse.")
+w("*Prefix TTFT* is the wall-clock speedup that bought, and it is noisy: two runs against ")
+w("the same config measured 0.90x and 4.51x while the hit rate stayed stable. Read the hit ")
+w("rate as the on/off switch and the TTFT ratio as an effect size worth repeating before ")
+w("citing — never the reverse.")
 w("")
 w("*Drafted* is speculative tokens proposed during one generation — 0 while ")
 w("`speculative_config` is set means speculation is dead. *Accepted* is the share of those ")
@@ -1030,8 +1036,15 @@ cmd_audit() {
         "gpu_memory_utilization" "$(get_field brain gpu_memory_utilization)"
     echo ""
     echo ">>> Startup decisions (redacted)"
-    brain_logs | grep -iE "attention backend|using .*attn|flashinfer|kv cache dtype|prefix cach|speculative" \
-        | head -12 | redact | sed 's/^/    /'
+    # Patterns and limits both matter here. The CUDA-graph downgrade line
+    # (FULL_AND_PIECEWISE -> PIECEWISE under spec-decode) appeared in one audit
+    # run and vanished from the next, not because the server stopped doing it
+    # but because head -12 cut it off once an extra warning appeared above it.
+    # A diagnostic whose findings depend on how many other lines matched is not
+    # a diagnostic. Lines are truncated for display so a single 4KB config dump
+    # cannot push the decisions out of view; redaction runs before truncation.
+    brain_logs | grep -iE "attention backend|using .*attn|flashinfer|kv cache dtype|prefix cach|speculative|cudagraph|artifactory|fall(ing)? ?back|jit" \
+        | head -24 | redact | cut -c1-300 | sed 's/^/    /'
     echo ""
     echo ">>> Measured behaviour"
     m_prefix_reuse
