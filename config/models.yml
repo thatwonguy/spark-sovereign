@@ -24,14 +24,8 @@ brain:
   hf_repo: unsloth/Qwen3.8-27B-NVFP4
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
-  # Interface vLLM listens on. 127.0.0.1 = this box only.
-  # The brain has NO authentication — the API key is unused, so anything that
-  # can reach the port can use it. Every consumer in this repo (OpenClaw's
-  # gateway, check_stack, boot_sequence, watchdog) talks to localhost and runs
-  # on the Spark, so loopback is sufficient.
-  # Set 0.0.0.0 ONLY if you deliberately want other machines on the LAN or
-  # tailnet to query the brain directly — that exposes it to every device on
-  # the router, including guests and IoT, with no credentials.
+  # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
+  # this box only
   bind_host: 127.0.0.1
   served_name: qwen38-27b             # arbitrary label independent of model weights; if you change it, re-point OpenClaw
   docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 build — GB10 is an ARM host

@@ -77,6 +77,9 @@ BRAIN_PORT=$(get_field brain port)
 # tightens rather than silently staying open to the whole LAN.
 BRAIN_HOST=$(get_field brain bind_host)
 BRAIN_HOST="${BRAIN_HOST:-127.0.0.1}"
+# Bearer token for /v1. Comes from .env (gitignored) — never models.yml, which
+# is public. Blank = no auth, preserving the previous behaviour.
+BRAIN_API_KEY="${BRAIN_API_KEY:-}"
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
 BRAIN_KV=$(get_field brain kv_cache_dtype)
@@ -120,6 +123,8 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
     [ "${BRAIN_PREFIX_CACHE}" = "true" ] && EXTRA_ARGS+=" --enable-prefix-caching"
+    # Key must be space-free: this string is word-split by the entrypoint.
+    [ -n "${BRAIN_API_KEY}" ]      && EXTRA_ARGS+=" --api-key ${BRAIN_API_KEY}"
 
     # shellcheck disable=SC2086
     docker run -d --name brain \
@@ -147,6 +152,7 @@ else
             --model "${BRAIN_MODEL_PATH}" \
             --served-model-name "${BRAIN_NAME}" \
             --host "${BRAIN_HOST}" --port "${BRAIN_PORT}" \
+            ${BRAIN_API_KEY:+--api-key "${BRAIN_API_KEY}"} \
             --gpu-memory-utilization "${BRAIN_UTIL}" \
             --max-model-len "${BRAIN_CTX}" \
             --kv-cache-dtype "${BRAIN_KV}" \
@@ -170,7 +176,10 @@ echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
 echo ""
 echo "Waiting for Brain to be ready..."
-until curl -sf "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
+# Header is sent unconditionally: vLLM ignores it when --api-key is unset, and
+# /v1 returns 401 without it once a key is configured.
+until curl -sf -H "Authorization: Bearer ${BRAIN_API_KEY}" \
+        "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; do
     if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
         echo "ERROR: brain container exited. Check: docker logs brain"
         exit 1
@@ -193,7 +202,11 @@ echo ""
 echo "  Provider type   : OpenAI-compatible endpoint"
 echo "  Base URL        : http://localhost:${BRAIN_PORT}/v1"
 echo "  Model ID        : ${BRAIN_NAME}"
-echo "  API key         : unused  (any string works)"
+if [ -n "${BRAIN_API_KEY}" ]; then
+echo "  API key         : the BRAIN_API_KEY value from .env  (REQUIRED — /v1 returns 401 without it)"
+else
+echo "  API key         : unused  (any string works — set BRAIN_API_KEY in .env to require one)"
+fi
 echo "  Context window  : ${BRAIN_CTX}"
 echo ""
 echo " Everything else (agent name, personality, voice, memory,"

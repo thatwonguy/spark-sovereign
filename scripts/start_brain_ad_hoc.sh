@@ -64,6 +64,8 @@ BRAIN_PORT=$(get_field brain port)
 # the same server.
 BRAIN_HOST=$(get_field brain bind_host)
 BRAIN_HOST="${BRAIN_HOST:-127.0.0.1}"
+# Bearer token for /v1, from .env (gitignored). Must match 03_vllm_servers.sh.
+BRAIN_API_KEY="${BRAIN_API_KEY:-}"
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
 BRAIN_KV=$(get_field brain kv_cache_dtype)
@@ -99,6 +101,7 @@ docker run -d --name brain \
         --model "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host "${BRAIN_HOST}" --port "${BRAIN_PORT}" \
+        ${BRAIN_API_KEY:+--api-key "${BRAIN_API_KEY}"} \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
