@@ -484,7 +484,7 @@ Changing one number from 5 to 3 is **+29.5%**, from 15.18 to 19.66 tok/s. Agains
 
 That is not a regression and nothing was misconfigured — `num_spec_tokens=3` was confirmed in the engine log. At 3 draft tokens, tokens per forward pass is `1 + 3 × acceptance`, so 64.4% → 46.5% predicts 19.66 × (2.40/2.93) ≈ **16.1 tok/s**, and 17.1 was observed. The spread is fully accounted for by acceptance alone.
 
-**Expect 17–20 tok/s in practice**, against a 15.2 baseline and a 12.0 non-speculative floor. Quoting 19.66 as the number this box does would repeat, in miniature, the exact error this lesson is about: taking one measurement made under favourable conditions and treating it as a property of the hardware.
+**Expect ~17 tok/s day to day.** Four runs measured 16.74, 17.06, 17.13 and 19.66 — and the 19.66 was the sweep itself, on an idle box with the watchdog stopped. Against a 15.2 baseline and a 12.0 non-speculative floor. Quoting 19.66 as the number this box does would repeat, in miniature, the exact error this lesson is about: taking one measurement made under favourable conditions and treating it as a property of the hardware.
 
 So the 15–17 tok/s was a **symptom**, and the cause was neither a broken serving path nor a hardware wall. It was a draft length nobody had ever compared against an alternative, sitting one line below a comment that said so.
 
@@ -733,7 +733,7 @@ Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Speed traded for vision + higher per-token reasoning |
 | **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Superseded by v5.2. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
-| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **17–20** | **Yes** | **Current — same model and weights. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; 17–20 in practice, acceptance-dependent. See #18** |
+| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model and weights. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18** |
 
 ---
 
