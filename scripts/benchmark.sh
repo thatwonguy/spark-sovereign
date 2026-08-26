@@ -571,14 +571,44 @@ validate_runtime() {
                 fi
                 ;;
             attention_backend)
-                [ -n "${want}" ] && ! echo "${logs}" | grep -qi "${want%%_*}" && {
-                    VALIDATION_NOTE+="attention_backend=${want} not confirmed in log; "
-                    problems=$((problems + 1)); }
+                # Match the SELECTION line, not the mention. vLLM logs
+                #   Using FLASHINFER attention backend out of potential
+                #   backends: ['FLASHINFER', 'TRITON_ATTN']
+                # so a substring search for "TRITON" succeeds even when
+                # FLASHINFER was chosen — the candidate list contains every
+                # backend we might ask for. The old check was `grep -qi
+                # ${want%%_*}`, which would have stamped VALID on attn-triton
+                # while the server ran FlashInfer, and the whole point of the
+                # attention-backend rows is to tell those two apart.
+                if [ -n "${want}" ]; then
+                    local sel
+                    sel=$(echo "${logs}" | grep -ioE "Using [A-Z0-9_]+ attention backend" \
+                          | head -1 | awk '{print $2}')
+                    if [ -z "${sel}" ]; then
+                        VALIDATION_NOTE+="attention_backend=${want} unverifiable — no selection line in log; "
+                        problems=$((problems + 1))
+                    elif [ "${sel^^}" != "${want^^}" ]; then
+                        VALIDATION_NOTE+="attention_backend requested=${want} observed=${sel}; "
+                        problems=$((problems + 1))
+                    fi
+                fi
                 ;;
             kv_cache_dtype)
-                [ "${want}" = "fp8" ] && ! echo "${logs}" | grep -qiE "kv.cache.dtype.*fp8" && {
-                    VALIDATION_NOTE+="kv_cache_dtype=fp8 not confirmed in log; "
-                    problems=$((problems + 1)); }
+                # Verified in BOTH directions. The old check only fired when
+                # fp8 was requested, so the kv-bf16 row (want=auto) was checked
+                # by doing nothing and then reported as "confirmed in effect".
+                if echo "${logs}" | grep -qiE "kv_cache_dtype=fp8"; then
+                    [ "${want}" != "fp8" ] && {
+                        VALIDATION_NOTE+="kv_cache_dtype requested=${want} observed=fp8; "
+                        problems=$((problems + 1)); }
+                elif echo "${logs}" | grep -qiE "kv_cache_dtype=[a-z0-9]+"; then
+                    [ "${want}" = "fp8" ] && {
+                        VALIDATION_NOTE+="kv_cache_dtype=fp8 requested but log shows otherwise; "
+                        problems=$((problems + 1)); }
+                else
+                    VALIDATION_NOTE+="kv_cache_dtype=${want} unverifiable — not stated in log; "
+                    problems=$((problems + 1))
+                fi
                 ;;
             speculative_config)
                 m_spec_drafted
@@ -1190,9 +1220,15 @@ cmd_matrix() {
         echo "   ${OVERRIDES:-<models.yml as committed>}"
         echo "============================================================"
 
+        # Every measured variable resets here. A row whose launch FAILS runs no
+        # measurements, and anything left set would be written to the ledger
+        # under this row's name — attributing the previous config's numbers to
+        # this one. That is the worst possible ledger entry: plausible, wrong,
+        # and indistinguishable from a real result later.
         VALIDITY=""; VALIDATION_NOTE=""; LAUNCH_NOTE=""
         DECODE_TOKS=""; TTFT_MS=""; AGG_MAX=""; PREFIX_REUSE=""
         SPEC_DRAFTED=""; KV_TOKENS=""; BANDWIDTH=""
+        PREFIX_HIT_RATE=""; SPEC_ACCEPT_RATE=""; TOKENS_PER_PASS=""
 
         launch_engine "${ENGINE}" "${OVERRIDES}"
         case $? in
