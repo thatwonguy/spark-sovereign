@@ -27,8 +27,8 @@
 #   --only a,b   restrict the matrix to named configurations
 #   --redo       re-measure configurations already in the ledger
 #
-# All measurement primitives live in scripts/lib/bench.sh. This file is
-# orchestration only.
+# All measurement primitives and the report renderer live in
+# scripts/lib/bench.sh. This file is orchestration only.
 # =============================================================================
 
 set -uo pipefail
@@ -115,7 +115,7 @@ for line in open(os.environ['LEDGER'], encoding='utf-8'):
     echo ""
 }
 
-cmd_render() { bash "${SCRIPT_DIR}/render_report.sh"; }
+cmd_render() { render_report; }
 
 cmd_quick() {
     require_brain || return 2
