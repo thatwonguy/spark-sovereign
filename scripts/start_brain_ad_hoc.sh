@@ -64,7 +64,10 @@ BRAIN_PORT=$(get_field brain port)
 # the same server.
 BRAIN_HOST=$(get_field brain bind_host)
 BRAIN_HOST="${BRAIN_HOST:-127.0.0.1}"
-# Bearer token for /v1, from .env (gitignored). Must match 03_vllm_servers.sh.
+# Bearer token for /v1, from .env (gitignored). READ ONLY — this script runs
+# unattended from boot_sequence.sh and watchdog.sh, so it must never mint a new
+# key. 03_vllm_servers.sh owns generation; a recovery restart has to reuse the
+# same key or OpenClaw would start failing after every self-heal.
 BRAIN_API_KEY="${BRAIN_API_KEY:-}"
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
@@ -95,13 +98,14 @@ echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 docker run -d --name brain \
     --gpus all --ipc host --network host \
     --restart no \
+    ${BRAIN_API_KEY:+-e VLLM_API_KEY="${BRAIN_API_KEY}"} \
     ${BRAIN_EXTRA_ENV} \
     -v "${MODELS_DIR}:/models" \
+    -v vllm-cache:/root/.cache/vllm \
     "${BRAIN_IMAGE}" \
         --model "/models/$(basename "${BRAIN_PATH}")" \
         --served-model-name "${BRAIN_NAME}" \
         --host "${BRAIN_HOST}" --port "${BRAIN_PORT}" \
-        ${BRAIN_API_KEY:+--api-key "${BRAIN_API_KEY}"} \
         --gpu-memory-utilization "${BRAIN_UTIL}" \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
