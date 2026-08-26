@@ -461,9 +461,13 @@ Five of these six were invisible because something reported success: a health ch
 
 ---
 
-## 18. Is 15–17 tok/s a Ceiling or a Symptom? (Open Question — Test Plan)
+## 18. Is 15–17 tok/s a Ceiling or a Symptom? (Measured — Symptom, Partly)
 
-**Status: hypothesis and instrumentation. Nothing here has been measured on the Spark yet.** This lesson exists to be falsified, and the scripts it describes are the falsification.
+**Status: measured on the Spark, 2026-08-26. The hypothesis below was written to be falsified, and it was — on both of its inputs.** The original text is kept intact beneath the results, because what it got wrong is more instructive than what it got right.
+
+**The short answer.** Achieved bandwidth is **245 GB/s**, not the assumed 273. Bytes per token was never the right quantity — the model reads **38.4 GB per forward pass** against a **23.4 GB** checkpoint, a ratio of **1.64x**. There is headroom, but less than the raw ratio suggests, and the largest single lead is not in the config at all: **FlashInfer cannot reach NVIDIA's kernel artifactory on this air-gapped box and silently falls back.**
+
+Both of the "two configuration bugs that outrank all of it" turned out to be absent here. Prefix caching works. The 262144 context is reachable with 2.8x room to spare.
 
 ### The trigger
 
@@ -504,6 +508,71 @@ ratio       = bytes-per-token / checkpoint-size-on-disk
 
 One measurement, two very different next moves. That is why it comes before any tuning.
 
+---
+
+### RESULTS — measured 2026-08-26
+
+Read-only, against the production config, Brain up. Two audit runs plus one bandwidth and one quick benchmark.
+
+| Quantity | Measured | Was assumed |
+|---|---|---|
+| Achieved memory bandwidth | **245.0 GB/s** | 273 GB/s (spec sheet) |
+| Decode, single stream (3 × 256 tok) | **16.22 tok/s** | ~17 |
+| TTFT | **288 ms** | — |
+| Tokens per forward pass (MTP) | **2.89** | implicitly 1 |
+| Bytes per forward pass | **38.4 GB** | 13.5 GB "per token" |
+| Checkpoint on disk | **23.4 GB** | ~13.5 GB |
+| Ratio, bytes-per-pass ÷ checkpoint | **1.64x** | 1.0 assumed |
+| Prefix cache hit rate (delta, identical prefix) | **37.4%** | feared 0 |
+| Speculative acceptance | **0.378 – 0.511** | never measured |
+| KV cache capacity | **745,115 tokens** | feared < 262,144 |
+
+**Every input to the original roofline was wrong.** Bandwidth was over-assumed by 11%. The checkpoint is 23.4 GB, not the ~13.9 GB that 27.78B params at 4 bits implies — NVFP4 quantises the linear layers, not the embeddings, norms, MTP heads or vision tower. And "bytes per token" was the wrong unit entirely, because speculation emits 2.89 tokens per weight read.
+
+The arithmetic that produced "~20 tok/s ceiling, we're at 75–85%, nothing to find" was wrong in all three terms. It happened to land near the observed number, which is the most dangerous way for a wrong model to be wrong.
+
+**What is genuinely confirmed working.** The NVFP4 path is *not* falling back — the log names `FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM`, the specific kernel we want, which retires the Marlin-fallback worry that motivated the whole "denominator could be 2–4× off" branch. FLASHINFER is auto-selected out of `['FLASHINFER', 'TRITON_ATTN']` without being pinned, and it coexists with `kv_cache_dtype: fp8` rather than trading against it as the field intel predicted. MTP speculation runs at 5 drafts per step with 38–51% acceptance.
+
+### The 1.64x is real but it is not all waste
+
+38.4 GB read per pass against a 23.4 GB checkpoint looks like 15 GB of unexplained traffic, and `benchmark.sh` duly printed its loudest verdict. That banner overstates the case, for two reasons that push in opposite directions and neither of which is currently measured:
+
+- **Speculation's draft passes are not free and are not in the checkpoint figure.** Each step runs 5 MTP draft passes on top of the verification pass. Every one reads the MTP layer *and* the LM head, and at this vocabulary the LM head is over a gigabyte. Several GB per step of the excess is the *expected cost of the technique*, not a defect.
+- **The vision tower is in the 23.4 GB and is never read during text decode.** That shrinks the true denominator and pushes the ratio the other way.
+
+So the honest reading is "somewhat more traffic than the weights occupy, with a known unmeasured component" — the script's 1.25–1.6 middle band — rather than the smoking gun its >1.6 branch announces. The threshold was set before speculation was known to be active and does not account for draft passes. **Do not cite the 1.64x as evidence of a bug until `spec-off` has run.**
+
+### The decisive next measurement, and why it is `spec-off`
+
+Turning speculation off collapses tokens-per-pass to exactly 1 and removes the draft passes from the byte count. Then `bytes_per_pass = 245 / decode_rate` measures the verification path alone:
+
+- **ratio ≈ 1.0** — the path is clean, and the entire 1.64x was speculation's draft overhead. The ceiling is real and the way up is higher acceptance, not config work.
+- **ratio still ≫ 1.5** — there is genuine excess traffic in the base forward pass, and it is worth chasing.
+
+**Name the confound before running it.** `spec-off` changes two things at once, because the CUDA-graph mode is downstream of it:
+
+```
+CUDAGraphMode.FULL_AND_PIECEWISE is not supported with spec-decode for attention
+backend FlashInferBackend; setting cudagraph_mode=PIECEWISE
+```
+
+With speculation on, FlashInfer forces graphs down from FULL to PIECEWISE. Turning speculation off restores FULL. So a faster `spec-off` result cannot distinguish "speculation was costing more than it returned" from "PIECEWISE graphs are expensive on this box". `attn-triton` separates them: if TRITON_ATTN keeps full graphs under spec-decode, it isolates the graph mode from the speculation.
+
+### The lead that is not in the config at all
+
+```
+WARNING [flashinfer.py:441] Failed to connect to NVIDIA artifactory:
+Failed to resolve 'edge.urm.nvidia.com' (Temporary failure in name resolution)
+```
+
+FlashInfer tries to download prebuilt kernels at startup and cannot, because this box has no route to the internet — which is the entire point of it. It then proceeds on JIT-compiled or fallback kernels, logging a warning and no error.
+
+This is the same shape as the failure `config/models.yml` already records for the previous MoE brain: *"REQUIRED for that MoE on Spark, or it falls back to Marlin and runs 2.5x slower."* A silent kernel downgrade, visible only as a line in a startup log nobody greps for.
+
+It is also the one finding here that **local-first makes structural rather than incidental**: every future FlashInfer upgrade will hit it, on this box, forever. The fix is to pre-stage the kernel cache into the image or a mounted volume, not to give the Spark internet access. Unquantified so far — it may cost nothing, or it may be the largest single factor in the 1.64x. Nothing above assumes either.
+
+---
+
 ### A note on script names in earlier lessons
 
 Lessons #16 and #17 reference `benchmark_brain.sh`, `serving_audit.sh`,
@@ -525,6 +594,8 @@ Later field reports on this same model, gathered after the above was written, sh
 **But calibrate the expectation honestly.** That 7.4× headline is partly the repair of a broken baseline, not pure technique. 7.88 tok/s is *below* the non-speculative roofline for an FP8 27B on this bus (~10 tok/s), which means their starting point was already malfunctioning — plausibly the exact prefix-caching bug below. Ours at 15–17 against a ~20 tok/s NVFP4 roofline is a *healthy* baseline. **Expect roughly 2–3× from working speculation here, not 7×.** Anyone quoting 58 tok/s as our target is comparing against someone else's broken starting point.
 
 **Two configuration bugs, both of which apply to us, and both of which outrank speculative decoding:**
+
+> **Both REFUTED on this box, 2026-08-26.** Neither reported bug reproduces here. Prefix caching serves 37.4% of a repeated identical prefix; the KV cache holds 745,115 tokens against an advertised 262,144. Field intel from other people's boxes is a reason to *measure*, not a reason to believe. Left in place below as written, because the reasoning that made them worth testing was sound even though both answers came back no.
 
 1. **Prefix caching silently disabled.** vLLM is reported to turn prefix caching off for this model's card parameters *even though the flag is accepted*. We pass `--enable-prefix-caching` and have never confirmed it took effect. If it is inert, every OpenClaw turn reprocesses the entire conversation prefix. In agentic coding — long shared context, many short turns — that costs far more than draft-token tuning can ever win back, and it fails completely silently.
 
@@ -577,11 +648,25 @@ window invalidates the headline spec in README. Results accumulate in
 
 The first two are read-only and safe against production. The sweep restarts Brain repeatedly.
 
-### Key lesson (provisional — this one is about method, not hardware)
+### Key lesson — confirmed, and it is about method, not hardware
 
-Two divisions produced a confident ceiling, and the ceiling was built on two unmeasured inputs and an incomplete list of techniques. The arithmetic was fine; treating it as a **result** rather than a **hypothesis** was not. A roofline you have not measured is a guess with units attached — and the specific failure it cannot see is the one where your denominator is wrong because the serving path is broken.
+Two divisions produced a confident ceiling, and the ceiling was built on two unmeasured inputs and an incomplete list of techniques. The arithmetic was fine; treating it as a **result** rather than a **hypothesis** was not. A roofline you have not measured is a guess with units attached.
 
-Test the claim. Then write the lesson.
+Measurement settled it: **every input was wrong** — bandwidth by 11%, checkpoint size by 70%, and the unit itself, which should have been bytes per *forward pass* and not per token. The estimate still landed near the observed 16 tok/s. A wrong model that reproduces the right number is the hardest kind to catch, and the only thing that caught it was refusing to skip the measurement.
+
+**The sharper lesson is the second-order one.** The tool built to test the hypothesis was itself wrong three times, and every failure pointed the same way — toward a confident verdict rather than an admission of ignorance:
+
+| What broke | What it reported | Truth |
+|---|---|---|
+| `print s+0` on an absent/timestamp-polluted counter | speculation DEAD | 350 drafted, 53% accepted |
+| 1.8x TTFT threshold borrowed from dense transformers | prefix cache INERT | 37.4% hit rate |
+| `bytes = bandwidth / tokens`, ignoring speculation | "roofline is REAL" | 1.64x, headroom exists |
+
+The third is the one to remember. It would have **confirmed the hypothesis the script existed to test**, by construction, and printed a paragraph explaining that config tuning could not help. Instrumentation is not neutral: it encodes the assumptions of whoever wrote it, and it fails toward them.
+
+And one more, cheaper to state and easier to repeat: a single reading of a noisy proxy is not a measurement. The prefix-cache TTFT ratio came back 0.90x and then 4.51x on the same config minutes apart. The first reading was explained with a confident, plausible, wrong story about hybrid attention layers. Two readings would have cost sixty seconds.
+
+Test the claim. Then test the instrument. Then write the lesson.
 
 Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly), Lesson #17 (tooling that cannot report a problem manufactures false certainty — including tooling made of arithmetic).
 
