@@ -126,10 +126,38 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 - NVFP4 4-bit weights + FP8 KV cache
 - `gpu_memory_utilization: 0.45` (~55 GB reserved by vLLM — ~22 GB weights + ~33 GB KV cache, ~55 GB free for OS / Docker / other workloads)
 - 262K native context
-- MTP speculative decoding (ships in checkpoint, no draft model needed)
+- MTP speculative decoding configured (ships in checkpoint, no draft model needed) — **but unverified, see below**
 - Prefix caching enabled — fast repeated prompts
 
 Benchmark it yourself: `bash scripts/benchmark_brain.sh` (single-stream TTFT + decode tok/s from the running Brain).
+
+**On the 15–17 tok/s number, and on faster configs quoted elsewhere.**
+Open question, currently being tested — see `docs/LESSONS.md` #18.
+
+Decode here is bandwidth-bound, so *aggregate* throughput rises with concurrency
+for free: multi-stream figures like ~148 tok/s at 8 streams are ordinary batching
+and say nothing about single-stream speed (`benchmark_concurrency.sh` checks
+whether this box reproduces them). What needs explaining is single-stream.
+
+The tempting answer — 13.5 GB/token over a 273 GB/s bus ⇒ ~20 tok/s ceiling ⇒
+15–17 is near-optimal — rests on two numbers **neither of which has been measured
+on this box**. 273 GB/s is a spec sheet; real LPDDR5x runs 70–85% of that. And
+13.5 GB/token assumes the NVFP4 kernels genuinely read 4 bits/param — if the
+quant path falls back or dequantizes, real bytes/token could be several times
+higher, in which case this is not a ceiling but a broken serving path with real
+headroom. This repo has already been bitten by exactly that failure mode once
+(`moe_backend` unset ⇒ silent Marlin fallback ⇒ 2.5× slower).
+
+So measure the ceiling before believing it:
+
+```bash
+bash scripts/bandwidth_probe.sh          # is the roofline real, or is the path broken?
+bash scripts/specdecode_probe.sh         # is the speculation we ship actually live?
+bash scripts/benchmark_concurrency.sh    # does batching reproduce the multi-stream claims?
+bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured not assumed
+```
+
+The first three are read-only and safe against a running Brain.
 
 ---
 
@@ -387,7 +415,12 @@ spark-sovereign/
 │   ├── boot_sequence.sh       ← Auto-start on boot (oneshot, runs once at boot)
 │   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
-│   └── check_stack.sh         ← Health check
+│   ├── check_stack.sh         ← Health check
+│   ├── benchmark_brain.sh     ← TTFT + decode tok/s from the running Brain
+│   ├── bandwidth_probe.sh     ← Measure the real roofline: achieved GB/s + bytes/token (read-only)
+│   ├── benchmark_concurrency.sh ← Aggregate vs per-stream throughput across N streams (read-only)
+│   ├── specdecode_probe.sh    ← Is speculative decoding actually engaging? (read-only)
+│   └── specdecode_sweep.sh    ← Compare mtp / ngram / off (restarts Brain repeatedly)
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
