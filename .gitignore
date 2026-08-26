@@ -216,8 +216,3 @@ __marimo__/
 docs/memory/
 memory/
 
-# Benchmark / sweep artifacts — may contain container-log excerpts.
-# specdecode_sweep.sh writes outside the repo by default; this covers
-# an overridden RESULTS path and any file left over from earlier runs.
-specdecode_sweep_results.txt
-spark-sovereign-sweep-*.txt
