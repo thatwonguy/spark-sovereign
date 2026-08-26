@@ -360,7 +360,27 @@ PYEOF
 # the feature is inert — the documented failure for this model — so send a long
 # prefix twice with different tails and compare TTFT. Reuse shows as a sharp
 # drop; an inert cache shows ~1.0x.
+# Prefix caching, measured two ways, because one of them is a proxy and the
+# proxy is misleading on THIS model.
+#
+# PREFIX_HIT_RATE is the mechanism: cached tokens served / tokens queried,
+# as a delta across the two requests below. It answers "is the cache running?"
+#
+# PREFIX_REUSE is the TTFT speedup from re-sending the identical prefix. It
+# answers a different question — "does the cache make prefill faster?" — and on
+# a hybrid model the answer can be NO while the cache is working perfectly.
+# This model is ~48 GatedDeltaNet linear-attention layers plus ~16 full
+# attention layers. Only the full-attention layers have cacheable KV; the
+# recurrent layers must re-scan the prefix on every request no matter what is
+# cached. So a full cache hit removes only a minority of the prefill work and
+# TTFT barely moves. Measured here: 55.9% hit rate at 0.90x TTFT reuse.
+#
+# Judge the cache by the hit rate. Report the TTFT ratio as what it is — an
+# effect size, not an on/off switch.
 m_prefix_reuse() {
+    local q0 h0 q1 h1
+    q0=$(metric_sum "vllm:prefix_cache_queries_total")
+    h0=$(metric_sum "vllm:prefix_cache_hits_total")
     PREFIX_REUSE=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
         python3 - <<'PYEOF' 2>/dev/null || echo ""
 import json, os, time, urllib.request
@@ -389,22 +409,76 @@ cold = ask("Summarise function_1."); warm = ask("Summarise function_2.")
 print(f"{cold/warm:.2f}" if warm > 0 else "")
 PYEOF
     )
+    q1=$(metric_sum "vllm:prefix_cache_queries_total")
+    h1=$(metric_sum "vllm:prefix_cache_hits_total")
+    PREFIX_HIT_RATE=""
+    if [ -n "${q0}" ] && [ -n "${q1}" ] && [ -n "${h0}" ] && [ -n "${h1}" ] \
+       && [ "$((q1 - q0))" -gt 0 ]; then
+        PREFIX_HIT_RATE=$(python3 -c \
+            "print(f'{($h1 - $h0) / ($q1 - $q0):.3f}')" 2>/dev/null || echo "")
+    fi
 }
 
-# Speculative draft tokens emitted across one known generation. Counters are
-# cumulative and start at zero, so a single read cannot distinguish "broken"
-# from "nothing generated yet" — only a delta across known load is conclusive.
+# Sum one Prometheus counter by EXACT name, at full precision.
+#
+# Three details here are load-bearing. Each one silently produced a wrong
+# answer in the previous version of this code, and together they turned a live
+# speculative decoder that had drafted 350 tokens into the audit verdict
+# "configured, but ZERO tokens drafted — it is not running":
+#
+#   1. EXACT name match. vLLM exports `<name>_total` (the counter) alongside
+#      `<name>_created` (a gauge holding the Unix timestamp at which the
+#      counter was created). A prefix match catches both, and adding a ~1.79e9
+#      timestamp to a counter of a few hundred drowns it.
+#   2. printf, not print. awk formats non-integral values with OFMT, default
+#      "%.6g" — six significant digits. Once the timestamp is in the sum, the
+#      before and after reads both round to the identical "1.78777e+09" and the
+#      delta is exactly zero. Any change under ~1000 is erased by the format.
+#   3. Empty output when the counter is ABSENT, so "this build exports no such
+#      metric" stays distinguishable from a genuine zero. `END{print s+0}`
+#      prints "0" for no matching lines at all, converting an unanswerable
+#      question into a confident and wrong verdict.
+#
+# Auth is sent even though /metrics currently answers without it: the endpoint
+# is unauthenticated today, not guaranteed to be tomorrow, and a probe that
+# starts failing closed would fail into that same "0" — which is precisely the
+# reading this function exists to make impossible.
+metric_sum() {
+    curl -sf --max-time 10 "${AUTH[@]}" "${BASE}/metrics" 2>/dev/null \
+        | awk -v name="$1" '
+            index($1, name "{") == 1 || $1 == name { s += $NF; n += 1 }
+            END { if (n) printf "%.0f\n", s }'
+}
+
+# Speculative decoding, measured as a delta across one known generation.
+# Counters are cumulative, so a single read cannot distinguish "broken" from
+# "nothing generated yet" — only a delta across known load is conclusive.
+#
+# Drafted alone does not decide whether speculation is WORTH anything: a draft
+# that is always rejected still costs its verification pass. The acceptance
+# rate is the number that decides, so it is measured here too.
 m_spec_drafted() {
-    local before after
-    before=$(curl -sf --max-time 10 "${BASE}/metrics" 2>/dev/null \
-             | grep -E "^vllm:spec_decode_num_draft_tokens" | awk '{s+=$2} END{print s+0}')
+    local d0 d1 a0 a1
+    d0=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
+    a0=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
     curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
         -X POST "${BASE}/v1/chat/completions" \
         -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
         >/dev/null 2>&1
-    after=$(curl -sf --max-time 10 "${BASE}/metrics" 2>/dev/null \
-            | grep -E "^vllm:spec_decode_num_draft_tokens" | awk '{s+=$2} END{print s+0}')
-    SPEC_DRAFTED=$(python3 -c "print(int(${after:-0} - ${before:-0}))" 2>/dev/null || echo 0)
+    d1=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
+    a1=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
+
+    # Absent counters yield empty, which every caller must treat as UNKNOWN.
+    if [ -z "${d0}" ] || [ -z "${d1}" ]; then
+        SPEC_DRAFTED=""; SPEC_ACCEPT_RATE=""
+        return 0
+    fi
+    SPEC_DRAFTED=$((d1 - d0))
+    SPEC_ACCEPT_RATE=""
+    if [ -n "${a0}" ] && [ -n "${a1}" ] && [ "${SPEC_DRAFTED}" -gt 0 ]; then
+        SPEC_ACCEPT_RATE=$(python3 -c \
+            "print(f'{($a1 - $a0) / ${SPEC_DRAFTED}:.3f}')" 2>/dev/null || echo "")
+    fi
 }
 
 # Achieved device memory bandwidth. The roofline denominator, measured rather
@@ -439,6 +513,7 @@ print(f"{2 * a.numel() * a.element_size() * iters / dt / 1e9:.1f}")
 validate_runtime() {
     local overrides="$1"
     VALIDATION_NOTE=""; VALIDITY=""; KV_TOKENS=""
+    PREFIX_HIT_RATE="${PREFIX_HIT_RATE:-}"; SPEC_ACCEPT_RATE="${SPEC_ACCEPT_RATE:-}"
     local problems=0 checks=0 logs
     logs=$(brain_logs)
 
@@ -449,12 +524,17 @@ validate_runtime() {
         case "${field}" in
             enable_prefix_caching)
                 m_prefix_reuse
-                local on want_on="yes"
-                on=$(python3 -c "print('yes' if ${PREFIX_REUSE:-0} >= 1.8 else 'no')")
-                [ "${want}" = "false" ] && want_on="no"
-                [ "${on}" != "${want_on}" ] && {
-                    VALIDATION_NOTE+="prefix_caching requested=${want} observed=${on} (${PREFIX_REUSE:-?}x); "
-                    problems=$((problems + 1)); }
+                if [ -z "${PREFIX_HIT_RATE}" ]; then
+                    VALIDATION_NOTE+="prefix_caching requested=${want} but hit-rate counters did not move; "
+                    problems=$((problems + 1))
+                else
+                    local on want_on="yes"
+                    on=$(python3 -c "print('yes' if ${PREFIX_HIT_RATE} >= 0.10 else 'no')")
+                    [ "${want}" = "false" ] && want_on="no"
+                    [ "${on}" != "${want_on}" ] && {
+                        VALIDATION_NOTE+="prefix_caching requested=${want} observed=${on} (hit rate ${PREFIX_HIT_RATE}); "
+                        problems=$((problems + 1)); }
+                fi
                 ;;
             attention_backend)
                 [ -n "${want}" ] && ! echo "${logs}" | grep -qi "${want%%_*}" && {
@@ -510,6 +590,7 @@ ledger_append() {
     VALIDITY="${VALIDITY}" VALIDATION_NOTE="${VALIDATION_NOTE}" \
     DECODE_TOKS="${DECODE_TOKS:-}" TTFT_MS="${TTFT_MS:-}" AGG_MAX="${AGG_MAX:-}" \
     PREFIX_REUSE="${PREFIX_REUSE:-}" SPEC_DRAFTED="${SPEC_DRAFTED:-}" \
+    PREFIX_HIT_RATE="${PREFIX_HIT_RATE:-}" SPEC_ACCEPT_RATE="${SPEC_ACCEPT_RATE:-}" \
     KV_TOKENS="${KV_TOKENS:-}" BANDWIDTH="${BANDWIDTH:-}" \
     RUNS="${RUNS:-3}" MAX_TOKENS="${MAX_TOKENS:-256}" LEDGER="${LEDGER}" \
     python3 -c "
@@ -522,7 +603,9 @@ rec = {'name': os.environ['NAME'], 'engine': os.environ['ENGINE'],
        'validity': os.environ['VALIDITY'], 'note': os.environ['VALIDATION_NOTE'].strip(),
        'decode_toks': num('DECODE_TOKS'), 'ttft_ms': num('TTFT_MS'),
        'aggregate_toks': num('AGG_MAX'), 'prefix_reuse_x': num('PREFIX_REUSE'),
-       'spec_drafted': num('SPEC_DRAFTED'), 'kv_cache_tokens': num('KV_TOKENS'),
+       'prefix_hit_rate': num('PREFIX_HIT_RATE'),
+       'spec_drafted': num('SPEC_DRAFTED'), 'spec_accept_rate': num('SPEC_ACCEPT_RATE'),
+       'kv_cache_tokens': num('KV_TOKENS'),
        'bandwidth_gbps': num('BANDWIDTH'),
        'runs': int(os.environ['RUNS']), 'max_tokens': int(os.environ['MAX_TOKENS']),
        'measured_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds')}
@@ -598,35 +681,56 @@ w("| `BLOCKED` | Could not run — missing image or unconfigured engine. Absence
 w("| `FAILED` | Server did not come up. The config itself may be unusable on this hardware. |")
 w("")
 w("This distinction matters more than the throughput figures. vLLM accepts flags ")
-w("it then silently ignores — prefix caching on this model is a documented case. ")
-w("A benchmark of a config that never applied yields a real number attributed to ")
-w("the wrong cause, which is worse than no number, because it looks like evidence.")
+w("it then silently ignores, and a benchmark of a config that never applied yields ")
+w("a real number attributed to the wrong cause — worse than no number, because it ")
+w("looks like evidence.")
+w("")
+w("The same trap catches the checker. Both of the first two PROBLEMs this audit ")
+w("ever reported were false: a Prometheus counter summed at six significant digits ")
+w("read a live speculative decoder as zero, and a TTFT threshold borrowed from ")
+w("dense transformers read a prefix cache serving 55.9% of its tokens as inert. ")
+w("Prefer a counter that reports the mechanism over a timing proxy that reports ")
+w("its effect, and treat a threshold as a claim about a specific architecture.")
 w("")
 
 w("## Results")
 w("")
-w("| Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix reuse | Drafted | KV cache |")
-w("|---|---|---|---|---|---|---|---|---|")
+w("| Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |")
+w("|---|---|---|---|---|---|---|---|---|---|---|")
 order = {"VALID": 0, "PARTIAL": 1, "FAILED": 2, "INVALID": 3, "BLOCKED": 4}
 for r in sorted(rows, key=lambda r: (order.get(r.get("validity"), 9),
                                      -(r.get("decode_toks") or 0))):
-    w("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+    w("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
         r.get("name", "?"), r.get("engine", "?"), r.get("validity", "?"),
         f(r.get("decode_toks"), "{:.1f} tok/s"),
         f(r.get("ttft_ms"), "{:.0f} ms"),
         f(r.get("aggregate_toks"), "{:.1f} tok/s"),
+        f(r.get("prefix_hit_rate"), "{:.1%}"),
         f(r.get("prefix_reuse_x"), "{:.2f}x"),
         f(r.get("spec_drafted"), "{:.0f}"),
+        f(r.get("spec_accept_rate"), "{:.1%}"),
         f(r.get("kv_cache_tokens"), "{:,.0f} tok")))
 w("")
 w("**Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. ")
 w("*Aggregate* is total tok/s at the highest concurrency tested — what the box can do in ")
-w("parallel; it rises with batching and is not comparable to Decode. *Prefix reuse* is the ")
-w("TTFT speedup from re-sending an identical long prefix: **≥1.8x means prefix caching is ")
-w("genuinely working**, ~1.0x means it is inert regardless of what the flag says. *Drafted* ")
-w("is speculative tokens proposed during one generation — **0 means speculative decoding is ")
-w("configured but dead**. *KV cache* is the real context ceiling in tokens; if it is below ")
-w("`max_model_len`, the advertised context window cannot be reached.")
+w("parallel; it rises with batching and is not comparable to Decode. ")
+w("")
+w("*Prefix hit* is the share of queried tokens served from cache when an identical long ")
+w("prefix is re-sent — **this is the column that says whether prefix caching is running**. ")
+w("*Prefix TTFT* is the wall-clock speedup that hit rate actually bought. The two come ")
+w("apart on this model and that is not a fault: it is a hybrid of ~48 GatedDeltaNet ")
+w("linear-attention layers and ~16 full-attention layers, and only the full-attention ")
+w("layers have cacheable KV. The recurrent layers re-scan the prefix on every request no ")
+w("matter what is cached, so a working cache can show a high hit rate and almost no TTFT ")
+w("win. Read the hit rate as the on/off switch and the TTFT ratio as the effect size — ")
+w("never the reverse.")
+w("")
+w("*Drafted* is speculative tokens proposed during one generation — 0 while ")
+w("`speculative_config` is set means speculation is dead. *Accepted* is the share of those ")
+w("drafts the target model kept, and it is the one that decides whether speculation pays: ")
+w("rejected drafts still cost their verification pass. *KV cache* is the real context ")
+w("ceiling in tokens; if it is below `max_model_len`, the advertised context window cannot ")
+w("be reached.")
 w("")
 
 w("## Recommendation")
@@ -648,7 +752,7 @@ else:
       f"({best['engine']}) at {best['decode_toks']:.1f} tok/s.**")
     w("")
     w("Apply it by setting these in `config/models.yml`, then ")
-    w("`bash scripts/start_brain_ad_hoc.sh`:")
+    w("`bash scripts/03_vllm_servers.sh`:")
     w("")
     w("```yaml")
     if best.get("overrides"):
@@ -672,19 +776,19 @@ else:
         w("")
     # Warn only about the config being RECOMMENDED. A slow runner-up with a
     # dead prefix cache is not actionable; the one you are about to deploy is.
-    if best.get("prefix_reuse_x") is not None and best["prefix_reuse_x"] < 1.8:
+    if best.get("prefix_hit_rate") is not None and best["prefix_hit_rate"] < 0.10:
         w(f"> **Warning — the fastest config has a dead prefix cache.** "
-          f"`{best['name']}` shows prefix reuse of {best['prefix_reuse_x']:.2f}x "
-          f"(working is >=1.8x). Single-stream decode is not the metric that "
+          f"`{best['name']}` served {best['prefix_hit_rate']:.1%} of a repeated "
+          f"identical prefix from cache. Single-stream decode is not the metric that "
           f"decides agentic coding: without prefix reuse, every turn reprocesses "
           f"the whole conversation, which costs far more wall-clock than the "
           f"decode-rate lead wins back.")
         w("")
         alt = next((r for r in ranked
-                    if (r.get("prefix_reuse_x") or 0) >= 1.8), None)
+                    if (r.get("prefix_hit_rate") or 0) >= 0.10), None)
         if alt:
             w(f"> Prefer **`{alt['name']}`** ({alt['decode_toks']:.1f} tok/s, "
-              f"{alt['prefix_reuse_x']:.2f}x reuse) for interactive and agentic use, "
+              f"{alt['prefix_hit_rate']:.1%} hit rate) for interactive and agentic use, "
               f"and reserve `{best['name']}` for batch work with no shared prefix.")
         else:
             w("> No measured configuration has working prefix reuse. Fix that "
@@ -897,26 +1001,35 @@ cmd_audit() {
         return 0
     }
 
+    # Judged on the hit-rate counter, not on TTFT. An earlier version of this
+    # check used a >=1.8x TTFT speedup as the pass mark and called a cache
+    # serving 55.9% of its queried tokens "INERT" — the threshold was borrowed
+    # from dense-transformer behaviour and this model is a hybrid. The TTFT
+    # ratio is still reported, as an effect size rather than a verdict.
     local want_prefix; want_prefix=$(get_field brain enable_prefix_caching)
-    if [ -z "${PREFIX_REUSE}" ]; then
-        check "prefix cache" UNKNOWN "reuse could not be measured — Brain busy, or the request failed"
-    elif [ "$(python3 -c "print(1 if ${PREFIX_REUSE} < 1.8 else 0)")" = "1" ]; then
+    local ttft_note=""
+    [ -n "${PREFIX_REUSE}" ] && ttft_note=" (TTFT ${PREFIX_REUSE}x)"
+    if [ -z "${PREFIX_HIT_RATE}" ]; then
+        check "prefix cache" UNKNOWN "vllm:prefix_cache_*_total did not move — Brain busy, or the probe failed"
+    elif [ "$(python3 -c "print(1 if ${PREFIX_HIT_RATE} < 0.10 else 0)")" = "1" ]; then
         if [ "${want_prefix}" = "true" ]; then
-            check "prefix cache" PROBLEM "reuse ${PREFIX_REUSE}x — flag is true but the feature is INERT"
+            check "prefix cache" PROBLEM "hit rate ${PREFIX_HIT_RATE} on a repeated identical prefix — flag is true but the cache is INERT"
         else
-            check "prefix cache" OK "reuse ${PREFIX_REUSE}x — off, and not requested"
+            check "prefix cache" OK "hit rate ${PREFIX_HIT_RATE} — off, and not requested"
         fi
     else
-        check "prefix cache" OK "reuse ${PREFIX_REUSE}x — working"
+        check "prefix cache" OK "hit rate ${PREFIX_HIT_RATE} — serving cached tokens${ttft_note}"
     fi
 
     local want_spec; want_spec=$(get_field brain speculative_config)
+    local acc_note=""
+    [ -n "${SPEC_ACCEPT_RATE}" ] && acc_note=", ${SPEC_ACCEPT_RATE} accepted"
     if [ -z "${SPEC_DRAFTED}" ]; then
-        check "speculation" UNKNOWN "no vllm:spec_decode_* counters exported by this build"
+        check "speculation" UNKNOWN "no vllm:spec_decode_*_total counters exported by this build"
     elif [ -n "${want_spec}" ] && [ "${SPEC_DRAFTED}" = "0" ]; then
         check "speculation" PROBLEM "configured, but ZERO tokens drafted — it is not running"
     elif [ -n "${want_spec}" ]; then
-        check "speculation" OK "${SPEC_DRAFTED} tokens drafted"
+        check "speculation" OK "${SPEC_DRAFTED} tokens drafted${acc_note}"
     else
         check "speculation" OK "not configured, ${SPEC_DRAFTED} drafted"
     fi
@@ -933,8 +1046,8 @@ cmd_audit() {
     echo ""
     if [ "${problems}" -gt 0 ]; then
         echo "  ${problems} PROBLEM(S) FOUND — fix these before tuning anything else."
-        [ "${want_prefix}" = "true" ] && [ -n "${PREFIX_REUSE}" ] && \
-          [ "$(python3 -c "print(1 if ${PREFIX_REUSE} < 1.8 else 0)")" = "1" ] && {
+        [ "${want_prefix}" = "true" ] && [ -n "${PREFIX_HIT_RATE}" ] && \
+          [ "$(python3 -c "print(1 if ${PREFIX_HIT_RATE} < 0.10 else 0)")" = "1" ] && {
             echo "  A dead prefix cache means every agent turn reprocesses the whole"
             echo "  conversation. That costs more in real use than any decode tuning wins."; }
         echo "============================================================"
