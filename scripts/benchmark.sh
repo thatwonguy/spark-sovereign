@@ -19,6 +19,7 @@
 #   audit      declared config vs what the server actually did   (read-only, ~1 min)
 #   quick      decode rate + TTFT of the running config          (read-only, ~1 min)
 #   bandwidth  achieved memory bandwidth + derived bytes/token   (read-only, ~1 min)
+#   metrics    what the running server actually exports            (read-only, instant)
 #   matrix     sweep every configuration                         (hours, Brain down)
 #   render     regenerate BENCHMARKS.md from the ledger          (instant)
 #   list       show the matrix and what has been measured        (instant)
@@ -192,6 +193,20 @@ launch_sglang() {
     reason=$(get_field sglang reasoning_parser)
     radix=$(get_field sglang disable_radix_cache)
 
+    # Speculative decoding — the whole reason SGLang is on the list.
+    #
+    # Our own roofline makes the community claim checkable rather than a rumour:
+    # 12.04 tok/s per forward pass is the bandwidth limit and no engine changes
+    # it, so a reported ~50 tok/s requires ~4.15 tokens per forward pass against
+    # the 2.4-2.9 we get from MTP. That gap is a DRAFTER difference. Launching
+    # SGLang without passing these flags would measure the engine while leaving
+    # the only variable that could explain the claim switched off — and would
+    # then report "SGLang is no faster", which would be true and meaningless.
+    local spec_algo spec_steps spec_draft
+    spec_algo=$(get_field sglang speculative_algorithm)
+    spec_steps=$(get_field sglang speculative_num_steps)
+    spec_draft=$(get_field sglang speculative_draft_model_path)
+
     for n in brain qwen-brain; do docker rm -f "${n}" >/dev/null 2>&1 || true; done
 
     # NOTE the inverted sense: SGLang's radix cache (its prefix cache) is ON by
@@ -214,6 +229,9 @@ launch_sglang() {
             ${attn:+--attention-backend "${attn}"} \
             ${tool:+--tool-call-parser "${tool}"} \
             ${reason:+--reasoning-parser "${reason}"} \
+            ${spec_algo:+--speculative-algorithm "${spec_algo}"} \
+            ${spec_steps:+--speculative-num-steps "${spec_steps}"} \
+            ${spec_draft:+--speculative-draft-model-path "${spec_draft}"} \
             $([ "${radix}" = "true" ] && echo "--disable-radix-cache")
 }
 
@@ -388,8 +406,8 @@ PYEOF
 # noisy effect size, not an on/off switch.
 m_prefix_reuse() {
     local q0 h0 q1 h1
-    q0=$(metric_sum "vllm:prefix_cache_queries_total")
-    h0=$(metric_sum "vllm:prefix_cache_hits_total")
+    q0=$(metric_sum "prefix_cache_queries_total")
+    h0=$(metric_sum "prefix_cache_hits_total")
     PREFIX_REUSE=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
         python3 - <<'PYEOF' 2>/dev/null || echo ""
 import json, os, time, urllib.request
@@ -418,8 +436,8 @@ cold = ask("Summarise function_1."); warm = ask("Summarise function_2.")
 print(f"{cold/warm:.2f}" if warm > 0 else "")
 PYEOF
     )
-    q1=$(metric_sum "vllm:prefix_cache_queries_total")
-    h1=$(metric_sum "vllm:prefix_cache_hits_total")
+    q1=$(metric_sum "prefix_cache_queries_total")
+    h1=$(metric_sum "prefix_cache_hits_total")
     PREFIX_HIT_RATE=""
     if [ -n "${q0}" ] && [ -n "${q1}" ] && [ -n "${h0}" ] && [ -n "${h1}" ] \
        && [ "$((q1 - q0))" -gt 0 ]; then
@@ -452,10 +470,27 @@ PYEOF
 # is unauthenticated today, not guaranteed to be tomorrow, and a probe that
 # starts failing closed would fail into that same "0" — which is precisely the
 # reading this function exists to make impossible.
+# Takes the metric name WITHOUT its engine prefix. vLLM exports
+# `vllm:spec_decode_num_draft_tokens_total`; another engine exports the same
+# quantity under its own prefix. Stripping the prefix before comparing means one
+# probe works across engines, and — importantly — an engine that does NOT export
+# the metric still yields empty rather than a fabricated zero.
+#
+# The suffix is still matched EXACTLY, so `_total` never collides with
+# `_created`. That distinction is the whole reason this function exists; see the
+# comment above about a live speculative decoder reading as zero.
+#
+# Run `benchmark.sh metrics` against a live server to see what it actually
+# exports before assuming any name.
 metric_sum() {
     curl -sf --max-time 10 "${AUTH[@]}" "${BASE}/metrics" 2>/dev/null \
-        | awk -v name="$1" '
-            index($1, name "{") == 1 || $1 == name { s += $NF; n += 1 }
+        | awk -v suf="$1" '
+            {
+                n1 = $1
+                b = index(n1, "{"); if (b) n1 = substr(n1, 1, b - 1)
+                c = index(n1, ":"); if (c) n1 = substr(n1, c + 1)
+                if (n1 == suf) { s += $NF; n += 1 }
+            }
             END { if (n) printf "%.0f\n", s }'
 }
 
@@ -468,16 +503,16 @@ metric_sum() {
 # rate is the number that decides, so it is measured here too.
 m_spec_drafted() {
     local d0 d1 a0 a1 n0 n1
-    d0=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
-    a0=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
-    n0=$(metric_sum "vllm:spec_decode_num_drafts_total")
+    d0=$(metric_sum "spec_decode_num_draft_tokens_total")
+    a0=$(metric_sum "spec_decode_num_accepted_tokens_total")
+    n0=$(metric_sum "spec_decode_num_drafts_total")
     curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
         -X POST "${BASE}/v1/chat/completions" \
         -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
         >/dev/null 2>&1
-    d1=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
-    a1=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
-    n1=$(metric_sum "vllm:spec_decode_num_drafts_total")
+    d1=$(metric_sum "spec_decode_num_draft_tokens_total")
+    a1=$(metric_sum "spec_decode_num_accepted_tokens_total")
+    n1=$(metric_sum "spec_decode_num_drafts_total")
 
     # Absent counters yield empty, which every caller must treat as UNKNOWN.
     if [ -z "${d0}" ] || [ -z "${d1}" ]; then
@@ -1022,6 +1057,34 @@ for line in open(os.environ['LEDGER'], encoding='utf-8'):
 
 cmd_render() { render_report; }
 
+# What does the running server ACTUALLY export? Read-only, instant.
+#
+# Exists because the alternative is guessing metric names for a new engine, and
+# a guessed name that does not match is indistinguishable from a feature that is
+# switched off — which is exactly how this tool once reported a live speculative
+# decoder as dead. Run this against SGLang before trusting any SGLang row.
+cmd_metrics() {
+    require_brain || return 2
+    echo ""
+    echo "-- Metrics exported by the running server --"
+    local raw
+    raw=$(curl -sf --max-time 10 "${AUTH[@]}" "${BASE}/metrics" 2>/dev/null)
+    if [ -z "${raw}" ]; then
+        echo "   /metrics returned nothing — wrong port, or the engine does not export Prometheus."
+        return 2
+    fi
+    echo "   $(echo "${raw}" | grep -c '^[a-z]') sample lines total"
+    echo ""
+    echo "   Cache / speculation / prefix metrics (what the audit needs):"
+    echo "${raw}" | grep -oE '^[a-z_]+:?[a-z_0-9]+' | sort -u \
+        | grep -iE "cache|spec|draft|accept|prefix|radix" | sed 's/^/     /' \
+        || echo "     (none found — the audit will report UNKNOWN, which is correct)"
+    echo ""
+    echo "   The audit matches these names WITHOUT their engine prefix, so"
+    echo "   vllm:X and sglang:X both resolve. If the suffixes differ, the"
+    echo "   checks report UNKNOWN rather than guessing."
+}
+
 cmd_quick() {
     require_brain || return 2
     echo ""
@@ -1316,6 +1379,7 @@ case "${CMD}" in
     quick)     cmd_quick ;;
     audit)     cmd_audit ;;
     bandwidth) cmd_bandwidth ;;
+    metrics)   cmd_metrics ;;
     matrix)    cmd_matrix ;;
     all)
         # The default: everything needed to fill docs/BENCHMARKS.md.
