@@ -49,7 +49,10 @@ get_model_field() {
 import yaml, sys
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
-print(cfg.get('$1', {}).get('$2', ''))
+val = cfg.get('$1', {}).get('$2', '')
+# A key present but empty in YAML parses as None, which would print the literal
+# string 'None' and get treated as a real value by every caller below.
+print(val if val is not None else '')
 "
 }
 
@@ -149,10 +152,56 @@ download_model() {
         return
     fi
 
+    # Optional pin. Blank (the normal case) means "latest on main at pull
+    # time", which is what you want on a fresh drop: first uploads of new
+    # models have shipped broken — see the tokenizer truncation check at the
+    # bottom of this script. Set hf_revision only to reproduce a known-good
+    # state or to dodge a bad upstream push.
+    local hf_revision
+    hf_revision=$(get_model_field "${top_key}" hf_revision)
+
     echo "  Downloading ${label} → ${local_path}"
     echo "    HF repo: ${hf_repo}"
+    echo "    Revision: ${hf_revision:-<latest on main>}"
     mkdir -p "${local_path}"
-    hf download "${hf_repo}" --local-dir "${local_path}"
+    hf download "${hf_repo}" --local-dir "${local_path}" \
+        ${hf_revision:+--revision "${hf_revision}"}
+
+    # Record which commit we actually got. Without this the running weights are
+    # unattributable: "latest at pull time" is not a state you can return to,
+    # and every measured number in docs/LESSONS.md is implicitly against a SHA
+    # nobody wrote down. `hf download` leaves the resolved ref in the local
+    # cache metadata; fall back to the API when --local-dir has stripped it.
+    local sha=""
+    if [ -f "${local_path}/.cache/huggingface/.gitattributes.metadata" ]; then
+        sha=$(head -1 "${local_path}/.cache/huggingface/.gitattributes.metadata" 2>/dev/null || echo "")
+    fi
+    if [ -z "${sha}" ]; then
+        sha=$(python3 - "${hf_repo}" "${hf_revision}" <<'PYEOF' 2>/dev/null || echo ""
+import json, sys, urllib.request
+repo, rev = sys.argv[1], (sys.argv[2] or "main")
+try:
+    with urllib.request.urlopen(
+            f"https://huggingface.co/api/models/{repo}/revision/{rev}", timeout=15) as r:
+        print(json.load(r).get("sha", ""))
+except Exception:
+    print("")
+PYEOF
+)
+    fi
+
+    if [ -n "${sha}" ]; then
+        printf 'repo=%s\nrevision=%s\nresolved_sha=%s\ndownloaded=%s\n' \
+            "${hf_repo}" "${hf_revision:-main}" "${sha}" "$(date -Iseconds)" \
+            > "${local_path}/DOWNLOADED_REVISION.txt"
+        echo "    Resolved SHA: ${sha}"
+        echo "    Recorded in ${local_path}/DOWNLOADED_REVISION.txt"
+    else
+        echo "    WARN: could not resolve the commit SHA — this download is"
+        echo "          not reproducible. Pin hf_revision in models.yml if you"
+        echo "          need to come back to exactly these weights."
+    fi
+
     echo "  OK ${label}"
 }
 

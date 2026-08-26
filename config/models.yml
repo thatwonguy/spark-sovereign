@@ -22,6 +22,13 @@
 brain:
   name: qwen38-27b-nvfp4
   hf_repo: unsloth/Qwen3.8-27B-NVFP4
+  # Optional revision pin. Omitted = latest on main at pull time, which is the
+  # right default for a fresh drop (first uploads ship broken — that is what the
+  # tokenizer-truncation check in 02_download_models.sh exists to catch).
+  # 02_download_models.sh records whatever it resolved to in
+  # <local_path>/DOWNLOADED_REVISION.txt, so the running weights are always
+  # attributable even when this is blank. Set it to that SHA to freeze them.
+  # hf_revision: <sha>
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
   # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
@@ -37,6 +44,38 @@ brain:
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
   enable_prefix_caching: true
+  # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
+  #
+  # BLANK ON PURPOSE = vLLM autoselects, which is what this repo has always
+  # done. Left blank because nobody has yet checked what it autoselects here,
+  # and pinning a guess is worse than an honest unknown.
+  #
+  # Why it matters: `kv_cache_dtype: fp8` above is only actually served by some
+  # backends. On SM121 (GB10), FlashAttention is reported not to support an FP8
+  # KV cache — triton_attn is. If vLLM quietly falls back to BF16 KV, the FP8
+  # setting above is a no-op, KV cache entries are twice the size, and NOTHING
+  # ERRORS. The ~55 GB measured at 0.45 util does not distinguish the two cases.
+  #
+  # Find out which one is live, then decide:
+  #     bash scripts/specdecode_probe.sh        # step 2 reports it
+  #     docker logs brain 2>&1 | grep -i "attention backend"
+  # If it reports FlashAttention while kv_cache_dtype is fp8, set:
+  #     attention_backend: TRITON_ATTN
+  # and re-measure with scripts/benchmark_brain.sh before committing it.
+  attention_backend:
+  # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
+  #
+  # UNVERIFIED. The 5 below was never measured against 3, 2, or off, and the
+  # community day-zero recipe for this model used 2. Rejected draft tokens
+  # still cost a verification pass, so longer is not monotonically better.
+  #
+  # MTP is also not the only option: `ngram` (prompt-lookup) needs no drafter
+  # and no extra weights, and tends to do well on agentic coding where output
+  # echoes files already in context. The sweep compares them.
+  #
+  # Before trusting it:  bash scripts/specdecode_probe.sh   (read-only)
+  # To compare methods:  bash scripts/specdecode_sweep.sh   (restarts Brain)
+  # Is a ceiling real?:  bash scripts/bandwidth_probe.sh    (read-only)
   speculative_config: '{"method":"mtp","num_speculative_tokens":5}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a

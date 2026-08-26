@@ -120,6 +120,15 @@ BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
 BRAIN_ASYNC=$(get_field brain async_scheduling)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
 BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
+# Attention backend. Blank = let vLLM autoselect (the behaviour this repo has
+# always had). Pin it when the autoselection is wrong or unknown — on SM121
+# with kv_cache_dtype: fp8, FlashAttention cannot serve an FP8 KV cache and a
+# silent fallback to BF16 KV costs half the effective context with no error.
+# See config/models.yml for the full note. scripts/specdecode_probe.sh step 2
+# reports which backend actually loaded. Must stay in sync with
+# start_brain_ad_hoc.sh — a boot start and a watchdog recovery have to produce
+# the same server.
+BRAIN_ATTN=$(get_field brain attention_backend)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -183,6 +192,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
         -e MAX_NUM_SEQS="${BRAIN_SEQS}" \
         -e VLLM_EXTRA_ARGS="${EXTRA_ARGS}" \
         ${BRAIN_API_KEY:+-e VLLM_API_KEY="${BRAIN_API_KEY}"} \
+        ${BRAIN_ATTN:+-e VLLM_ATTENTION_BACKEND="${BRAIN_ATTN}"} \
         ${BRAIN_EXTRA_ENV} \
         -v "${MODELS_DIR}:/models" \
         -v vllm-cache:/root/.cache/vllm \
@@ -194,6 +204,7 @@ else
         --gpus all --ipc host --network host \
         --restart no \
         ${BRAIN_API_KEY:+-e VLLM_API_KEY="${BRAIN_API_KEY}"} \
+        ${BRAIN_ATTN:+-e VLLM_ATTENTION_BACKEND="${BRAIN_ATTN}"} \
         ${BRAIN_EXTRA_ENV} \
         -v "${MODELS_DIR}:/models" \
         -v vllm-cache:/root/.cache/vllm \

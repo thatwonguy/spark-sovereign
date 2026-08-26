@@ -461,6 +461,85 @@ Five of these six were invisible because something reported success: a health ch
 
 ---
 
+## 18. Is 15–17 tok/s a Ceiling or a Symptom? (Open Question — Test Plan)
+
+**Status: hypothesis and instrumentation. Nothing here has been measured on the Spark yet.** This lesson exists to be falsified, and the scripts it describes are the falsification.
+
+### The trigger
+
+Community configs for this same model on this same hardware circulate with a claimed **50 tok/s greedy median** single-stream, plus **~148 tok/s at 8 streams** and **~258 at 32**. We measure **15–17** single-stream. Before either chasing that or dismissing it, the claim gets tested.
+
+### Rule out the easy part first: the multi-stream numbers are ordinary
+
+Decode is bandwidth-bound, and one forward pass reads the whole weight set regardless of batch size. At batch N, that single read emits N tokens. So aggregate throughput rises with concurrency **for free**, until KV cache capacity or `max_num_seqs` binds.
+
+148 @ 8 and 258 @ 32 therefore need no special technique and say nothing about single-stream speed. `scripts/benchmark_concurrency.sh` checks whether this box reproduces that curve. If it does, two thirds of the original claim is explained and only the 50 tok/s single-stream figure still needs an account.
+
+### The hypothesis, stated so it can be wrong
+
+The tempting story is: dense 27.78B × NVFP4 ≈ 13.5 GB/token over a 273 GB/s bus ⇒ ~20 tok/s ceiling ⇒ 15–17 is 75–85% of optimal ⇒ nothing to find.
+
+**That story rests on two numbers, and neither has ever been measured here.**
+
+| Input | Where it came from | What if it's wrong |
+|---|---|---|
+| **273 GB/s** | GB10 spec sheet | Real LPDDR5x achieves 70–85% of spec. If it's ~220, the ceiling is ~16 tok/s and we're already at 100% — the roofline story gets *stronger*. |
+| **13.5 GB/token** | Assumes the NVFP4 kernels genuinely read 4 bits/param | If the quant path dequantizes to BF16 or falls back to a general kernel, real bytes/token could be 2–4× higher. Then **there is no ceiling here at all** — there's a broken serving path, and ordinary config work has large headroom. |
+
+The second row is not hypothetical. `config/models.yml` already documents this exact failure for the previous MoE brain: *"REQUIRED for that MoE on Spark, or it falls back to Marlin and runs 2.5x slower."* A silent kernel fallback is a known, in-repo failure mode for this hardware. Asserting a ceiling without checking for it would be assuming the conclusion.
+
+### The test that decides it
+
+`scripts/bandwidth_probe.sh` measures the denominator and derives the numerator:
+
+```
+achieved bandwidth          <- GPU memcpy benchmark, actual not spec
+measured decode rate        <- benchmark_brain.sh
+bytes/token = bandwidth / rate
+ratio       = bytes-per-token / checkpoint-size-on-disk
+```
+
+- **ratio ≈ 1.0** — weights are read at their quantized width. The roofline is real, config tuning can't beat it, and going faster single-stream requires *fewer bytes* (lower-bit quant) or *fewer passes* (speculation).
+- **ratio ≫ 1.5** — the path is moving far more data than the weights occupy. **Not a ceiling — a bug.** Chase the quant kernel, the attention backend vs `kv_cache_dtype: fp8`, and CUDA-graph state.
+
+One measurement, two very different next moves. That is why it comes before any tuning.
+
+### Levers, including the one initially missed
+
+If the roofline turns out to be real, these still break it — a ceiling on *plain* decode is not a ceiling on *throughput*:
+
+1. **MTP speculative decoding** — shipped since v5.0, in `speculative_config`, **never verified**. `scripts/specdecode_probe.sh` diffs `vllm:spec_decode_*` counters across a known generation; zero drafts is conclusive.
+2. **N-gram / prompt-lookup decoding** — needs no drafter and no extra weights: it proposes continuations by finding repeats of the current suffix earlier in context. Nearly free, and unusually strong on **agentic coding**, where the model reproduces long verbatim spans from files already in context. **This was omitted from the first pass at this analysis, which is precisely the kind of gap that makes "no config can beat X" an unsafe claim.** Now a first-class candidate in the sweep.
+3. **Draft length** — `num_speculative_tokens: 5` was never compared against anything; the community day-zero recipe used 2. Rejected tokens still cost verification, so longer is not monotonically better.
+4. **Attention backend / KV dtype** — `kv_cache_dtype: fp8` is only honoured by some backends. A silent BF16 fallback doubles KV bytes read per token, with no error.
+5. **Lower-bit weights** — below NVFP4 is fewer bytes/token and a strictly higher roofline, at a quality cost.
+6. **Batching** — already free, already available, just not what a single-stream number measures.
+
+### Why acceptance rate is workload-dependent
+
+The default benchmark prompt writes fresh prose and code from nothing — close to the **worst case** for prompt-lookup, which pays off when output echoes context. A poor `ngram` result against it would *not* generalise to real agentic coding over files in context. The sweep takes `PROMPT` for this reason; a verdict from the default prompt alone is not a verdict on your actual workload.
+
+### Order of operations
+
+```bash
+bash scripts/bandwidth_probe.sh          # ceiling real, or path broken?
+bash scripts/specdecode_probe.sh         # is the speculation we ship live?
+bash scripts/benchmark_concurrency.sh    # does batching reproduce 148@8?
+bash scripts/specdecode_sweep.sh         # mtp vs ngram vs off, measured
+```
+
+The first two are read-only and safe against production. The sweep restarts Brain repeatedly.
+
+### Key lesson (provisional — this one is about method, not hardware)
+
+Two divisions produced a confident ceiling, and the ceiling was built on two unmeasured inputs and an incomplete list of techniques. The arithmetic was fine; treating it as a **result** rather than a **hypothesis** was not. A roofline you have not measured is a guess with units attached — and the specific failure it cannot see is the one where your denominator is wrong because the serving path is broken.
+
+Test the claim. Then write the lesson.
+
+Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly), Lesson #17 (tooling that cannot report a problem manufactures false certainty — including tooling made of arithmetic).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
@@ -475,4 +554,4 @@ Five of these six were invisible because something reported success: a health ch
 
 ---
 
-*Last updated: August 25, 2026 — v5.1 hardening*
+*Last updated: August 26, 2026 — Lesson #18, throughput test plan (open question)*
