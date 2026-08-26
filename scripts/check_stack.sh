@@ -101,7 +101,12 @@ echo ""
 echo "  HF model     : ${BRAIN_HF}"
 echo "  Base URL     : http://localhost:${BRAIN_PORT}/v1"
 echo "  Model ID     : ${BRAIN_NAME}"
-echo "  API key      : any string  (e.g. 'local')"
+if [ -n "${BRAIN_API_KEY}" ]; then
+    # Masked on purpose — check_stack output gets pasted into issues and chats.
+    echo "  API key      : set, ${#BRAIN_API_KEY} chars, ends ...${BRAIN_API_KEY: -4}  (read: grep BRAIN_API_KEY .env)"
+else
+    echo "  API key      : none configured  (any string works)"
+fi
 echo "  Context      : ${BRAIN_CTX} tokens"
 echo "  KV dtype     : ${BRAIN_KV}"
 echo "  GPU util     : ${BRAIN_UTIL} (~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved)"
@@ -224,8 +229,22 @@ if command -v openclaw &>/dev/null; then
         echo "     Verify:                    openclaw memory status --deep"
     elif [ -n "${MEM_PROVIDER}" ] && [ "${MEM_PROVIDER}" != "auto" ]; then
         printf "  ✅ Memory search: enabled (provider: %s)\n" "${MEM_PROVIDER}"
+    elif [ "${HAS_EMBED_KEY}" = "true" ]; then
+        # A cloud embedding key IS present and the provider is auto, so OpenClaw
+        # will send memory contents off this box. Flag it — local-only is the
+        # entire point of this build.
+        printf "  ⚠️  Memory search: auto mode with a CLOUD embedding key in .env\n"
+        printf "     Memory contents leave the Spark on every index and search.\n"
+        printf "     Local instead: openclaw configure --section model\n"
+        printf "     Verify:        openclaw memory status --deep\n"
     else
-        printf "  ✅ Memory search: enabled (provider: auto — API key found)\n"
+        # Fallthrough: the config lookups returned nothing usable, which happens
+        # when OpenClaw does not expose this path (it moved between versions).
+        # Previously this branch printed a green "API key found" without ever
+        # reading HAS_EMBED_KEY — a false all-clear on a privacy-relevant line.
+        printf "  ℹ️  Memory search: state unknown — could not read OpenClaw config\n"
+        printf "     No cloud embedding key in .env, so nothing is leaving the box.\n"
+        printf "     Confirm with:  openclaw memory status --deep\n"
     fi
 else
     echo "  (openclaw not on PATH — skipping)"
