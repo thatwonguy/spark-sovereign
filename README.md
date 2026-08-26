@@ -85,13 +85,14 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v2.0 | Nemotron-3-Nano-30B-A3B-FP8 | MoE | 3B | ~35–45 | No | Fast but weaker on coding/reasoning |
 | v3.0 | Qwen3.5-35B-A3B-FP8 | MoE | 3B | ~49 | No | Retired — superseded by v4.0 |
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline — fastest measured. Available via `git checkout v4.2.1`** |
-| **v5.0** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — traded speed for vision + higher intelligence per token** |
+| v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Traded speed for vision + higher intelligence per token |
+| **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model, hardened stack: loopback bind, auto-provisioned API key, persisted compile cache** |
 
 **v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
 The current model (Qwen3.8-27B) is a dense NVFP4 build quantized by Unsloth specifically for Blackwell (SM12.1) hardware. Native 262K context, integrated vision encoder, `qwen3_coder` tool-call parser, `qwen3` reasoning parser, and MTP (Multi-Token Prediction) speculative-decoding heads shipped with the checkpoint.
 
-For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md) — Lesson #16 covers the v4.2.1 → v5.0 trade in detail.
+For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md) — Lesson #16 covers the v4.2.1 → v5.0 trade in detail, and Lesson #17 covers the v5.1 hardening pass.
 
 ---
 

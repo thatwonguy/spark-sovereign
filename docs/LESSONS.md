@@ -403,6 +403,64 @@ Speed and capability are not on the same axis. Lesson #12 warned that dense-on-S
 
 ---
 
+## 17. Hardening the v5.0 Stack (v5.1 — Same Model, Fixed Foundations)
+
+No model change. Everything here is about the machinery around the Brain, and most of it was invisible because the tooling reported success.
+
+### The Brain was open to the whole house
+
+`03_vllm_servers.sh` served vLLM on `--host 0.0.0.0` with no authentication — the API key was documented as "any string works". Any device on the router could query it: other laptops, a guest phone, a smart TV, a compromised IoT device. **Not** internet-reachable — the router blocks inbound unless you forward the port, so this was never a DDoS or intrusion vector — but far wider than intended.
+
+New `brain.bind_host` in `models.yml`, default `127.0.0.1`. Every consumer in this repo (OpenClaw's gateway, `check_stack`, `boot_sequence`, `watchdog`) talks to `localhost` and runs on the Spark, so nothing broke. Set it to `0.0.0.0` to deliberately reopen it.
+
+### API key, auto-provisioned, off the command line
+
+`03` now generates `openssl rand -hex 32` on first run, writes it to `.env` (gitignored, forced `chmod 600`), and prints it once. It is passed to the container as **`VLLM_API_KEY`, not `--api-key`** — [equivalent per vLLM's docs](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/), but the flag would put the secret on the process command line where `ps aux` prints it in full.
+
+`start_brain_ad_hoc.sh` deliberately does **not** generate. It runs unattended from `boot_sequence.sh` and `watchdog.sh`; minting a fresh key on every self-heal would break OpenClaw after each recovery.
+
+The trap: `--api-key` makes every `/v1` route return 401, and **six scripts poll `/v1/models` as a health check**. Left alone, `watchdog.sh` would have restarted a perfectly healthy Brain every two minutes, and `boot_sequence.sh` would have timed out for 12 minutes on a Brain that was already up. All six now send the header. `benchmark_brain.sh` had a hardcoded `Authorization: Bearer local` that would have 401'd.
+
+### The watchdog raced a deliberate restart — and the fix was to reorder, not to lock
+
+Observed live, 2026-08-25 19:12:09:
+
+```
+19:12:09  watchdog: brain unhealthy — recovery attempt 1/3
+19:12:10  watchdog: started d7d0fe1...
+          03: Conflict. The container name "/brain" is already in use
+```
+
+`03` removed the container at the top of the script, then made ~15 `get_field` calls — each spawning `python3` to parse `models.yml` — before `docker run`. That left several seconds of gap. The watchdog polls every 2 minutes, saw no Brain, and *correctly* started one. `03` then died.
+
+The tempting fix was a lock file with a timestamp, an expiry, and an `EXIT` trap. It was rejected: **a lock's failure mode is self-heal silently disabled**, and this box is expected to recover from a power cut unattended. Persistent state that can go stale is exactly the wrong trade.
+
+The actual fix was to move the stop/remove to sit immediately before `docker run`, closing the gap to milliseconds with no new state at all. `start_brain_ad_hoc.sh` had always been ordered that way, which is why it never hit the bug — `03` simply had it backwards.
+
+Worth noting the residual failure is benign: if the watchdog wins, the Brain **is** running correctly and only `03` prints an error.
+
+### A health check that printed a green line it never verified
+
+`check_stack.sh` reported `✅ Memory search: enabled (provider: auto — API key found)`. It computed `HAS_EMBED_KEY` correctly and then **ignored it** — the message lived in a catch-all `else` that fired whenever the OpenClaw config lookup returned nothing, which is what happens on 2026.4.9 where that config path no longer exists. A false all-clear on the one line that would reveal memory contents leaving the box.
+
+It now warns properly when a cloud embedding key really is present, and otherwise reports the state as unknown while confirming no key is set.
+
+### `01` was overwriting the file it was supposed to install
+
+`01_system_prep.sh` wrote its own inline copy of `scripts/boot_sequence.sh` from a heredoc, then `chmod +x`'d it. So the file systemd executed was the one `01` generated, **not the one in git** — and re-running `01` silently reverted any edit to the tracked file. The two had already drifted. Replaced with a presence check; the repo is now the single source of truth.
+
+### Compile artifacts were thrown away on every restart
+
+Both launch paths do `docker rm -f brain` first, taking the container's writable layer with it — so `/root/.cache/vllm` died too and every restart re-ran `torch.compile` and flashinfer autotuning from scratch. The 2026-08-25 restart logged `42 new, 0 from previous config` and took ~6 min, of which ~3 min was that work. Now persisted in a `vllm-cache` named volume.
+
+**Not yet measured:** the cache reuse benefit and the post-reboot timing. Expect `0 new, N from previous config` and a noticeably shorter load on the next restart — but that is a projection until a power cycle confirms it.
+
+### Key lesson
+
+Five of these six were invisible because something reported success: a health check that couldn't fail, a setup script that "worked" while discarding its own input, a watchdog doing exactly its job at exactly the wrong moment. **Tooling that cannot report a problem is worse than no tooling**, because it converts an unknown into a false certainty. The bind, the missing auth, and the discarded cache had all been true for months under a stack full of green checkmarks.
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
@@ -412,8 +470,9 @@ Speed and capability are not on the same axis. Lesson #12 warned that dense-on-S
 | v3.0 | Qwen3.5-35B-A3B-FP8 | MoE | 3B | ~49 | No | Superseded by v4.0 |
 | v4.0 | Qwen3.6-35B-A3B-FP8 | MoE + DeltaNet | 3B | ~53 | No | Same intelligence as v3, +DeltaNet, 262K |
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
-| **v5.0** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — speed traded for vision + higher per-token reasoning** |
+| v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Speed traded for vision + higher per-token reasoning |
+| **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
 
 ---
 
-*Last updated: August 16, 2026 — v5.0 swap*
+*Last updated: August 25, 2026 — v5.1 hardening*
