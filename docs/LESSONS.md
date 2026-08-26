@@ -508,10 +508,9 @@ One measurement, two very different next moves. That is why it comes before any 
 
 Lessons #16 and #17 reference `benchmark_brain.sh`, `serving_audit.sh`,
 `specdecode_probe.sh` and friends. Those were accurate when written. They have
-since been consolidated into a single entry point, `scripts/benchmark.sh`, with
-the measurement primitives in `scripts/lib/bench.sh` — eight scripts had
-accumulated, three of them carrying their own drifting copy of the credential
-redactor. The earlier text is left as written rather than retconned: it records
+since been consolidated into a single self-contained entry point,
+`scripts/benchmark.sh` — eight scripts had accumulated, three of them carrying
+their own drifting copy of the credential redactor. The earlier text is left as written rather than retconned: it records
 what was true at the time, and the mapping is `benchmark_brain.sh` →
 `benchmark.sh quick`, `serving_audit.sh` → `benchmark.sh audit`,
 `bandwidth_probe.sh` → `benchmark.sh bandwidth`, and the sweep/probe pair →

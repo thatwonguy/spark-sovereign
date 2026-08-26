@@ -21,12 +21,6 @@ eggs/
 .eggs/
 lib/
 lib64/
-# ...but scripts/lib/ is our shared shell library, not a build artifact.
-# The bare `lib/` above comes from the Python template and silently
-# swallowed it once already, publishing a benchmark.sh that sourced a
-# file absent from the repo.
-!scripts/lib/
-!scripts/lib/**
 parts/
 sdist/
 var/
