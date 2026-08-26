@@ -461,6 +461,267 @@ Five of these six were invisible because something reported success: a health ch
 
 ---
 
+## 18. Is 15–17 tok/s a Ceiling or a Symptom? (Measured — Symptom, Partly)
+
+**Status: measured on the Spark, 2026-08-26. The hypothesis below was written to be falsified, and it was — on both of its inputs.** The original text is kept intact beneath the results, because what it got wrong is more instructive than what it got right.
+
+**The short answer: both.** The roofline is real — and we were nowhere near it, in the other direction.
+
+Non-speculative decode measures **12.04 tok/s**, and at 245 GB/s achieved bandwidth against ~23.4 GB of weights that is the bandwidth limit, essentially exactly. There is no config that makes a dense 27B decode faster than ~12 tok/s one token at a time on this box. **That ceiling is genuine and Lesson #12 was right about the physics.**
+
+But the shipped config was never doing one token at a time. It ran MTP speculation at `num_speculative_tokens: 5`, and **5 was the worst setting available**:
+
+| `num_speculative_tokens` | Decode | Acceptance |
+|---|---|---|
+| off | 12.04 tok/s | — |
+| 2 | 18.47 tok/s | 60.3% |
+| **3** | **19.66 tok/s** | **64.4%** |
+| 5 *(what shipped in v5.0 and v5.1)* | 15.18 tok/s | 39.5% |
+
+Changing one number from 5 to 3 is **+29.5%**, from 15.18 to 19.66 tok/s. Against no speculation at all it is +63%. The weights, the quantisation, the attention backend and the KV dtype are all untouched — output is unchanged, because speculative decoding verifies every draft against the real model and discards what it would not have produced.
+
+**Read that as a ranking, not a throughput guarantee.** All four rows were measured back-to-back in one sweep, watchdog stopped, box otherwise idle — which is what makes comparing them fair, and the ordering 3 > 2 > 5 > off is solid. But absolute decode tracks acceptance, and acceptance tracks the sampled continuation. Re-measuring `mtp3` two hours later, on the same prompt, gave **46.5% acceptance and 17.1 tok/s** rather than 64.4% and 19.66.
+
+That is not a regression and nothing was misconfigured — `num_spec_tokens=3` was confirmed in the engine log. At 3 draft tokens, tokens per forward pass is `1 + 3 × acceptance`, so 64.4% → 46.5% predicts 19.66 × (2.40/2.93) ≈ **16.1 tok/s**, and 17.1 was observed. The spread is fully accounted for by acceptance alone.
+
+**Expect ~17 tok/s day to day.** Four runs measured 16.74, 17.06, 17.13 and 19.66 — and the 19.66 was the sweep itself, on an idle box with the watchdog stopped. Against a 15.2 baseline and a 12.0 non-speculative floor. Quoting 19.66 as the number this box does would repeat, in miniature, the exact error this lesson is about: taking one measurement made under favourable conditions and treating it as a property of the hardware.
+
+So the 15–17 tok/s was a **symptom**, and the cause was neither a broken serving path nor a hardware wall. It was a draft length nobody had ever compared against an alternative, sitting one line below a comment that said so.
+
+**vLLM warned about it at startup, on every single boot, for two releases:**
+
+```
+WARNING [speculative.py:948] Enabling num_speculative_tokens > 1 will run
+multiple times of forward on same MTP layer, which may result in lower
+acceptance rate
+```
+
+That warning is specific, correct, and was printed into a log that `benchmark.sh audit` greps. Nobody read it.
+
+Both of the "two configuration bugs that outrank all of it" turned out to be absent here. Prefix caching works. The 262144 context is reachable with 2.8x room to spare.
+
+### The trigger
+
+Community configs for this same model on this same hardware circulate with a claimed **50 tok/s greedy median** single-stream, plus **~148 tok/s at 8 streams** and **~258 at 32**. We measure **15–17** single-stream. Before either chasing that or dismissing it, the claim gets tested.
+
+### Rule out the easy part first: the multi-stream numbers are ordinary
+
+Decode is bandwidth-bound, and one forward pass reads the whole weight set regardless of batch size. At batch N, that single read emits N tokens. So aggregate throughput rises with concurrency **for free**, until KV cache capacity or `max_num_seqs` binds.
+
+148 @ 8 and 258 @ 32 therefore need no special technique and say nothing about single-stream speed. `scripts/benchmark.sh` measures that curve and checks whether this box reproduces it. If it does, two thirds of the original claim is explained and only the 50 tok/s single-stream figure still needs an account.
+
+### The hypothesis, stated so it can be wrong
+
+The tempting story is: dense 27.78B × NVFP4 ≈ 13.5 GB/token over a 273 GB/s bus ⇒ ~20 tok/s ceiling ⇒ 15–17 is 75–85% of optimal ⇒ nothing to find.
+
+**That story rests on two numbers, and neither has ever been measured here.**
+
+| Input | Where it came from | What if it's wrong |
+|---|---|---|
+| **273 GB/s** | GB10 spec sheet | Real LPDDR5x achieves 70–85% of spec. If it's ~220, the ceiling is ~16 tok/s and we're already at 100% — the roofline story gets *stronger*. |
+| **13.5 GB/token** | Assumes the NVFP4 kernels genuinely read 4 bits/param | If the quant path dequantizes to BF16 or falls back to a general kernel, real bytes/token could be 2–4× higher. Then **there is no ceiling here at all** — there's a broken serving path, and ordinary config work has large headroom. |
+
+The second row is not hypothetical. `config/models.yml` already documents this exact failure for the previous MoE brain: *"REQUIRED for that MoE on Spark, or it falls back to Marlin and runs 2.5x slower."* A silent kernel fallback is a known, in-repo failure mode for this hardware. Asserting a ceiling without checking for it would be assuming the conclusion.
+
+### The test that decides it
+
+`scripts/benchmark.sh bandwidth` measures the denominator and derives the numerator:
+
+```
+achieved bandwidth          <- GPU memcpy benchmark, actual not spec
+measured decode rate        <- benchmark.sh quick
+bytes/token = bandwidth / rate
+ratio       = bytes-per-token / checkpoint-size-on-disk
+```
+
+- **ratio ≈ 1.0** — weights are read at their quantized width. The roofline is real, config tuning can't beat it, and going faster single-stream requires *fewer bytes* (lower-bit quant) or *fewer passes* (speculation).
+- **ratio ≫ 1.5** — the path is moving far more data than the weights occupy. **Not a ceiling — a bug.** Chase the quant kernel, the attention backend vs `kv_cache_dtype: fp8`, and CUDA-graph state.
+
+One measurement, two very different next moves. That is why it comes before any tuning.
+
+---
+
+### RESULTS — measured 2026-08-26
+
+Read-only, against the production config, Brain up. Two audit runs plus one bandwidth and one quick benchmark.
+
+| Quantity | Measured | Was assumed |
+|---|---|---|
+| Achieved memory bandwidth | **245.0 GB/s** | 273 GB/s (spec sheet) |
+| Decode, single stream (3 × 256 tok) | **16.22 tok/s** | ~17 |
+| TTFT | **288 ms** | — |
+| Tokens per forward pass (MTP) | **2.89** | implicitly 1 |
+| Bytes per forward pass | **38.4 GB** | 13.5 GB "per token" |
+| Checkpoint on disk | **23.4 GB** | ~13.5 GB |
+| Ratio, bytes-per-pass ÷ checkpoint | **1.64x** | 1.0 assumed |
+| Prefix cache hit rate (delta, identical prefix) | **37.4%** | feared 0 |
+| Speculative acceptance | **0.378 – 0.511** | never measured |
+| KV cache capacity | **745,115 tokens** | feared < 262,144 |
+
+**Every input to the original roofline was wrong.** Bandwidth was over-assumed by 11%. The checkpoint is 23.4 GB, not the ~13.9 GB that 27.78B params at 4 bits implies — NVFP4 quantises the linear layers, not the embeddings, norms, MTP heads or vision tower. And "bytes per token" was the wrong unit entirely, because speculation emits 2.89 tokens per weight read.
+
+The arithmetic that produced "~20 tok/s ceiling, we're at 75–85%, nothing to find" was wrong in all three terms. It happened to land near the observed number, which is the most dangerous way for a wrong model to be wrong.
+
+**What is genuinely confirmed working.** The NVFP4 path is *not* falling back — the log names `FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM`, the specific kernel we want, which retires the Marlin-fallback worry that motivated the whole "denominator could be 2–4× off" branch. FLASHINFER is auto-selected out of `['FLASHINFER', 'TRITON_ATTN']` without being pinned, and it coexists with `kv_cache_dtype: fp8` rather than trading against it as the field intel predicted. MTP speculation runs at 5 drafts per step with 38–51% acceptance.
+
+### The 1.64x is real but it is not all waste
+
+38.4 GB read per pass against a 23.4 GB checkpoint looks like 15 GB of unexplained traffic, and `benchmark.sh` duly printed its loudest verdict. That banner overstates the case, for two reasons that push in opposite directions and neither of which is currently measured:
+
+- **Speculation's draft passes are not free and are not in the checkpoint figure.** Each step runs 5 MTP draft passes on top of the verification pass. Every one reads the MTP layer *and* the LM head, and at this vocabulary the LM head is over a gigabyte. Several GB per step of the excess is the *expected cost of the technique*, not a defect.
+- **The vision tower is in the 23.4 GB and is never read during text decode.** That shrinks the true denominator and pushes the ratio the other way.
+
+So the honest reading is "somewhat more traffic than the weights occupy, with a known unmeasured component" — the script's 1.25–1.6 middle band — rather than the smoking gun its >1.6 branch announces. The threshold was set before speculation was known to be active and does not account for draft passes. **Do not cite the 1.64x as evidence of a bug until `spec-off` has run.**
+
+### What the full matrix settled — and what it did not
+
+Fifteen configurations, 3 × 256 tokens each, in `docs/BENCHMARKS.md`.
+
+**The roofline is confirmed, and speculation is the only lever that beat it.** `spec-off` at 12.04 tok/s against 245 GB/s and ~23.4 GB of weights puts bytes-per-pass at ~20.4 GB — at or slightly under the weight set, which is what a clean dense decode path looks like. The earlier 1.64x was speculation's draft passes, exactly as flagged. **There is no serving-path bug.** The `attn`, `kv_cache_dtype` and `gpu_memory_utilization` rows all landed within 15.07–15.19 tok/s of each other: none of them moves single-stream decode at all.
+
+**Aggregate throughput also rises with speculation**, 78.6 → 108.9 tok/s at 8 streams, which was not obvious in advance — batching and speculation could have competed for the same bottleneck and did not.
+
+**Two overrides silently did not take effect, and the validation caught both.** This is the whole reason the Validity column exists:
+
+- `prefix-off` requested `enable_prefix_caching=false` and measured a 37.4% hit rate — unchanged from baseline. Prefix caching is **on by default** in vLLM V1, so omitting the flag does not disable it; that needs `--no-enable-prefix-caching`. The launcher cannot currently express "off".
+- `attn-triton` requested `TRITON_ATTN` and the log says `Using FLASHINFER attention backend`. Its 15.14 tok/s is a second measurement of FlashInfer, not a measurement of Triton.
+
+Both rows are marked PARTIAL and excluded from the ranking. Without the validation fix they would have read VALID, and we would have concluded "the attention backend makes no difference" from two runs of the same backend. **The attention-backend lever remains untested**, and so does prefix-caching-off.
+
+**The n-gram result is not a verdict.** `spec-ngram5` drafted **10 tokens across an entire generation** — it essentially never fired, and its 12.46 tok/s is just `spec-off` with overhead. That is the predicted worst case: the default prompt writes fresh prose, and prompt-lookup pays off only when output echoes context. On agentic coding over files already in context it may well beat MTP. Ruling it out on this number would repeat the mistake this lesson is about.
+
+**The artifactory warning was mostly a red herring**, and saying so matters as much as raising it. The same log shows the FlashInfer autotune cache loading 42 configs from disk and a `Config cache hit for fp4_gemm`, plus `FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` — the intended kernel, autotuned, from a local cache. The failed download is real but is not costing us the kernels. Downgraded from "largest single lead" to "worth pre-staging so it stays true across upgrades."
+
+### The measurement that was decisive, and why it was `spec-off`
+
+Turning speculation off collapses tokens-per-pass to exactly 1 and removes the draft passes from the byte count. Then `bytes_per_pass = 245 / decode_rate` measures the verification path alone:
+
+- **ratio ≈ 1.0** — the path is clean, and the entire 1.64x was speculation's draft overhead. The ceiling is real and the way up is higher acceptance, not config work.
+- **ratio still ≫ 1.5** — there is genuine excess traffic in the base forward pass, and it is worth chasing.
+
+**Name the confound before running it.** `spec-off` changes two things at once, because the CUDA-graph mode is downstream of it:
+
+```
+CUDAGraphMode.FULL_AND_PIECEWISE is not supported with spec-decode for attention
+backend FlashInferBackend; setting cudagraph_mode=PIECEWISE
+```
+
+With speculation on, FlashInfer forces graphs down from FULL to PIECEWISE. Turning speculation off restores FULL. So a faster `spec-off` result cannot distinguish "speculation was costing more than it returned" from "PIECEWISE graphs are expensive on this box". `attn-triton` separates them: if TRITON_ATTN keeps full graphs under spec-decode, it isolates the graph mode from the speculation.
+
+### The lead that is not in the config at all
+
+```
+WARNING [flashinfer.py:441] Failed to connect to NVIDIA artifactory:
+Failed to resolve 'edge.urm.nvidia.com' (Temporary failure in name resolution)
+```
+
+FlashInfer tries to download prebuilt kernels at startup and cannot, because this box has no route to the internet — which is the entire point of it. It then proceeds on JIT-compiled or fallback kernels, logging a warning and no error.
+
+This is the same shape as the failure `config/models.yml` already records for the previous MoE brain: *"REQUIRED for that MoE on Spark, or it falls back to Marlin and runs 2.5x slower."* A silent kernel downgrade, visible only as a line in a startup log nobody greps for.
+
+It is also the one finding here that **local-first makes structural rather than incidental**: every future FlashInfer upgrade will hit it, on this box, forever. The fix is to pre-stage the kernel cache into the image or a mounted volume, not to give the Spark internet access. Unquantified so far — it may cost nothing, or it may be the largest single factor in the 1.64x. Nothing above assumes either.
+
+---
+
+### A note on script names in earlier lessons
+
+Lessons #16 and #17 reference `benchmark_brain.sh`, `serving_audit.sh`,
+`specdecode_probe.sh` and friends. Those were accurate when written. They have
+since been consolidated into a single self-contained entry point,
+`scripts/benchmark.sh` — eight scripts had accumulated, three of them carrying
+their own drifting copy of the credential redactor. The earlier text is left as written rather than retconned: it records
+what was true at the time, and the mapping is `benchmark_brain.sh` →
+`benchmark.sh quick`, `serving_audit.sh` → `benchmark.sh audit`,
+`bandwidth_probe.sh` → `benchmark.sh bandwidth`, and the sweep/probe pair →
+`benchmark.sh` (the full matrix).
+
+### Corroboration — and two config bugs that outrank all of it
+
+Later field reports on this same model, gathered after the above was written, sharpen the picture considerably. Treating them as claims to test rather than facts:
+
+**The cross-check that matters most.** One reported recipe took an **FP8** build of this model from 7.88 to **58.5 tok/s** single-stream through decode strategy alone — speculative decoding plus prefix caching, weights untouched, output-preserving. FP8 weights are roughly **twice the bytes per token** of our NVFP4 build. If that box sustains 58.5 tok/s while reading ~27 GB/token, then our 15–17 tok/s while reading ~13.5 GB/token is not a bandwidth wall. Same hardware, half the bytes, a third of the speed. **That is the strongest independent evidence yet that our number is config-limited, and it does not depend on trusting any single benchmark.**
+
+**But calibrate the expectation honestly.** That 7.4× headline is partly the repair of a broken baseline, not pure technique. 7.88 tok/s is *below* the non-speculative roofline for an FP8 27B on this bus (~10 tok/s), which means their starting point was already malfunctioning — plausibly the exact prefix-caching bug below. Ours at 15–17 against a ~20 tok/s NVFP4 roofline is a *healthy* baseline. **Expect roughly 2–3× from working speculation here, not 7×.** Anyone quoting 58 tok/s as our target is comparing against someone else's broken starting point.
+
+**Two configuration bugs, both of which apply to us, and both of which outrank speculative decoding:**
+
+> **Both REFUTED on this box, 2026-08-26.** Neither reported bug reproduces here. Prefix caching serves 37.4% of a repeated identical prefix; the KV cache holds 745,115 tokens against an advertised 262,144. Field intel from other people's boxes is a reason to *measure*, not a reason to believe. Left in place below as written, because the reasoning that made them worth testing was sound even though both answers came back no.
+
+1. **Prefix caching silently disabled.** vLLM is reported to turn prefix caching off for this model's card parameters *even though the flag is accepted*. We pass `--enable-prefix-caching` and have never confirmed it took effect. If it is inert, every OpenClaw turn reprocesses the entire conversation prefix. In agentic coding — long shared context, many short turns — that costs far more than draft-token tuning can ever win back, and it fails completely silently.
+
+2. **The advertised context may not be reachable.** The default attention backend is reported to cap usable context near 60K at **0.80** utilisation, with FLASHINFER fitting ~170K. We declare `max_model_len: 262144` at **0.45** utilisation — half that memory budget — and pin no backend at all. If the KV cache cannot hold 262144 tokens, that number is a claim the server cannot honour, and it surfaces as a mid-session failure rather than a startup one.
+
+Both are measurable from outside the container, so `scripts/benchmark.sh audit` measures them rather than reading the log and hoping. Prefix caching is tested by sending a long prefix twice and comparing TTFT; context is tested by comparing vLLM's actual allocated KV cache size in tokens against the advertised `max_model_len`.
+
+**Order changed as a result.** The audit runs first. A dead prefix cache or an unreachable context window is worth more than the entire speculative-decoding question, and both are cheaper to fix.
+
+**Why the attention backend matters unusually much on this model.** It is a hybrid: ~48 GatedDeltaNet linear-attention layers plus ~16 full-attention layers. The backend choice governs the full-attention layers and the KV cache they need, which is why it shows up as a *context capacity* limit rather than only a speed one — and why the reported FLASHINFER context win is measured **without** an FP8 KV cache. That trades against our `kv_cache_dtype: fp8` rather than stacking with it, so those two settings must be changed one at a time or the result is uninterpretable.
+
+**On DFlash2.** The strongest reported configs (~50 tok/s greedy median, 148 at 8 streams, 258 at 32) run **SGLang**, not vLLM. That is a different serving engine: different container, different arguments, and every launcher, watchdog, and health check in this repo is vLLM-shaped. It is a plausible future direction and explicitly **out of scope** for this branch — chasing it means porting the stack, not editing a config field. Exhaust the vLLM-side levers first; they are free and they are already instrumented.
+
+This also retires an earlier claim that NVFP4 was vLLM-only and unsupported on SGLang. Multiple reported SGLang+NVFP4 configs contradict it. Noted so that it is not carried forward as a constraint that no longer holds.
+
+### Levers, including the one initially missed
+
+If the roofline turns out to be real, these still break it — a ceiling on *plain* decode is not a ceiling on *throughput*:
+
+1. **MTP speculative decoding** — shipped since v5.0, in `speculative_config`, **never verified**. `scripts/benchmark.sh audit` diffs `vllm:spec_decode_*` counters across a known generation; zero drafts is conclusive.
+2. **N-gram / prompt-lookup decoding** — needs no drafter and no extra weights: it proposes continuations by finding repeats of the current suffix earlier in context. Nearly free, and unusually strong on **agentic coding**, where the model reproduces long verbatim spans from files already in context. **This was omitted from the first pass at this analysis, which is precisely the kind of gap that makes "no config can beat X" an unsafe claim.** Now a first-class candidate in the sweep.
+3. **Draft length** — `num_speculative_tokens: 5` was never compared against anything; the community day-zero recipe used 2. Rejected tokens still cost verification, so longer is not monotonically better.
+4. **Attention backend / KV dtype** — `kv_cache_dtype: fp8` is only honoured by some backends. A silent BF16 fallback doubles KV bytes read per token, with no error.
+5. **Lower-bit weights** — below NVFP4 is fewer bytes/token and a strictly higher roofline, at a quality cost.
+6. **Batching** — already free, already available, just not what a single-stream number measures.
+
+### Why acceptance rate is workload-dependent
+
+The default benchmark prompt writes fresh prose and code from nothing — close to the **worst case** for prompt-lookup, which pays off when output echoes context. A poor `ngram` result against it would *not* generalise to real agentic coding over files in context. The sweep takes `PROMPT` for this reason; a verdict from the default prompt alone is not a verdict on your actual workload.
+
+### Order of operations
+
+```bash
+bash scripts/benchmark.sh            # everything: audit, full matrix, then the report
+```
+
+Or one piece at a time:
+
+```bash
+bash scripts/benchmark.sh audit      # is prefix caching live? is 262K reachable?
+bash scripts/benchmark.sh bandwidth  # ceiling real, or path moving too many bytes?
+bash scripts/benchmark.sh quick      # decode + TTFT of the running config
+bash scripts/benchmark.sh list       # what is in the matrix, what has been measured
+```
+
+The audit runs first because it can find a problem that makes the rest moot:
+a dead prefix cache dominates real agentic cost, and an unreachable context
+window invalidates the headline spec in README. Results accumulate in
+`docs/BENCHMARKS.md`, which is generated, never authored.
+
+The first two are read-only and safe against production. The sweep restarts Brain repeatedly.
+
+### Key lesson — confirmed, and it is about method, not hardware
+
+Two divisions produced a confident ceiling, and the ceiling was built on two unmeasured inputs and an incomplete list of techniques. The arithmetic was fine; treating it as a **result** rather than a **hypothesis** was not. A roofline you have not measured is a guess with units attached.
+
+Measurement settled it: **every input was wrong** — bandwidth by 11%, checkpoint size by 70%, and the unit itself, which should have been bytes per *forward pass* and not per token. The estimate still landed near the observed 16 tok/s. A wrong model that reproduces the right number is the hardest kind to catch, and the only thing that caught it was refusing to skip the measurement.
+
+**The sharper lesson is the second-order one.** The tool built to test the hypothesis was itself wrong three times, and every failure pointed the same way — toward a confident verdict rather than an admission of ignorance:
+
+| What broke | What it reported | Truth |
+|---|---|---|
+| `print s+0` on an absent/timestamp-polluted counter | speculation DEAD | 350 drafted, 53% accepted |
+| 1.8x TTFT threshold borrowed from dense transformers | prefix cache INERT | 37.4% hit rate |
+| `bytes = bandwidth / tokens`, ignoring speculation | "roofline is REAL" | 1.64x, headroom exists |
+
+The third is the one to remember. It would have **confirmed the hypothesis the script existed to test**, by construction, and printed a paragraph explaining that config tuning could not help. Instrumentation is not neutral: it encodes the assumptions of whoever wrote it, and it fails toward them.
+
+And one more, cheaper to state and easier to repeat: a single reading of a noisy proxy is not a measurement. The prefix-cache TTFT ratio came back 0.90x and then 4.51x on the same config minutes apart. The first reading was explained with a confident, plausible, wrong story about hybrid attention layers. Two readings would have cost sixty seconds.
+
+Test the claim. Then test the instrument. Then write the lesson.
+
+Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly), Lesson #17 (tooling that cannot report a problem manufactures false certainty — including tooling made of arithmetic).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
@@ -471,8 +732,9 @@ Five of these six were invisible because something reported success: a health ch
 | v4.0 | Qwen3.6-35B-A3B-FP8 | MoE + DeltaNet | 3B | ~53 | No | Same intelligence as v3, +DeltaNet, 262K |
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Speed traded for vision + higher per-token reasoning |
-| **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
+| **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Superseded by v5.2. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
+| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model and weights. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18** |
 
 ---
 
-*Last updated: August 25, 2026 — v5.1 hardening*
+*Last updated: August 26, 2026 — Lesson #18, throughput question ANSWERED: roofline real at 12 tok/s, draft length was the bug, 15.18 -> 19.66 tok/s*
