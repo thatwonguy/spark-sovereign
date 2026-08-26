@@ -73,6 +73,10 @@ BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
 BRAIN_NAME=$(get_field brain served_name)
 BRAIN_PORT=$(get_field brain port)
+# Fall back to loopback when models.yml predates bind_host, so an older config
+# tightens rather than silently staying open to the whole LAN.
+BRAIN_HOST=$(get_field brain bind_host)
+BRAIN_HOST="${BRAIN_HOST:-127.0.0.1}"
 BRAIN_UTIL=$(get_field brain gpu_memory_utilization)
 BRAIN_CTX=$(get_field brain max_model_len)
 BRAIN_KV=$(get_field brain kv_cache_dtype)
@@ -122,6 +126,7 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
         --gpus all --ipc host --network host \
         --restart no \
         -e MODEL="${BRAIN_MODEL_PATH}" \
+        -e HOST="${BRAIN_HOST}" \
         -e PORT="${BRAIN_PORT}" \
         -e MAX_MODEL_LEN="${BRAIN_CTX}" \
         -e GPU_MEMORY_UTIL="${BRAIN_UTIL}" \
@@ -141,7 +146,7 @@ else
         "${BRAIN_IMAGE}" \
             --model "${BRAIN_MODEL_PATH}" \
             --served-model-name "${BRAIN_NAME}" \
-            --host 0.0.0.0 --port "${BRAIN_PORT}" \
+            --host "${BRAIN_HOST}" --port "${BRAIN_PORT}" \
             --gpu-memory-utilization "${BRAIN_UTIL}" \
             --max-model-len "${BRAIN_CTX}" \
             --kv-cache-dtype "${BRAIN_KV}" \
