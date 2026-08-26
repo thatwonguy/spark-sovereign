@@ -24,6 +24,9 @@ brain:
   hf_repo: unsloth/Qwen3.8-27B-NVFP4
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
+  # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
+  # this box only
+  bind_host: 127.0.0.1
   served_name: qwen38-27b             # arbitrary label independent of model weights; if you change it, re-point OpenClaw
   docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 build — GB10 is an ARM host
   gpu_memory_utilization: 0.45

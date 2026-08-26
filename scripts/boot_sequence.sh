@@ -6,6 +6,10 @@
 set -uo pipefail   # NOTE: no -e — one failure must not abort the chain.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Needed for BRAIN_API_KEY — /v1 returns 401 without it once a key is set,
+# which would make the readiness wait below time out on a healthy Brain.
+source "${REPO_ROOT}/.env" 2>/dev/null || true
+BRAIN_API_KEY="${BRAIN_API_KEY:-}"
 
 log() { echo "[spark-boot] $*"; }
 
@@ -24,7 +28,8 @@ fi
 log "Waiting for Brain to be ready (port 8000, up to 12 min)..."
 DEADLINE=$(( $(date +%s) + 720 ))
 while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
-    if curl -sf --max-time 5 http://localhost:8000/v1/models >/dev/null 2>&1; then
+    if curl -sf --max-time 5 -H "Authorization: Bearer ${BRAIN_API_KEY}" \
+            http://localhost:8000/v1/models >/dev/null 2>&1; then
         log "Brain ready."
         break
     fi

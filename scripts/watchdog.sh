@@ -94,7 +94,11 @@ check_brain() {
         return
     fi
     local age; age=$(container_age_secs brain)
-    if curl -sf --max-time 5 "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; then
+    # Header is sent unconditionally: vLLM ignores it when --api-key is unset.
+    # Without it, a keyed Brain answers 401 and the watchdog would restart a
+    # perfectly healthy container every cycle.
+    if curl -sf --max-time 5 -H "Authorization: Bearer ${BRAIN_API_KEY:-}" \
+            "http://localhost:${BRAIN_PORT}/v1/models" >/dev/null 2>&1; then
         mark_healthy brain
         record_status brain "up"
         return
