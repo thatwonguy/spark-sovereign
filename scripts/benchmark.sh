@@ -649,7 +649,22 @@ validate_runtime() {
 }
 
 # -- Ledger -------------------------------------------------------------------
+# The ledger is keyed on (model, name), never on name alone.
+#
+# Config names — baseline, spec-off, attn-triton — describe a config, not a
+# model, and every model benchmarked reuses all fifteen of them. Without the
+# model recorded, benchmarking a second checkpoint appends a second `baseline`
+# row and render_report's dedupe silently drops the first. The result is a
+# table that looks coherent and mixes two models' numbers, which is exactly the
+# "real number attributed to the wrong cause" this file warns about.
+#
+# Identity is the weights directory, not served_name: served_name is an
+# arbitrary label that can be changed without changing what ran, and the same
+# weights weigh the same under any label. It is also what the roofline
+# denominator is measured from.
 ledger_append() {
+    local model; model=$(basename "$(get_field brain local_path)" 2>/dev/null)
+    MODEL="${model:-unknown}" \
     NAME="$1" ENGINE="$2" OVERRIDES="$3" \
     VALIDITY="${VALIDITY}" VALIDATION_NOTE="${VALIDATION_NOTE}" \
     DECODE_TOKS="${DECODE_TOKS:-}" TTFT_MS="${TTFT_MS:-}" AGG_MAX="${AGG_MAX:-}" \
@@ -662,7 +677,8 @@ import json, os, datetime
 def num(k):
     try: return float(os.environ.get(k, ''))
     except (TypeError, ValueError): return None
-rec = {'name': os.environ['NAME'], 'engine': os.environ['ENGINE'],
+rec = {'model': os.environ['MODEL'],
+       'name': os.environ['NAME'], 'engine': os.environ['ENGINE'],
        'overrides': os.environ['OVERRIDES'].strip(),
        'validity': os.environ['VALIDITY'], 'note': os.environ['VALIDATION_NOTE'].strip(),
        'decode_toks': num('DECODE_TOKS'), 'ttft_ms': num('TTFT_MS'),
@@ -701,11 +717,18 @@ for line in open(ledger, encoding="utf-8"):
     except json.JSONDecodeError:
         continue
 
-# Later measurements of the same name supersede earlier ones.
-by_name = {}
+# Later measurements of the same config ON THE SAME MODEL supersede earlier
+# ones. Keying on name alone would let a second model's `baseline` silently
+# replace the first model's. Rows written before the model field existed are
+# attributed to the legacy label rather than being merged into any real model.
+LEGACY = "(model not recorded)"
+by_key = {}
 for r in rows:
-    by_name[r["name"]] = r
-rows = list(by_name.values())
+    r.setdefault("model", LEGACY)
+    r.setdefault("name", "?")
+    by_key[(r["model"], r["name"])] = r
+rows = list(by_key.values())
+models = sorted({r["model"] for r in rows})
 
 def f(v, spec="{:.1f}", dash="—"):
     return dash if v is None else spec.format(v)
@@ -714,10 +737,22 @@ ranked = sorted(
     [r for r in rows if r.get("validity") == "VALID" and r.get("decode_toks")],
     key=lambda r: r["decode_toks"], reverse=True)
 
+# One recommendation, for one model. Ranking configs across different models
+# would crown whichever model is intrinsically fastest and present it as a
+# serving-config win. When several models are present the most recently
+# measured one is the subject, and the report says so.
+rec_model = None
+if len(models) > 1 and ranked:
+    rec_model = max(rows, key=lambda r: r.get("measured_at") or "")["model"]
+    ranked = [r for r in ranked if r["model"] == rec_model]
+
 out = []
 w = out.append
 
-w("# Serving Configuration Benchmarks — Qwen3.8-27B on DGX Spark (GB10)")
+if len(models) == 1:
+    w(f"# Serving Configuration Benchmarks — {models[0]} on DGX Spark (GB10)")
+else:
+    w("# Serving Configuration Benchmarks — DGX Spark (GB10)")
 w("")
 w("<!-- GENERATED FILE. Do not edit by hand. -->")
 w("<!-- Source of truth: docs/benchmarks.jsonl (append-only ledger). -->")
@@ -759,13 +794,27 @@ w("")
 
 w("## Results")
 w("")
+if len(models) > 1:
+    w("> **This table covers more than one model: " + ", ".join(f"`{m}`" for m in models) + ".** ")
+    w("> Decode rates are NOT comparable across models — a smaller or sparser model is ")
+    w("> faster for reasons that have nothing to do with the serving config being tested. ")
+    w("> Compare rows only within a single Model value.")
+    w("")
 w("| Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |")
 w("|---|---|---|---|---|---|---|---|---|---|---|")
 order = {"VALID": 0, "PARTIAL": 1, "FAILED": 2, "INVALID": 3, "BLOCKED": 4}
-for r in sorted(rows, key=lambda r: (order.get(r.get("validity"), 9),
-                                     -(r.get("decode_toks") or 0))):
+# With one model the name alone is unambiguous. With several, the model is
+# carried in the row itself so no reader can compare across models by accident.
+for r in sorted(rows, key=lambda r: (r["model"],
+                                     order.get(r.get("validity"), 9),
+                                     -(r.get("decode_toks") or 0))
+                      if len(models) > 1 else
+                      (order.get(r.get("validity"), 9),
+                       -(r.get("decode_toks") or 0))):
+    label = r.get("name", "?") if len(models) == 1 else \
+        "{} / {}".format(r["model"], r.get("name", "?"))
     w("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
-        r.get("name", "?"), r.get("engine", "?"), r.get("validity", "?"),
+        label, r.get("engine", "?"), r.get("validity", "?"),
         f(r.get("decode_toks"), "{:.1f} tok/s"),
         f(r.get("ttft_ms"), "{:.0f} ms"),
         f(r.get("aggregate_toks"), "{:.1f} tok/s"),
@@ -796,6 +845,10 @@ w("")
 
 w("## Recommendation")
 w("")
+if rec_model:
+    w(f"*Scoped to the most recently measured model, `{rec_model}`. Other models in ")
+    w("the ledger are reported in the table above but not ranked here.*")
+    w("")
 if not ranked:
     w("**No VALID measurements yet.** Nothing here should be used to choose a ")
     w("configuration. Run `bash scripts/benchmark.sh` on the Spark.")
