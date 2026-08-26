@@ -59,15 +59,6 @@ echo "========================================================"
 echo " spark-sovereign — Phase 3: vLLM Inference Server"
 echo "========================================================"
 
-# Stop all GPU model containers first to free memory before starting.
-echo ">>> Stopping existing GPU model containers..."
-for name in brain qwen-brain nemotron-nano asr-server tts-server; do
-    if docker ps -q --filter "name=^${name}$" | grep -q .; then
-        docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
-    fi
-    docker rm -f "${name}" 2>/dev/null || true
-done
-
 # ── Brain ─────────────────────────────────────────────────────────────────────
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
@@ -135,6 +126,27 @@ echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
 BRAIN_MODEL_PATH="/models/$(basename "${BRAIN_PATH}")"
+
+# Stop the GPU model containers to free memory, IMMEDIATELY before starting the
+# new one. This deliberately sits here and not at the top of the script.
+#
+# It used to run before the ~15 get_field calls above, leaving several seconds
+# between `docker rm -f brain` and `docker run --name brain`. watchdog.sh polls
+# every 2 minutes, sees no brain container, and correctly starts one — so a
+# manual run of this script could lose the race and die on "container name
+# /brain is already in use". Observed 2026-08-25.
+#
+# Removing and starting back-to-back closes the gap to milliseconds, with no
+# lock file, no timer juggling, and no persistent state that could go stale and
+# silently disable self-heal. start_brain_ad_hoc.sh has always been ordered
+# this way, which is why it never hit the bug; this now matches it.
+echo ">>> Stopping existing GPU model containers..."
+for name in brain qwen-brain nemotron-nano asr-server tts-server; do
+    if docker ps -q --filter "name=^${name}$" | grep -q .; then
+        docker stop "${name}" 2>/dev/null && echo "    stopped ${name}" || true
+    fi
+    docker rm -f "${name}" 2>/dev/null || true
+done
 
 if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     # ── Avarok image ──────────────────────────────────────────────────────────
@@ -231,9 +243,16 @@ echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
 echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (weights + KV cache)"
 echo "========================================================"
 echo ""
-echo " NEXT STEP: Open OpenClaw → run the onboard setup wizard"
+echo " NEXT STEP — the Brain is serving, but nothing is talking to it yet."
+echo " Connect your agentic layer. This is a MANUAL step: the framework keeps"
+echo " its own config and does not read this repo's .env."
 echo ""
-echo " When the wizard asks — enter these values:"
+echo "   OpenClaw   :  openclaw onboard"
+echo "   Any other  :  point it at the Base URL below as an OpenAI-compatible"
+echo "                 provider (Hermes, LibreChat, Open WebUI, n8n, aider,"
+echo "                 Continue, raw curl — all take the same four values)."
+echo ""
+echo " Enter these values wherever your framework asks for them:"
 echo ""
 echo "  Provider type   : OpenAI-compatible endpoint"
 echo "  Base URL        : http://localhost:${BRAIN_PORT}/v1"
@@ -248,6 +267,16 @@ echo "  API key         : unused  (any string works — no key configured)"
 fi
 echo "  Context window  : ${BRAIN_CTX}"
 echo ""
-echo " Everything else (agent name, personality, voice, memory,"
-echo " Telegram, workspace) is configured inside OpenClaw's wizard."
+echo " Everything else (agent name, personality, voice, memory, Telegram,"
+echo " workspace) belongs to your agentic layer, not to this repo. In OpenClaw"
+echo " that is all inside the onboard wizard."
+echo ""
+echo " Verify the connection before configuring anything:"
+echo "   curl -s http://localhost:${BRAIN_PORT}/v1/models"
+if [ -n "${BRAIN_API_KEY}" ]; then
+echo "     ^ expect 401 — auth is on"
+echo "   curl -s -H \"Authorization: Bearer \$(grep BRAIN_API_KEY .env | cut -d= -f2)\" \\"
+echo "        http://localhost:${BRAIN_PORT}/v1/models"
+echo "     ^ expect the model list"
+fi
 echo "========================================================"
