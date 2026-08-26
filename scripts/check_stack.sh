@@ -7,6 +7,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Needed for BRAIN_API_KEY — /v1 returns 401 without it once a key is set.
+source "${REPO_ROOT}/.env" 2>/dev/null || true
+BRAIN_API_KEY="${BRAIN_API_KEY:-}"
 
 get_field() {
     python3 -c "
@@ -84,7 +87,8 @@ echo ""
 
 # ── Brain ─────────────────────────────────────────────────────────────────────
 echo "── Brain (vLLM) ────────────────────────────────────────────"
-BRAIN_RESULT=$(curl -sf --max-time 5 "http://localhost:${BRAIN_PORT}/v1/models" \
+BRAIN_RESULT=$(curl -sf --max-time 5 -H "Authorization: Bearer ${BRAIN_API_KEY}" \
+    "http://localhost:${BRAIN_PORT}/v1/models" \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" \
     2>/dev/null || echo "")
 if [ -n "${BRAIN_RESULT}" ]; then
