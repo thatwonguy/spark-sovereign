@@ -20,6 +20,9 @@ import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
 val = cfg.get('$1', {}).get('$2', '')
+# YAML true -> Python True prints as 'True'; callers test for 'true'.
+if isinstance(val, bool):
+    val = str(val).lower()
 print(val if val is not None else '')
 "
 }
@@ -35,6 +38,22 @@ for k, v in env.items():
 " 2>/dev/null || true
 }
 
+# Emit a field as compact JSON. Accepts either a YAML mapping or a JSON string.
+get_json_field() {
+    python3 -c "
+import yaml, json
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+val = cfg.get('$1', {}).get('$2', None)
+if val is None or val == '':
+    print('')
+elif isinstance(val, str):
+    print(''.join(val.split()))
+else:
+    print(json.dumps(val, separators=(',', ':')))
+"
+}
+
 BRAIN_IMAGE=$(get_field brain docker_image)
 BRAIN_PATH=$(get_field brain local_path)
 BRAIN_NAME=$(get_field brain served_name)
@@ -47,6 +66,10 @@ BRAIN_TOOL=$(get_field brain tool_call_parser)
 BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
+BRAIN_QUANT=$(get_field brain quantization)
+BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
+BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
+BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 # Stop any existing Brain container before starting fresh.
@@ -74,14 +97,30 @@ docker run -d --name brain \
         --max-model-len "${BRAIN_CTX}" \
         --kv-cache-dtype "${BRAIN_KV}" \
         ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
+        ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
+        ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
+        ${BRAIN_SPEC_CONFIG:+--speculative-config "${BRAIN_SPEC_CONFIG}"} \
         --trust-remote-code \
         --enable-auto-tool-choice \
         --tool-call-parser "${BRAIN_TOOL}" \
-        --reasoning-parser "${BRAIN_REASON}" \
-        --enable-prefix-caching \
+        ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
+        $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
         --max-num-seqs "${BRAIN_SEQS}" \
         ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
-echo "    Brain takes 3-5 minutes to load. OpenClaw reconnects automatically."
+
+# NOTE: deliberately fire-and-return — do NOT add a readiness wait here.
+# Both callers already bound the wait themselves, and each needs a fast return:
+#   - boot_sequence.sh treats a failed start as non-fatal, then does its own
+#     bounded 12-min wait on port 8000.
+#   - watchdog.sh runs every 2 min and calls this for recovery; blocking here
+#     would stretch its MAX_FAILS quarantine window far past the intended ~6 min.
+echo "    Brain takes 3-5 minutes to load. Watchdog owns steady-state health."
+echo "    Serving model ID: ${BRAIN_NAME}"
+echo ""
+echo "    OpenClaw reconnects automatically ONLY if its configured model ID still"
+echo "    matches '${BRAIN_NAME}'. If you changed served_name in config/models.yml,"
+echo "    re-run the OpenClaw config on this machine now — it is a manual step, and"
+echo "    until it is done OpenClaw is pointed at a model ID that no longer exists."

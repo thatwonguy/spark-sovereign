@@ -19,6 +19,9 @@ import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
 val = cfg.get('$1', {}).get('$2', '')
+# YAML true -> Python True prints as 'True'; callers test for 'true'.
+if isinstance(val, bool):
+    val = str(val).lower()
 print(val if val is not None else '')
 "
 }
@@ -32,6 +35,24 @@ env = cfg.get('$1', {}).get('extra_env', {}) or {}
 for k, v in env.items():
     print(f'-e {k}={v}')
 " 2>/dev/null || true
+}
+
+# Emit a field as compact JSON. Accepts either a YAML mapping or a pre-formatted
+# JSON string in models.yml. Compact separators keep the result space-free so it
+# survives the word-splitting VLLM_EXTRA_ARGS path below without extra quoting.
+get_json_field() {
+    python3 -c "
+import yaml, json
+with open('${REPO_ROOT}/config/models.yml') as f:
+    cfg = yaml.safe_load(f)
+val = cfg.get('$1', {}).get('$2', None)
+if val is None or val == '':
+    print('')
+elif isinstance(val, str):
+    print(''.join(val.split()))
+else:
+    print(json.dumps(val, separators=(',', ':')))
+"
 }
 
 echo "========================================================"
@@ -61,12 +82,13 @@ BRAIN_REASON=$(get_field brain reasoning_parser)
 BRAIN_BATCHED=$(get_field brain max_num_batched_tokens)
 BRAIN_MM=$(get_field brain limit_mm_per_prompt)
 BRAIN_QUANT=$(get_field brain quantization)
-BRAIN_SPEC_MODEL=$(get_field brain speculative_model)
-BRAIN_SPEC_TOKENS=$(get_field brain num_speculative_tokens)
+BRAIN_MOE_BACKEND=$(get_field brain moe_backend)
+BRAIN_SPEC_CONFIG=$(get_json_field brain speculative_config)
 BRAIN_EAGER=$(get_field brain enforce_eager)
 BRAIN_REASON_PLUGIN=$(get_field brain reasoning_parser_plugin)
 BRAIN_ASYNC=$(get_field brain async_scheduling)
 BRAIN_ENTRYPOINT=$(get_field brain entrypoint_mode)
+BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
 echo ""
@@ -83,15 +105,17 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     EXTRA_ARGS+=" --trust-remote-code"
     EXTRA_ARGS+=" --enable-auto-tool-choice"
     EXTRA_ARGS+=" --tool-call-parser ${BRAIN_TOOL}"
-    EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
+    # Optional: models with no thinking mode (e.g. Qwen3-Coder-Next) leave this blank.
+    [ -n "${BRAIN_REASON}" ]       && EXTRA_ARGS+=" --reasoning-parser ${BRAIN_REASON}"
     [ -n "${BRAIN_REASON_PLUGIN}" ] && EXTRA_ARGS+=" --reasoning-parser-plugin ${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"
     [ -n "${BRAIN_BATCHED}" ]      && EXTRA_ARGS+=" --max-num-batched-tokens ${BRAIN_BATCHED}"
     [ -n "${BRAIN_QUANT}" ]        && EXTRA_ARGS+=" --quantization ${BRAIN_QUANT}"
-    [ -n "${BRAIN_SPEC_MODEL}" ]   && EXTRA_ARGS+=" --speculative-model ${BRAIN_SPEC_MODEL}"
-    [ -n "${BRAIN_SPEC_TOKENS}" ]  && EXTRA_ARGS+=" --num-speculative-tokens ${BRAIN_SPEC_TOKENS}"
+    [ -n "${BRAIN_MOE_BACKEND}" ]  && EXTRA_ARGS+=" --moe-backend ${BRAIN_MOE_BACKEND}"
+    [ -n "${BRAIN_SPEC_CONFIG}" ]  && EXTRA_ARGS+=" --speculative-config ${BRAIN_SPEC_CONFIG}"
     [ "${BRAIN_EAGER}" = "true" ]  && EXTRA_ARGS+=" --enforce-eager"
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
+    [ "${BRAIN_PREFIX_CACHE}" = "true" ] && EXTRA_ARGS+=" --enable-prefix-caching"
 
     # shellcheck disable=SC2086
     docker run -d --name brain \
@@ -123,16 +147,17 @@ else
             --kv-cache-dtype "${BRAIN_KV}" \
             ${BRAIN_BATCHED:+--max-num-batched-tokens "${BRAIN_BATCHED}"} \
             ${BRAIN_QUANT:+--quantization "${BRAIN_QUANT}"} \
-            ${BRAIN_SPEC_MODEL:+--speculative-model "${BRAIN_SPEC_MODEL}"} \
-            ${BRAIN_SPEC_TOKENS:+--num-speculative-tokens "${BRAIN_SPEC_TOKENS}"} \
+            ${BRAIN_MOE_BACKEND:+--moe-backend "${BRAIN_MOE_BACKEND}"} \
+            ${BRAIN_SPEC_CONFIG:+--speculative-config "${BRAIN_SPEC_CONFIG}"} \
             $([ "${BRAIN_EAGER}" = "true" ] && echo "--enforce-eager") \
             --trust-remote-code \
             --enable-auto-tool-choice \
             --tool-call-parser "${BRAIN_TOOL}" \
-            --reasoning-parser "${BRAIN_REASON}" \
+            ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
             ${BRAIN_REASON_PLUGIN:+--reasoning-parser-plugin "${BRAIN_MODEL_PATH}/${BRAIN_REASON_PLUGIN}"} \
             --max-num-seqs "${BRAIN_SEQS}" \
             ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
+            $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
             $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling")
 fi
 
@@ -153,7 +178,7 @@ echo "========================================================"
 echo " Brain loaded and serving."
 echo "  Model : ${BRAIN_NAME}"
 echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
-echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (~30GB weights + KV cache)"
+echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (weights + KV cache)"
 echo "========================================================"
 echo ""
 echo " NEXT STEP: Open OpenClaw → run the onboard setup wizard"
