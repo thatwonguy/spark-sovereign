@@ -13,84 +13,55 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): BLOCKED. Two builds tried, both fail for different
-# reasons. Production stays on the 27B (main, v5.3, 23.9 tok/s).
+# STATUS (2026-08-27): BLOCKED — this branch does not currently run.
+# Production is the 27B on main / v5.3 at ~23.9 tok/s. Nothing here is live.
 #
-# ATTEMPT 1 — Inferact/...-NVFP4, 170.2 GiB: does not fit. 76 GiB on GPU plus a
-# ~95 GiB BF16 n-gram table against 121 GiB of UNIFIED memory. PLE-Offload does
-# not help on a shared pool. See docs/LESSONS.md #21.
+# Two builds tried. Both fail, for different reasons, and neither is fixable
+# from this file.
 #
-# ATTEMPT 2 — local-inference-lab/...-NVFP4-4p89, 102.4 GiB: FITS, loads
-# (76.82 GiB, PLE offload registered), then dies during profile_run:
+# ATTEMPT 1 — Inferact/Qwen3.8-Flash-Next-NVFP4, 170.2 GiB. Does not fit.
+#   76 GiB of weights on GPU plus a ~95 GiB BF16 n-gram embedding table, against
+#   121 GiB of UNIFIED memory. PLE-Offload assumes a discrete GPU where host RAM
+#   is memory the accelerator does not have; on GB10 it is the same pool, so
+#   offloading relocates bytes without freeing any.
 #
-#   AssertionError: mm_mxfp8 requires N >= 128, got N=96.
-#                   out_features is too small for mm_mxfp8.
-#   at qwen_gdn_linear_attn.py:890 -> self.in_proj_ba(hidden_states)
+#   The tell was in preflight's own output: NVFP4 measured 170.2 GiB and FP8
+#   measured 172.8 — 2% apart. Four-bit is not 2% smaller than eight-bit. The
+#   125B MoE IS 4-bit (~80 GB); the 51B n-gram table ships BF16 (~102 GB) and
+#   dominates. Quantizing the MoE harder saves nothing.
 #
-# The GDN in_proj_ba projection is 96 wide and the checkpoint quantized it to
-# MXFP8; FlashInfer's MXFP8 kernel requires N >= 128. That layer should have
-# been left alone or given another algo. A CHECKPOINT BUG, not a config one —
-# nothing here fixes it, and enforce_eager will not either since the assert is
-# in apply_weights at runtime rather than in the compiler. The README says WIP.
+# ATTEMPT 2 — local-inference-lab/Qwen3.8-Flash-Next-NVFP4-4p89, 102.4 GiB.
+#   Fits, and loads: 76.82 GiB resident, PLE offload registered, MTP accepted.
+#   Dies during profile_run:
 #
-# WHAT WOULD UNBLOCK: a build that quantizes the PLE table (so it fits) WITHOUT
-# applying MXFP8 to sub-128-wide projections. Both are true of neither build
-# tried. Watch for any NVFP4 upload near ~102 GiB and check whether
-# quantized_layers covers in_proj_ba before downloading.
+#     AssertionError: mm_mxfp8 requires N >= 128, got N=96.
+#                     out_features is too small for mm_mxfp8.
+#     at qwen_gdn_linear_attn.py:890 -> self.in_proj_ba(hidden_states)
 #
-# retrying with a build whose PLE table IS quantized:
+#   The GDN in_proj_ba projection is 96 wide and this checkpoint quantized it to
+#   MXFP8, whose FlashInfer kernel requires N >= 128. That layer should have been
+#   left unquantized or given another algo. A CHECKPOINT defect, not a config
+#   one. enforce_eager does not help — the assert fires in apply_weights at
+#   runtime, not during compilation. The README says WIP.
 #
-# The first attempt (Inferact NVFP4, 170.2 GiB) failed: 76 GiB on GPU plus a
-# ~95 GiB n-gram table, against 121 GiB of UNIFIED memory. PLE-Offload does not
-# help on a shared pool — see docs/LESSONS.md #21.
+# WHAT WOULD UNBLOCK IT: one build that quantizes the PLE table (so it fits in
+# 121 GiB of unified memory) AND leaves sub-128-wide projections alone. Six
+# NVFP4/W4A16 builds exist today; five are 123-174 GiB and too large, and the
+# sixth has the MXFP8 bug above.
 #
-# local-inference-lab/...-NVFP4-4p89 is 102.4 GiB and declares
-# "ple_embedding_dtype": "nvfp4" — the embedding table is 4-bit, which is the
-# one thing the first build was missing. MIXED_PRECISION via modelopt: MXFP8 on
-# most layers, NVFP4 on the large expert blocks, 4.89 bpw average.
+# HOW TO CHECK A CANDIDATE, before downloading anything:
+#   bash scripts/preflight_model.sh <repo>        # size and fit, ~10 seconds
+#   curl -s https://huggingface.co/<repo>/raw/main/config.json \
+#     | tr ',' '\n' | grep -iE "ple_embedding_dtype|in_proj_ba"
+# Want ple_embedding_dtype nvfp4 (fits) and in_proj_ba absent from
+# quantized_layers, or quantized to something other than MXFP8.
 #
-#   weights   102.4 GiB
-#   budget    109.79 GiB
-#   KV cache   ~7.4 GiB   <- tight, and QSA forces BF16 so tokens are expensive
-#
-# UNVERIFIED: README says WIP, uploaded 2026-08-27. The index resolves and the
-# shards are coherent, but nobody has run it. max_model_len 262144 may not fit
-# in 7.4 GiB of BF16 KV; vLLM reports the real capacity at startup and fails
-# loudly if it cannot honour the declared window.
-#
-# Downloaded, loaded, and died. 76.07 GiB of weights went to GPU exactly as
-# predicted and PLE offload registered correctly, but the Spark's 128 GB is
-# UNIFIED: host and device share one pool, so offloading the 51B n-gram table
-# relocates bytes inside the same 121 GiB rather than freeing any.
-#
-#   weights on GPU        76.07 GiB   (measured)
-#   n-gram table          ~95 GiB     ("offloaded", same pool)
-#   required             ~171 GiB
-#   available             121 GiB
-#
-# THE CAUSE IS ONE UNQUANTIZED TABLE, not the MoE. NVFP4 measures 170.2 GiB and
-# FP8 measures 172.8 — 2% apart, which is not what quantization looks like. The
-# 125B MoE IS 4-bit (~80 GB); the 51B n-gram embedding ships BF16 (~102 GB) in
-# both builds and dominates. Quantizing the MoE harder saves nothing.
-#
-#   n-gram BF16 (today)   ~183 GB total   does not fit
-#   n-gram FP8            ~131 GB total   does not fit
-#   n-gram NVFP4          ~106 GB total   FITS, ~11 GiB for KV
-#
-# So the trigger to retry is a build that quantizes the EMBEDDING TABLE, not a
-# newer image and not a smaller MoE quant. Watch the shard total: any NVFP4
-# upload meaningfully below 170 GiB has done it. Preflight reports that in
-# stage 1 in ten seconds.
+# What DOES work, all verified: the image
+# vllm/vllm-openai:qwen38-flash-next-arm64-cu130 registers Qwen4Exp*, PLE
+# offload engages, MTP heads ship (4B) so no external drafter is needed, and QSA
+# requires kv_cache_dtype auto — it rejects fp8 outright and says so at load.
 #
 # Full write-up: docs/LESSONS.md #21.
-# 19.66 on tuned MTP and 15.18 on what v5.0/v5.1 shipped. VRAM ~55 GB at 0.45
-# util. Output is unchanged at every step — speculative decoding verifies every
-# draft against the real model. See the speculative_config block below, and
-# docs/LESSONS.md #18 and #20.
-# The non-speculative floor is a measured 12.0 tok/s at 245 GB/s achieved
-# bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
-# configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
-# restores the v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-flash-next-nvfp4
