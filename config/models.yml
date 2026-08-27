@@ -78,11 +78,19 @@ brain:
   #     tokens against a declared max_model_len of 262144 — 2.8x headroom, at
   #     0.45 utilisation, not the ~60K cap that was reported.
   #
-  # STILL UNTESTED: TRITON_ATTN. Setting attention_backend=TRITON_ATTN does not
-  # take effect — the server logs "Using FLASHINFER attention backend" anyway,
-  # so the matrix rows that requested it are marked PARTIAL and measured
-  # FlashInfer twice. Whatever the launcher passes is not reaching vLLM in a
-  # form it honours. Fix that before drawing any conclusion about Triton.
+  # TRITON_ATTN CANNOT BE SELECTED ON THIS MODEL. Tested two ways, both
+  # accepted and both ignored:
+  #   - VLLM_ATTENTION_BACKEND=TRITON_ATTN   (env var, attn-triton row)
+  #   - --attention-backend=TRITON_ATTN      (CLI flag, attn-triton-cli row)
+  # The CLI flag is genuinely accepted — the server starts, so the argument
+  # exists — and the log still says "Using FLASHINFER attention backend out of
+  # potential backends: ['FLASHINFER', 'TRITON_ATTN']". vLLM is overriding the
+  # request, most likely because this hybrid needs FlashInfer for its
+  # GatedDeltaNet layers or its FP8 KV cache.
+  #
+  # Both rows are PARTIAL and neither measured Triton. This is a closed
+  # question, not an open one: there is no known way to make it take effect
+  # here, and it would not matter if there were — see the next paragraph.
   #
   # Also measured: the attention backend does not move single-stream decode on
   # this model at all. Every backend/KV/utilisation row landed in a 15.07–15.19
@@ -128,12 +136,21 @@ brain:
   # 15.2 tok/s baseline and a 12.0 tok/s non-speculative floor, that is still
   # the win; it is just not 19.66 on a working machine.
   #
-  # DO NOT read the ngram result as "ngram is bad". It drafted 10 tokens across
-  # a whole generation, i.e. it almost never fired, because the default
-  # benchmark prompt writes fresh prose — the worst case for prompt-lookup.
-  # On agentic coding, where output echoes files already in context, it may win.
-  # Test it against a real workload before ruling it out:
-  #   PROMPT="$(cat some_real_file.py)\n\nRefactor this." bash scripts/benchmark.sh --only baseline,spec-ngram5 --redo
+  # NGRAM IS RULED OUT, and it was ruled out fairly. The first test gave it its
+  # worst case — fresh prose, where it drafted 10 tokens across an entire
+  # generation and never fired. So it was re-tested on its BEST case:
+  # docs/prompts/agentic-coding.txt puts a source file in context and asks for
+  # the whole file back rewritten, so most output tokens exist verbatim in the
+  # prompt. Longer lookup window too (ngram8: 8 tokens, window 2-8).
+  #
+  #   same prompt, agentic-coding.txt:
+  #     mtp3     19.66 tok/s   138 drafted
+  #     ngram8   13.04 tok/s   104 drafted
+  #
+  # It fired ~10x more than before, confirming the first test really was
+  # handicapping it — and it still lost by 34%. MTP's drafts come from the
+  # model's own heads and are simply better predictions than string matches.
+  # This is now a measurement, not an assumption.
   #
   # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)

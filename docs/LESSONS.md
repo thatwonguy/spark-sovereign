@@ -774,6 +774,32 @@ It had never been measured. BLOCKED and FAILED record the *absence* of a measure
 
 A rumour with a number in it is worth twenty minutes to test, and the test is worth designing so it can distinguish *which part* of the claim is true. Measuring SGLang **without** a drafter looked like the less interesting experiment; it was the one that produced the answer, because it isolated the engine from the technique. Had we run SGLang with a drafter first and seen a speedup, we would have concluded "switch engines" and been wrong about why.
 
+### Addendum — the last two vLLM levers, both closed
+
+Run the same day, after the SGLang result made the vLLM side the cheaper place to look. Both are now measurements rather than open questions.
+
+**TRITON_ATTN cannot be selected on this model.** Tested two ways, both accepted and both ignored:
+
+| Mechanism | Row | Result |
+|---|---|---|
+| `VLLM_ATTENTION_BACKEND=TRITON_ATTN` | `attn-triton` | logged `Using FLASHINFER` |
+| `--attention-backend=TRITON_ATTN` | `attn-triton-cli` | logged `Using FLASHINFER` |
+
+The CLI flag is genuinely accepted — the server starts, so the argument exists — and vLLM overrides the request anyway, most likely because this hybrid needs FlashInfer for its GatedDeltaNet layers or its FP8 KV cache. Both rows are PARTIAL and neither measured Triton. It would not have mattered regardless: every backend/KV/utilisation row in the matrix landed inside 15.07–15.19 tok/s.
+
+**N-gram is ruled out, and it was ruled out fairly.** The first test handed it its worst case — fresh prose, 10 drafted tokens across a whole generation, never firing. #18 said explicitly that this was not a verdict. So it was re-tested on its *best* case: a source file in context with a request to return the whole thing rewritten, so most output tokens exist verbatim in the prompt, plus a longer lookup window.
+
+| Same prompt (`docs/prompts/agentic-coding.txt`) | Decode | Drafted |
+|---|---|---|
+| MTP, 3 draft tokens | **19.66 tok/s** | 138 |
+| n-gram, 8 tokens, window 2–8 | 13.04 tok/s | 104 |
+
+It fired roughly 10× more than before, which confirms the first test really was handicapping it — **and it still lost by 34%.** MTP's drafts come from the model's own heads and are simply better predictions than string matches against context.
+
+That comparison is clean by accident: `attn-triton-cli` failed to change the backend, which made it a plain baseline run on the identical prompt. A row that measured nothing it was asked to measure still produced the control the other row needed.
+
+**What is left.** One lever: a stronger drafter. Tokens-per-pass is the only thing that beats a 12.04 tok/s roofline, and it is entirely a function of draft acceptance. That is `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until an EAGLE3 head trained against *this* checkpoint is pinned.
+
 Related: #18 (the roofline that makes these claims checkable), #12 (bandwidth is physics).
 
 ---
