@@ -264,9 +264,16 @@ wait_ready() {
             local logfile="${REPO_ROOT}/docs/failed-${NAME:-launch}.log"
             docker logs brain >"${logfile}" 2>&1 || true
             local cause
-            cause=$(grep -iE "error|exception|not supported|unsupported|invalid|no such" "${logfile}" \
-                    | grep -viE "errors\.pydantic\.dev|further information" \
-                    | head -3 | redact | cut -c1-400 | tr '\n' ' ')
+            # tail, not head. A fatal error is the LAST thing a process says;
+            # the first "error" in a vLLM log is routinely a transformers
+            # docstring complaint about undocumented kwargs, which is noise and
+            # which duly filled this field for two rows in a row.
+            #
+            # Known-noise patterns are excluded by name rather than by hoping
+            # the ordering works out.
+            cause=$(grep -iE "error|exception|not supported|unsupported|invalid|no such|raise " "${logfile}" \
+                    | grep -viE "errors\.pydantic\.dev|further information|but not documented|Triton is installed" \
+                    | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
             [ -z "${cause}" ] && cause=$(tail -5 "${logfile}" | redact | tr '\n' ' ')
             LAUNCH_NOTE="container exited during load: ${cause} [full log: ${logfile}]"
             return 1
