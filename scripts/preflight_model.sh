@@ -369,9 +369,18 @@ budget = visible - reserved
 # that divides by a whole checkpoint when only some experts are read.
 #
 # Size comes from the config, not a guess: ngram_vocab_size_base x ple_embed_dim
-# at 2 bytes. Reported separately so the operator sees both numbers and knows
-# the second one depends on actually passing the offload flag.
+# x the table's element size. Reported separately so the operator sees both
+# numbers and knows the second one depends on actually passing the offload flag.
+#
+# THE ELEMENT SIZE IS READ, NOT ASSUMED. Hardcoded to 2 until 2026-08-27, which
+# is right for BF16 and overstates an FP8 table by exactly 2x.
+_PLE_ITEMSIZE = {
+    "bfloat16": 2.0, "bf16": 2.0, "float16": 2.0, "fp16": 2.0, "float32": 4.0,
+    "float8_e4m3fn": 1.0, "float8_e5m2": 1.0, "fp8": 1.0,
+    "nvfp4": 0.5, "mxfp4": 0.5, "int4": 0.5, "w4a16": 0.5,
+}
 offload = 0.0
+ple_dtype = ""
 cfg_path = sys.argv[4] if len(sys.argv) > 4 else ""
 if cfg_path and os.path.isfile(cfg_path):
     try:
@@ -380,10 +389,22 @@ if cfg_path and os.path.isfile(cfg_path):
         lm = cfg.get("language_config") or cfg.get("text_config") or cfg
         vocab = lm.get("ngram_vocab_size_base") or cfg.get("ngram_vocab_size_base")
         dim = lm.get("ple_embed_dim") or cfg.get("ple_embed_dim")
+        ple_dtype = str(lm.get("ple_embedding_dtype")
+                        or cfg.get("ple_embedding_dtype") or "").lower()
+        # Unknown dtype falls back to 2: the pessimistic direction. A wrong
+        # guess must never shrink the estimate — that produced a false CLEAR.
+        itemsize = _PLE_ITEMSIZE.get(ple_dtype, 2.0)
         if vocab and dim:
-            offload = float(vocab) * float(dim) * 2 / (1024 ** 3)
+            offload = float(vocab) * float(dim) * itemsize / (1024 ** 3)
     except Exception:
         offload = 0.0
+
+# THE TABLE CAN ALSO BE NEITHER. Offload moves it to host RAM, the same pool on
+# unified memory. mmap moves it to NVMe, which genuinely is not the pool.
+#
+# Opt-in, not inferred: this is a claim about the SERVER (the image must carry
+# the mmap patch and VLLM_PLE_MMAP=1 must be set), not about the checkpoint.
+ple_mmap = os.environ.get("PLE_MMAP", "") in ("1", "true", "yes")
 
 resident = weights - offload
 
@@ -407,7 +428,24 @@ if sys_ram > 0:
 print("    Always-on reserved : %.2f GiB (ASR/TTS/SearXNG/OS/Docker)" % reserved)
 print("    Weights (total)    : %.1f GiB" % weights)
 
-if offload > 0 and unified:
+if offload > 0 and ple_mmap:
+    # Disk-resident, which unlike offload is true on unified memory too — so
+    # this branch deliberately sits ahead of the unified check.
+    kv = budget - resident
+    print("    n-gram/PLE table   : %.1f GiB  <- mmapped from NVMe, %s"
+          % (offload, ple_dtype or "unknown dtype"))
+    print("    Weights resident   : %.1f GiB  (with VLLM_PLE_MMAP=1)" % resident)
+    print("    Left for KV cache  : %.1f GiB" % kv)
+    print("")
+    print("    ASSUMES the mmap patch is in the image AND VLLM_PLE_MMAP=1 is set.")
+    print("    Without both, the table is resident and the real figure is")
+    print("    %.1f GiB of weights against %.2f GiB — which does not fit."
+          % (weights, budget))
+    print("    VERIFY, do not trust this line: watch `free -g` while the server")
+    print("    loads. Used should settle near %.0f GiB, not near %.0f GiB."
+          % (resident, weights))
+    print("    The checkpoint must also be on the NVMe, not a network mount.")
+elif offload > 0 and unified:
     # The pool is shared, so the whole checkpoint has to live in it at once.
     kv = budget - weights
     print("    n-gram/PLE table   : %.1f GiB  (offloadable on a DISCRETE GPU)" % offload)

@@ -13,81 +13,54 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): BLOCKED — this branch does not currently run.
-# Production is the 27B on main / v5.3 at ~23.9 tok/s. Nothing here is live.
+# STATUS (2026-08-27): ATTEMPT 3, STAGED AND UNTESTED. Not live.
+# Production is the 27B on main / v5.3. Nothing here has served a token.
 #
-# Two builds tried. Both fail, for different reasons, and neither is fixable
-# from this file.
+# The blocker is a 51B n-gram lookup table (PLE), not the MoE. Each attempt is
+# a different answer to where that table lives:
+#   1. Inferact NVFP4, 170.2 GiB  — BF16 table "offloaded to host" via
+#      VLLM_PLE_CPU_OFFLOAD. GB10 host and device are ONE pool: 171 GiB needed,
+#      121 GiB exists.
+#   2. local-inference-lab 4p89, 102.4 GiB — table quantized so it fits, loaded
+#      at 76.82 GiB, then died: mm_mxfp8 requires N >= 128, got N=96, on the
+#      96-wide GDN in_proj_ba. A checkpoint defect.
+#   3. THIS — table mmapped from NVMe. It is a lookup (16 rows / 2.5 KB per
+#      token), so rows page in on demand and the table is resident nowhere.
+#      Image is upstream vLLM + the blazux patch, built by 03_vllm_servers.sh.
 #
-# ATTEMPT 1 — Inferact/Qwen3.8-Flash-Next-NVFP4, 170.2 GiB. Does not fit.
-#   76 GiB of weights on GPU plus a ~95 GiB BF16 n-gram embedding table, against
-#   121 GiB of UNIFIED memory. PLE-Offload assumes a discrete GPU where host RAM
-#   is memory the accelerator does not have; on GB10 it is the same pool, so
-#   offloading relocates bytes without freeing any.
+# Sizes from the hub file list, not the model card:
+#   model-plefp8-*.safetensors   47.68 GiB  mmapped, NOT resident
+#   everything else              78.23 GiB  resident
+#   total download              125.96 GiB
+# Attempt 2 already carried 76.82 GiB resident, so 78.23 is a known-good load.
 #
-#   The tell was in preflight's own output: NVFP4 measured 170.2 GiB and FP8
-#   measured 172.8 — 2% apart. Four-bit is not 2% smaller than eight-bit. The
-#   125B MoE IS 4-bit (~80 GB); the 51B n-gram table ships BF16 (~102 GB) and
-#   dominates. Quantizing the MoE harder saves nothing.
+# Dodges attempt 2's bug by construction: config.json ignore list contains
+# "*.linear_attn.*" and quant_algo is NVFP4, so in_proj_ba is never quantized
+# and no MXFP8 exists in this checkpoint.
 #
-# ATTEMPT 2 — local-inference-lab/Qwen3.8-Flash-Next-NVFP4-4p89, 102.4 GiB.
-#   Fits, and loads: 76.82 GiB resident, PLE offload registered, MTP accepted.
-#   Dies during profile_run:
+# THE TABLE IS FP8, NOT 4-BIT (ple_embedding_dtype float8_e4m3fn). If the mmap
+# does not engage this is attempt 1 again. VERIFY: watch `free -g` during load.
+# Used must settle near 78 GiB, not near 126. No partial credit.
 #
-#     AssertionError: mm_mxfp8 requires N >= 128, got N=96.
-#                     out_features is too small for mm_mxfp8.
-#     at qwen_gdn_linear_attn.py:890 -> self.in_proj_ba(hidden_states)
+# Check any candidate before downloading:
+#   PLE_MMAP=1 bash scripts/preflight_model.sh <repo>
 #
-#   The GDN in_proj_ba projection is 96 wide and this checkpoint quantized it to
-#   MXFP8, whose FlashInfer kernel requires N >= 128. That layer should have been
-#   left unquantized or given another algo. A CHECKPOINT defect, not a config
-#   one. enforce_eager does not help — the assert fires in apply_weights at
-#   runtime, not during compilation. The README says WIP.
-#
-# WHAT WOULD UNBLOCK IT: one build that quantizes the PLE table (so it fits in
-# 121 GiB of unified memory) AND leaves sub-128-wide projections alone. Six
-# NVFP4/W4A16 builds exist today; five are 123-174 GiB and too large, and the
-# sixth has the MXFP8 bug above.
-#
-# HOW TO CHECK A CANDIDATE, before downloading anything:
-#   bash scripts/preflight_model.sh <repo>        # size and fit, ~10 seconds
-#   curl -s https://huggingface.co/<repo>/raw/main/config.json \
-#     | tr ',' '\n' | grep -iE "ple_embedding_dtype|in_proj_ba"
-# Want ple_embedding_dtype nvfp4 (fits) and in_proj_ba absent from
-# quantized_layers, or quantized to something other than MXFP8.
-#
-# What DOES work, all verified: the image
-# vllm/vllm-openai:qwen38-flash-next-arm64-cu130 registers Qwen4Exp*, PLE
-# offload engages, MTP heads ship (4B) so no external drafter is needed, and QSA
-# requires kv_cache_dtype auto — it rejects fp8 outright and says so at load.
-#
-#
-# STATE ON THE SPARK as of 2026-08-27, which git cannot record and a fresh
-# session cannot derive:
-#
+# STATE ON THE SPARK as of 2026-08-27, which git cannot record:
 #   /opt/models/qwen38-flash-next-4p89     102 GiB, DOWNLOADED AND BROKEN
-#                                          (the MXFP8 in_proj_ba defect above)
 #   /opt/model-archive/qwen38-27b-nvfp4     22 GiB, the production 27B
 #   /opt/model-archive/qwen38-27b-dspark   2.6 GiB, its drafter
 #
-# 02_download_models.sh archives rather than deletes when the active model
-# changes, so switching back to main means moving those two directories out of
-# /opt/model-archive before running 03_vllm_servers.sh:
+# Attempt 3 needs 126 GiB free and 4p89 will never run again. Before download:
+#   df -h /opt && rm -rf /opt/models/qwen38-flash-next-4p89
 #
+# Rolling back to main means restoring the archived 27B first:
 #   sudo mv /opt/model-archive/qwen38-27b-nvfp4 /opt/models/
 #   sudo mv /opt/model-archive/qwen38-27b-dspark /opt/models/
-#
-# Check what is actually present before trusting the list above:
-#   du -sh /opt/models/* /opt/model-archive/* 2>/dev/null
-#
-# The 4p89 download can be deleted whenever the disk is wanted — it will not
-# run until a rebuilt checkpoint replaces it, and the fix is upstream:
-#   rm -rf /opt/models/qwen38-flash-next-4p89
 # Full write-up: docs/LESSONS.md #21.
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-flash-next-nvfp4
-  hf_repo: local-inference-lab/Qwen3.8-Flash-Next-NVFP4-4p89   # 102.4 GiB — PLE table quantized too
+  hf_repo: RadixArk/Qwen3.8-Flash-Next-NVFP4   # 125.96 GiB: 78.23 resident + 47.68 mmapped
   # Optional revision pin. Omitted = latest on main at pull time, which is the
   # right default for a fresh drop (first uploads ship broken — that is what the
   # tokenizer-truncation check in 02_download_models.sh exists to catch).
@@ -95,15 +68,20 @@ brain:
   # <local_path>/DOWNLOADED_REVISION.txt, so the running weights are always
   # attributable even when this is blank. Set it to that SHA to freeze them.
   # hf_revision: <sha>
-  local_path: /opt/models/qwen38-flash-next-4p89
+  local_path: /opt/models/qwen38-flash-next-radixark   # MUST be NVMe — PLE rows are read from here per token
   port: 8000
   # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
   # this box only
   bind_host: 127.0.0.1
   served_name: qwen38-flash-next      # CHANGED from qwen38-27b -> re-point OpenClaw
-  docker_image: vllm/vllm-openai:qwen38-flash-next-arm64-cu130   # registers Qwen4Exp*; the qwen38-arm64 tag does not
-  gpu_memory_utilization: 0.90        # the ceiling preflight allows; KV is the scarce resource here, not headroom
-  max_model_len: 262144
+  # BUILT LOCALLY by 03_vllm_servers.sh — exists on no registry. Upstream vLLM
+  # image + the PLE-mmap patch. `docker rmi qwen38-flash-dgx` forces a rebuild.
+  docker_image: qwen38-flash-dgx
+  docker_build_git: https://github.com/blazux/qwen3.8-Flash-DGX.git
+  docker_build_ref: 82ed48d373d8a2c03d142d203f07bce0a6b69125   # Apache-2.0, pinned by SHA
+  gpu_memory_utilization: 0.78        # ~94 GiB for weights+KV; 78.23 resident leaves ~16 GiB KV
+  max_model_len: 32768                # not native 262144 — KV is scarce. Raise after free -g confirms the load
+
   # BF16, NOT fp8. Qwen Sparse Attention refuses an FP8 KV cache outright:
   #   NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
   # The 27B runs fp8 KV happily; this is model-specific and fails at load, not
@@ -114,7 +92,7 @@ brain:
   # max_model_len, lower max_num_seqs before lowering max_model_len — the
   # context window is the headline feature, concurrency is not.
   kv_cache_dtype: auto
-  max_num_seqs: 4                     # ~7.4 GiB of BF16 KV. Lower this before lowering max_model_len
+  max_num_seqs: 2                     # upstream's tested value at ctx 32768. Lower this before lowering max_model_len
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
@@ -128,12 +106,13 @@ brain:
   # depending on server state, and an early version of the audit called a
   # working cache "INERT" on the strength of one low reading.
   #
-  # NOTE: this cannot currently be turned OFF. Prefix caching is on by default
-  # in vLLM V1, so omitting the flag does not disable it — that needs
-  # --no-enable-prefix-caching, which the launcher does not yet emit. The
-  # benchmark matrix's prefix-off row is marked PARTIAL for exactly this reason.
-  # Measure it (does not restart Brain):  bash scripts/benchmark.sh audit
-  enable_prefix_caching: true
+  # OFF, AND NOT OPTIONAL HERE. A GDN in_proj GEMM hits
+  # CUBLAS_STATUS_INTERNAL_ERROR on the cached-block path, so the SECOND
+  # identical prompt crashes the server — it passes a smoke test and dies in
+  # use. The 27B keeps this true (real 37.4% hit rate); this model cannot.
+  # Both launchers now emit --no-enable-prefix-caching on false; until
+  # 2026-08-27 neither could, and vLLM V1 defaults it ON.
+  enable_prefix_caching: false
   # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
   #
   # BLANK ON PURPOSE = vLLM autoselects. Measured 2026-08-26: it selects
@@ -293,15 +272,19 @@ brain:
   # drafter, unlike the 27B where DSpark had to be found and patched. 3 is the
   # 27B's measured optimum (5 lost to 3, 3 beat 2). RE-MEASURE here: acceptance
   # is model-specific and nothing about the 27B result is guaranteed to carry.
-  speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+  # 2, NOT the 27B's 3. Upstream measured 2 on this checkpoint: ~17 tok/s off,
+  # ~27 on, ~67% acceptance. UNVERIFIED HERE — re-measure with benchmark.sh.
+  speculative_config: '{"method":"mtp","num_speculative_tokens":2}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a
-    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
-    # THE FLAG THAT MAKES THIS MODEL FIT. Verified in this image (vllm/envs.py,
-    # layers/ple_offload_layer.py, models/qwen3_8_flash_next/nvidia/ple_layer.py).
-    # Without it the 95.4 GiB n-gram table is GPU-resident: 170.2 GiB of weights
-    # against a 109.79 GiB budget, and the server will not start.
-    VLLM_PLE_CPU_OFFLOAD: 1
+    # THE FLAG THAT MAKES THIS MODEL FIT. Without it the patch is a no-op and
+    # the table is resident again — 126 GiB of weights, will not start.
+    # VLLM_PLE_CPU_OFFLOAD is DELIBERATELY ABSENT: it moves the table to host
+    # RAM, the same pool on GB10. Do not set both. See #21.
+    VLLM_PLE_MMAP: 1
+    VLLM_PLE_MMAP_WORKERS: 32           # row-gather threads; I/O parallelism, not compute
+    VLLM_PLE_MMAP_PREWARM: 0            # 1 streams the table once at boot; off keeps the first free -g unambiguous
+    VLLM_USE_FLASHINFER_SAMPLER: 1
   limit_mm_per_prompt: '{"image":10}'   # keep space-free: the `serve` entrypoint branch word-splits VLLM_EXTRA_ARGS
   # Raw CLI flags appended to the vLLM command, space-separated. BLANK IN
   # PRODUCTION and should stay that way — this is an experiment hatch.
@@ -318,7 +301,20 @@ brain:
   # whitespace, so a space would become two separate overrides.
   #
   #   bash scripts/benchmark.sh --only attn-triton-cli
-  extra_args: --no-enable-flashinfer-autotune   # recipe-recommended; unverified in this build's --help, fails loudly if wrong
+  # LOAD-BEARING on this branch, not the usual experiment hatch. Space-free per
+  # flag — the launcher word-splits this. 03_vllm_servers.sh ignored this field
+  # entirely until 2026-08-27; only start_brain_ad_hoc.sh read it.
+  #
+  # --load-format=safetensors: the patch reads shards off disk and needs real
+  #   files. NEVER =dummy — the fp8 table upcasts on the way in and briefly
+  #   demands >150 GiB, which hard-freezes the box.
+  # -cc.cudagraph_mode=PIECEWISE + splitting_ops: the row gather is CPU work
+  #   plus a pageable host->device copy and CANNOT be captured in a CUDA graph.
+  #   Declaring vllm::ple_mmap_lookup a splitting op runs it between segments.
+  #   The other 11 entries are vLLM's defaults, which this flag REPLACES rather
+  #   than extends — dropping them silently un-splits attention. Never FULL*.
+  #   --enforce-eager is not a substitute: mamba/short-conv still captures.
+  extra_args: '--no-enable-flashinfer-autotune --load-format=safetensors --enable-chunked-prefill -cc.cudagraph_mode=PIECEWISE -cc.splitting_ops=["vllm::unified_attention_with_output","vllm::unified_mla_attention_with_output","vllm::mamba_mixer2","vllm::mamba_mixer","vllm::short_conv","vllm::qwen3_8_flash_next_ple_short_conv","vllm::qwen3_8_flash_next_qsa_with_output","vllm::linear_attention","vllm::qwen_gdn_attention_core","vllm::qwen_gdn_attention_core_fused_norm_packed","vllm::sparse_attn_indexer","vllm::ple_mmap_lookup"]'
   # Drafter checkpoint for EAGLE-style speculative decoding. BLANK = the
   # spec-eagle3 matrix rows record BLOCKED, which is honest: not measured,
   # rather than measured-and-bad.
