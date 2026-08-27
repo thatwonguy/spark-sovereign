@@ -48,10 +48,10 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `attn-flashinfer` | vllm | VALID | 15.2 tok/s | 269 ms | 80.7 tok/s | 37.4% | 4.40x | 185 | 48.6% | 732,293 tok |
 | `util-080` | vllm | VALID | 15.1 tok/s | 408 ms | 83.4 tok/s | 37.4% | 5.05x | 180 | 52.2% | 1,896,269 tok |
 | `INTERACTION-flashinfer-bf16kv` | vllm | VALID | 14.9 tok/s | 266 ms | 82.8 tok/s | 37.4% | 4.32x | 195 | 45.6% | 740,841 tok |
-| `spec-ngram8` | vllm | VALID | 13.0 tok/s | 255 ms | 66.1 tok/s | 47.7% | 18.34x | 104 | 13.5% | 767,116 tok |
+| `spec-ngram8` | vllm | VALID | 13.1 tok/s | 255 ms | 71.3 tok/s | 47.7% | 18.88x | 104 | 13.5% | 771,255 tok |
 | `spec-ngram5` | vllm | VALID | 12.5 tok/s | 111 ms | 79.3 tok/s | 46.7% | 17.69x | 10 | 70.0% | 804,953 tok |
 | `spec-ngram3` | vllm | VALID | 12.1 tok/s | 113 ms | 79.7 tok/s | 46.3% | 15.58x | 12 | 66.7% | 839,153 tok |
-| `spec-off` | vllm | VALID | 12.0 tok/s | 121 ms | 84.1 tok/s | 45.3% | 11.99x | — | — | 851,214 tok |
+| `spec-off` | vllm | VALID | 11.2 tok/s | 258 ms | 79.6 tok/s | 45.3% | 10.60x | — | — | 854,227 tok |
 | `sglang-baseline` | sglang | VALID | 9.8 tok/s | 556 ms | 73.0 tok/s | — | 15.67x | — | — | — |
 | `attn-triton-cli` | vllm | PARTIAL | 19.7 tok/s | 418 ms | 102.5 tok/s | 37.0% | 4.19x | 138 | 59.4% | 758,606 tok |
 | `prefix-off` | vllm | PARTIAL | 15.2 tok/s | 266 ms | 78.8 tok/s | 37.4% | 4.71x | 155 | 63.9% | 736,567 tok |
@@ -202,14 +202,14 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}`
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
-- **Measured:** 2026-08-26T17:27:26-07:00 (3 runs x 256 tokens)
+- **Measured:** 2026-08-26T17:44:28-07:00 (3 runs x 256 tokens)
 
 ### `spec-off`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config=`
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
-- **Measured:** 2026-08-26T13:58:36-07:00 (3 runs x 256 tokens)
+- **Measured:** 2026-08-26T17:38:33-07:00 (3 runs x 256 tokens)
 
 ### `util-080`
 
@@ -220,4 +220,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T17:27:26-07:00 from 17 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T17:44:28-07:00 from 17 ledger entries by `scripts/benchmark.sh render`.*
