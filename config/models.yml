@@ -61,6 +61,28 @@
 # offload engages, MTP heads ship (4B) so no external drafter is needed, and QSA
 # requires kv_cache_dtype auto — it rejects fp8 outright and says so at load.
 #
+#
+# STATE ON THE SPARK as of 2026-08-27, which git cannot record and a fresh
+# session cannot derive:
+#
+#   /opt/models/qwen38-flash-next-4p89     102 GiB, DOWNLOADED AND BROKEN
+#                                          (the MXFP8 in_proj_ba defect above)
+#   /opt/model-archive/qwen38-27b-nvfp4     22 GiB, the production 27B
+#   /opt/model-archive/qwen38-27b-dspark   2.6 GiB, its drafter
+#
+# 02_download_models.sh archives rather than deletes when the active model
+# changes, so switching back to main means moving those two directories out of
+# /opt/model-archive before running 03_vllm_servers.sh:
+#
+#   sudo mv /opt/model-archive/qwen38-27b-nvfp4 /opt/models/
+#   sudo mv /opt/model-archive/qwen38-27b-dspark /opt/models/
+#
+# Check what is actually present before trusting the list above:
+#   du -sh /opt/models/* /opt/model-archive/* 2>/dev/null
+#
+# The 4p89 download can be deleted whenever the disk is wanted — it will not
+# run until a rebuilt checkpoint replaces it, and the fix is upstream:
+#   rm -rf /opt/models/qwen38-flash-next-4p89
 # Full write-up: docs/LESSONS.md #21.
 # -----------------------------------------------------------------------------
 brain:
