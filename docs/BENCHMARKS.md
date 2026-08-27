@@ -276,4 +276,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T19:30:31-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T19:40:15-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
