@@ -41,6 +41,7 @@ its effect, and treat a threshold as a claim about a specific architecture.
 
 | Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |
 |---|---|---|---|---|---|---|---|---|---|---|
+| `spec-dspark7` | vllm | VALID | 23.9 tok/s | 398 ms | 80.2 tok/s | 38.1% | 5.29x | 420 | 16.4% | 470,091 tok |
 | `spec-mtp3` | vllm | VALID | 19.7 tok/s | 254 ms | 108.9 tok/s | 37.0% | 4.51x | 132 | 64.4% | 768,858 tok |
 | `spec-mtp2` | vllm | VALID | 18.5 tok/s | 239 ms | 109.6 tok/s | 37.0% | 4.93x | 116 | 60.3% | 781,963 tok |
 | `kv-bf16` | vllm | VALID | 15.2 tok/s | 261 ms | 80.3 tok/s | 37.4% | 4.27x | 265 | 29.4% | 736,567 tok |
@@ -61,7 +62,6 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
 | `spec-dflash7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `spec-dflash3` | vllm | FAILED | — | — | — | — | — | — | — | — |
-| `spec-dspark7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
 | `spec-eagle3` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
 | `spec-eagle3-5` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
@@ -86,16 +86,16 @@ be reached.
 
 ## Recommendation
 
-**Fastest VALID single-stream configuration: `spec-mtp3` (vllm) at 19.7 tok/s.**
+**Fastest VALID single-stream configuration: `spec-dspark7` (vllm) at 23.9 tok/s.**
 
 Apply it by setting these in `config/models.yml`, then 
 `bash scripts/03_vllm_servers.sh`:
 
 ```yaml
-speculative_config: {"method":"mtp","num_speculative_tokens":3}
+speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}
 ```
 
-Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%). 
+Runner-up `spec-mtp3` at 19.7 tok/s (+4.2 tok/s, +21.3%). 
 
 ## Configurations whose numbers must not be cited
 
@@ -194,8 +194,8 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}`
-- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (EngineCore pid=275) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dspark7.log]
-- **Measured:** 2026-08-26T19:30:31-07:00 (3 runs x 256 tokens)
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T19:54:12-07:00 (3 runs x 256 tokens)
 
 ### `spec-eagle3`
 
@@ -276,4 +276,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T19:40:15-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T19:54:12-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
