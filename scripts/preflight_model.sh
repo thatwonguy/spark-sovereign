@@ -194,7 +194,11 @@ echo ""
 # config.json is ~20 KB. Pulling it turns context length, expert counts, vision
 # support and quant method from "UNCONFIRMED" comments into measured values.
 echo ">>> [2/4] Reading config.json for the fields models.yml has to guess..."
-python3 - "${HF_REPO}" <<'PYEOF'
+# Kept on disk so the stage 4 fit check can read it too: it needs the n-gram /
+# PLE dimensions to work out how much of the checkpoint is offloadable.
+CFG_JSON="$(mktemp -t preflight-config-XXXXXX.json 2>/dev/null || echo /tmp/preflight-config.$$.json)"
+trap 'rm -f "${CFG_JSON}"' EXIT
+python3 - "${HF_REPO}" "${CFG_JSON}" <<'PYEOF'
 import json, os, sys, urllib.request, urllib.error
 
 repo = sys.argv[1]
@@ -206,10 +210,19 @@ if token:
 
 try:
     with urllib.request.urlopen(req, timeout=30) as r:
-        cfg = json.load(r)
+        raw = r.read()
+    cfg = json.loads(raw)
 except Exception as e:
     print("    SKIP: could not fetch config.json (%s)" % e)
     sys.exit(0)
+
+# Hand it to stage 4 rather than fetching twice.
+if len(sys.argv) > 2 and sys.argv[2]:
+    try:
+        with open(sys.argv[2], "wb") as f:
+            f.write(raw)
+    except Exception:
+        pass
 
 
 def find(d, *keys):
@@ -320,17 +333,55 @@ else
     WARN=1
 fi
 
-python3 - "${REPO_GIB}" "${VISIBLE_GIB}" "${RESERVED_GIB}" <<'PYEOF'
-import sys
+python3 - "${REPO_GIB}" "${VISIBLE_GIB}" "${RESERVED_GIB}" "${CFG_JSON:-}" <<'PYEOF'
+import json, os, sys
 
 weights, visible, reserved = (float(x) for x in sys.argv[1:4])
 budget = visible - reserved
-kv = budget - weights
+
+# OFFLOADABLE WEIGHT. Comparing the whole checkpoint against GPU memory is
+# right for an ordinary model and wrong for one that keeps part of itself in
+# host RAM by design.
+#
+# Qwen3.8-Flash-Next carries a 51B n-gram embedding table alongside its 125B
+# MoE. Its own card calls embeddings "more amenable to offloading than MoE",
+# and vLLM's PLE-Offload puts that table in host memory so it never occupies
+# VRAM. Counting it against the GPU budget reported BLOCKED for a model that
+# fits with ~42 GiB of KV cache to spare — the same failure shape as a roofline
+# that divides by a whole checkpoint when only some experts are read.
+#
+# Size comes from the config, not a guess: ngram_vocab_size_base x ple_embed_dim
+# at 2 bytes. Reported separately so the operator sees both numbers and knows
+# the second one depends on actually passing the offload flag.
+offload = 0.0
+cfg_path = sys.argv[4] if len(sys.argv) > 4 else ""
+if cfg_path and os.path.isfile(cfg_path):
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        lm = cfg.get("language_config") or cfg.get("text_config") or cfg
+        vocab = lm.get("ngram_vocab_size_base") or cfg.get("ngram_vocab_size_base")
+        dim = lm.get("ple_embed_dim") or cfg.get("ple_embed_dim")
+        if vocab and dim:
+            offload = float(vocab) * float(dim) * 2 / (1024 ** 3)
+    except Exception:
+        offload = 0.0
+
+resident = weights - offload
+kv = budget - resident
 
 print("    GPU visible        : %.2f GiB" % visible)
 print("    Always-on reserved : %.2f GiB (ASR/TTS/SearXNG/OS/Docker)" % reserved)
-print("    Weights            : %.1f GiB" % weights)
-print("    Left for KV cache  : %.1f GiB" % kv)
+print("    Weights (total)    : %.1f GiB" % weights)
+if offload > 0:
+    print("    n-gram/PLE table   : %.1f GiB  <- offloadable to HOST RAM" % offload)
+    print("    Weights on GPU     : %.1f GiB  (with PLE-Offload enabled)" % resident)
+    print("    Left for KV cache  : %.1f GiB" % kv)
+    print("      REQUIRES the PLE-Offload flag. Without it the table is resident")
+    print("      and the real figure is %.1f GiB of weights, %.1f GiB of KV."
+          % (weights, budget - weights))
+else:
+    print("    Left for KV cache  : %.1f GiB" % kv)
 
 if kv <= 0:
     print("    BLOCKER: weights alone exceed the budget. Needs a smaller quant.")
