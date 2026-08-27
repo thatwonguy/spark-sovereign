@@ -252,7 +252,7 @@ brain:
   #     docker run --rm --entrypoint bash <brain.docker_image> \n  #       -c "grep -rl dflash /usr/local/lib/python3*/dist-packages/vllm/ | head"
   # No hits = this build cannot serve it, and no config field will change that.
   # Pin one, then: bash scripts/benchmark.sh --only spec-dflash7,spec-dflash3
-  speculative_draft_model:
+  speculative_draft_model: /opt/models/qwen38-27b-dspark
 
   # Bytes ONE TOKEN actually reads. Dense models read the whole checkpoint, so
   # leave this blank and benchmark.sh uses the file size. An MoE reads only its
