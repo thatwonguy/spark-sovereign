@@ -16,6 +16,35 @@
 # STATUS (2026-08-27): ATTEMPT 3 RUNS. Loaded, coherent, measured.
 # Not yet promoted to main — throughput is still unmeasured, see the end.
 #
+# PICK UP HERE. Three things are open, in order:
+#
+#   1. THE RUNNING SERVER IS STALE. max_model_len below says 131072; the live
+#      container still serves 32768 because it has not been restarted since.
+#      Confirm with:
+#        curl -s localhost:8000/v1/models -H "Authorization: Bearer $BRAIN_API_KEY" \
+#          | python3 -m json.tool | grep max_model_len
+#      Fix (~14 min, OpenClaw unreachable meanwhile):
+#        bash scripts/03_vllm_servers.sh
+#
+#   2. OPENCLAW COMPACTION. Telegram reported "Context limit exceeded ...
+#      set agents.defaults.compaction.reserveTokensFloor to 20000 or higher".
+#      That is OpenClaw's own client-side guard, NOT a vLLM rejection, and it
+#      lives in OpenClaw's config, not this repo. After step 1, set that floor
+#      and make OpenClaw's context window match max_model_len — a stale 32768
+#      wastes context, a stale 262144 makes vLLM reject requests it thinks fit.
+#
+#   3. THROUGHPUT IS UNMEASURED. The 15 tok/s in the startup log was sampled
+#      during Triton JIT spikes and is NOT a result. Run `bash scripts/
+#      benchmark.sh` before comparing against the 27B's 23.9 tok/s or deciding
+#      on a merge to main. Note the audit reports prefix cache [UNKNOWN] here
+#      because caching is disabled by design; benchmark.sh does not yet
+#      distinguish that from a failed check.
+#
+# Optional, not blocking: VLLM_PLE_MMAP_PREWARM: 1 warms the table at boot. At
+# 131072 context a long prefill reads ~8 GB of PLE rows off NVMe on first
+# touch, so time-to-first-token on long threads will trail the 27B until the
+# page cache warms. Prewarm trades boot time for that.
+#
 # MEASURED ON THIS BOX, from the engine's own accounting:
 #   consumed (weights + non-torch)  80.85 GiB   <- predicted 78.23
 #   peak activation / CUDAGraph      1.78 / 0.36 GiB
