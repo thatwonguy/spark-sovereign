@@ -141,7 +141,9 @@ if [ -n "${BRAIN_BUILD_GIT}" ]; then
     if docker image inspect "${BRAIN_IMAGE}" >/dev/null 2>&1; then
         echo ">>> Image ${BRAIN_IMAGE} already built — skipping (docker rmi it to rebuild)"
     else
-        BUILD_DIR="${BUILD_DIR:-/opt/build}/$(basename "${BRAIN_BUILD_GIT}" .git)"
+        # Under $HOME, not /opt: this is a build checkout, not model data, and
+        # everything here must run without sudo. /opt needs root and failed.
+        BUILD_DIR="${BUILD_DIR:-${HOME}/.cache/spark-sovereign/build}/$(basename "${BRAIN_BUILD_GIT}" .git)"
         echo ">>> Building ${BRAIN_IMAGE} from ${BRAIN_BUILD_GIT}"
         echo "    pinned ref: ${BRAIN_BUILD_REF:-<default branch>}"
         mkdir -p "$(dirname "${BUILD_DIR}")"
