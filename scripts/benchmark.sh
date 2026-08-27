@@ -1365,10 +1365,12 @@ cmd_matrix() {
     trap cleanup EXIT INT TERM
 
     mkdir -p "$(dirname "${LEDGER}")"; touch "${LEDGER}"
+    MATCHED=0
 
     while IFS='|' read -r NAME ENGINE OVERRIDES; do
         [ -z "${NAME}" ] && continue
         if [ -n "${ONLY}" ] && ! echo ",${ONLY}," | grep -q ",${NAME},"; then continue; fi
+        MATCHED=$((MATCHED + 1))
         # Skip only rows that actually HOLD a measurement. BLOCKED and FAILED
         # record the absence of one — a missing image, an engine that would not
         # start — and those are exactly the rows you return to after fixing the
@@ -1447,6 +1449,21 @@ cmd_matrix() {
         ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
         cmd_render >/dev/null 2>&1 || true
     done <<< "${MATRIX}"
+
+    # A --only that matches nothing ran zero configurations and, before this
+    # check, said so by printing the report and exiting 0. That happened for
+    # real: a branch adding two new rows was not pushed, the Spark filtered on
+    # names its copy did not have, and the run reported success having measured
+    # nothing. Silence is the one thing a benchmark must never mean.
+    if [ -n "${ONLY}" ] && [ "${MATCHED}" -eq 0 ]; then
+        echo ""
+        echo "  ERROR: --only '${ONLY}' matched no configuration in the matrix."
+        echo "  Nothing was measured. Known names:"
+        echo "${MATRIX}" | cut -d'|' -f1 | grep -v '^$' | sed 's/^/    /'
+        echo ""
+        echo "  If a name above is missing, this checkout predates it — git pull."
+        return 1
+    fi
 
     cmd_render
 }
