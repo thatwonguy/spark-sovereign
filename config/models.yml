@@ -227,7 +227,22 @@ brain:
   #
   # Either an HF repo id or a local path under MODELS_DIR. Then:
   #   bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
+  # Two drafters exist for THIS checkpoint (verified to exist, not yet tested):
+  #   incoai/Qwen3.8-27B-DFlash2   — the drafter behind the community SGLang
+  #                                  numbers; vLLM method is "eagle3" or
+  #                                  "draft_model" depending on how it ships
+  #   RadixArk/Qwen3.8-27B-DSpark  — extends DFlash with target-model auxiliary
+  #                                  features and a confidence head
+  # Pin one, then: bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
   speculative_draft_model:
+
+  # Bytes ONE TOKEN actually reads. Dense models read the whole checkpoint, so
+  # leave this blank and benchmark.sh uses the file size. An MoE reads only its
+  # active experts — shared layers plus experts_per_tok worth of expert weights
+  # — and the checkpoint size is then several times too large a denominator.
+  # benchmark.sh detects declared experts and refuses to compute a roofline
+  # ratio until this is set, rather than printing a confident wrong verdict.
+  active_weight_gb:
   #
   # --- SWAP EXAMPLES ---
   # ROLLBACK — tag v4.2.1 is the last release verified on this hardware

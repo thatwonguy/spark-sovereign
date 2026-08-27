@@ -1160,7 +1160,29 @@ cmd_bandwidth() {
         m_spec_drafted
         local wpath; wpath=$(get_field brain local_path)
         local wgb=""; [ -d "${wpath}" ] && wgb=$(du -sb "${wpath}" 2>/dev/null | awk '{printf "%.1f", $1/1e9}')
+
+        # DENSE vs MoE. The ratio compares bytes-read-per-pass against the
+        # weights a pass actually READS. For a dense model that is the whole
+        # checkpoint. For a Mixture-of-Experts it is emphatically not: only a
+        # few experts fire per token, so a 35B-A3B reads roughly a tenth of its
+        # own file per pass.
+        #
+        # Left uncorrected, an MoE would land near 0.2x, fall into the "< 1.25"
+        # branch, and print "the roofline is REAL, config tuning cannot beat
+        # it" — a confident verdict computed from the wrong denominator, which
+        # is the exact failure this whole file exists to prevent. Worse, it
+        # would be printed about the model we are most likely to try next.
+        #
+        # So: if the checkpoint declares experts and nobody has supplied the
+        # active weight size, this reports UNKNOWN and explains why. An honest
+        # blank beats a confident wrong number.
+        local active_gb; active_gb=$(get_field brain active_weight_gb)
+        local moe=""
+        [ -f "${wpath}/config.json" ] && moe=$(grep -oE '"(num_experts|n_routed_experts|num_local_experts|num_experts_per_tok)"' \
+            "${wpath}/config.json" 2>/dev/null | head -1)
+
         BANDWIDTH="${BANDWIDTH}" DECODE_TOKS="${DECODE_TOKS}" WGB="${wgb}" \
+        MOE="${moe}" ACTIVE_GB="${active_gb}" \
         TPP="${TOKENS_PER_PASS:-}" ACC="${SPEC_ACCEPT_RATE:-}" python3 -c "
 import os
 bw, toks = float(os.environ['BANDWIDTH']), float(os.environ['DECODE_TOKS'])
@@ -1183,7 +1205,29 @@ print(f'   => bytes per FORWARD PASS: {per:.1f} GB')
 w = os.environ.get('WGB') or ''
 if not w:
     raise SystemExit(0)
-weights = float(w); ratio = per / weights
+weights = float(w)
+
+# An MoE reads only its active experts per pass, so the checkpoint size is the
+# wrong denominator and every verdict below would be computed from it.
+active = os.environ.get('ACTIVE_GB') or ''
+if active:
+    weights = float(active)
+    print(f'   active weights: {weights:.1f} GB (declared, not the {w} GB checkpoint)')
+elif os.environ.get('MOE'):
+    print(f'   checkpoint on disk: {weights:.1f} GB')
+    print('')
+    print('   *** RATIO NOT COMPUTED — this checkpoint declares experts ***')
+    print('   A Mixture-of-Experts reads only its active experts per forward')
+    print('   pass, so comparing bytes-per-pass against the whole checkpoint')
+    print('   understates the ratio several-fold and would print \"the roofline')
+    print('   is REAL\" for a model nowhere near it.')
+    print('')
+    print('   Set brain.active_weight_gb in config/models.yml to the bytes one')
+    print('   token actually reads — shared layers plus experts_per_tok worth')
+    print('   of expert weights — and re-run. Until then this is UNKNOWN, which')
+    print('   is not the same as fine.')
+    raise SystemExit(0)
+ratio = per / weights
 print(f'   checkpoint on disk: {weights:.1f} GB   ratio: {ratio:.2f}x')
 print('')
 # The ceiling is per-pass. What a user feels is per-token, which speculation
