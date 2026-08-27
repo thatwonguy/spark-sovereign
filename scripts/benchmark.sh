@@ -1475,6 +1475,24 @@ cmd_matrix() {
                 ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
                 continue
             fi
+            # HOST path -> CONTAINER path. MODELS_DIR is bind-mounted at
+            # /models, so a host path handed to the engine verbatim fails:
+            #
+            #   Value error, Invalid repository ID or local directory
+            #   specified: '/opt/models/qwen38-27b-dflash2'
+            #
+            # The brain's own weights are already translated at launch
+            # (--model "/models/$(basename ...)"), but the draft model rides
+            # through the speculative_config JSON untouched, so it needed the
+            # same treatment.
+            #
+            # Only absolute paths are rewritten. An HF repo id such as
+            # incoai/Qwen3.8-27B-DFlash2 contains a slash but does not start
+            # with one, and must be passed through unchanged for the engine to
+            # resolve it from the cache.
+            case "${DRAFT_PATH}" in
+                /*) DRAFT_PATH="/models/$(basename "${DRAFT_PATH}")" ;;
+            esac
             OVERRIDES="${OVERRIDES//__DRAFT__/${DRAFT_PATH}}"
         fi
 

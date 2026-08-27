@@ -225,7 +225,11 @@ brain:
   # the acceptance rate in docs/BENCHMARKS.md: below ~0.4 the drafter is
   # hurting, not helping.
   #
-  # Either an HF repo id or a local path under MODELS_DIR. Then:
+  # Either an HF repo id or a HOST path under MODELS_DIR — benchmark.sh
+  # rewrites an absolute path to its in-container location (/models/<name>),
+  # since MODELS_DIR is bind-mounted there and the engine sees nothing else.
+  # A repo id contains a slash but does not start with one, and is passed
+  # through unchanged. Then:
   #   bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
   # Two drafters exist for THIS checkpoint (verified to exist, not yet tested):
   #   incoai/Qwen3.8-27B-DFlash2   — the drafter behind the community SGLang
