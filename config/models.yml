@@ -401,7 +401,35 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
 
-  # OPTION 3 — Qwen3.8-Flash-Next (STAGED — weights land 2026-08-26):
+  # OPTION 3 — Qwen3.8-Flash-Next (STAGED, BLOCKED — preflight 2026-08-27):
+  #
+  # PREFLIGHT RESULT: BLOCKED on two counts. Neither is a config problem.
+  #
+  #   1. Qwen4ExpForConditionalGeneration is NOT in this image's vLLM registry.
+  #      The image cannot load the model at any size. Needs a newer arm64/SM121
+  #      build. Same shape as the DFlash2 rejection on the 27B: the engine is a
+  #      version behind the checkpoint.
+  #   2. The only UNGATED repo is the unquantized upload — 335.3 GiB across 131
+  #      shards, against 121.69 GiB of GPU. Both NVFP4 repos exist but are
+  #      GATED: set HF_TOKEN and accept the license, then re-run preflight to
+  #      get the real shard total.
+  #
+  # MEASURED BY PREFLIGHT (these are no longer guesses):
+  #   architecture     Qwen4ExpForConditionalGeneration
+  #   context          262144
+  #   experts/active   512 / 10 per token
+  #   vision           YES
+  #   hidden layers    48
+  #   unquantized      335.3 GiB
+  #
+  # FIT ARITHMETIC, for when the NVFP4 total arrives:
+  #   GPU visible            121.69 GiB
+  #   always-on reserved      11.90 GiB  (ASR/TTS/SearXNG/OS/Docker)
+  #   budget                 109.79 GiB
+  # NVFP4 has to land under ~92 GiB to leave a usable ~18 GiB of KV cache. A
+  # naive /4 of 335.3 is ~84 GiB, which fits but barely — and that estimate
+  # ignores whatever the N-gram table does, which is the whole risk. Do not
+  # download on the estimate; re-run preflight once the gate is accepted.
   # 125B total / ~6B active MoE, plus a separate ~51B N-gram embedding table.
   # Architecture preview of Qwen4. Unsloth is shipping day-zero quants.
   #
