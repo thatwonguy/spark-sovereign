@@ -290,7 +290,12 @@ wait_ready() {
             [ -z "${cause}" ] && cause=$(grep -iE "${pat}" "${logfile}" \
                     | grep -viE "${noise}" | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
             [ -z "${cause}" ] && cause=$(tail -5 "${logfile}" | redact | tr '\n' ' ')
-            LAUNCH_NOTE="container exited during load: ${cause} [full log: ${logfile}]"
+            # REPO-RELATIVE path in the note, never ${logfile}. The ledger and
+            # the generated report are committed to a PUBLIC repository, and an
+            # absolute path embeds $HOME — which is to say the operator's Linux
+            # username — into every FAILED row. Eight of them shipped before
+            # this was caught.
+            LAUNCH_NOTE="container exited during load: ${cause} [full log: docs/failed-${NAME:-launch}.log]"
             return 1
         fi
         if [ "${waited}" -ge "${timeout}" ]; then
