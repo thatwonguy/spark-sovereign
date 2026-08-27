@@ -1436,7 +1436,18 @@ cmd_matrix() {
             return 1
         }
     fi
+    # Idempotent, and deaf to further interrupts once started.
+    #
+    # trap ... EXIT INT TERM means an interrupt runs cleanup and THEN fires it
+    # again on exit, and a second Ctrl-C during the restart re-enters it. One
+    # interrupted run printed "Restoring production configuration..." ten times
+    # and finished with "WARN: restore failed" — the recovery path defeated by
+    # the same key that invoked it, leaving Brain down.
+    CLEANUP_DONE=0
     cleanup() {
+        [ "${CLEANUP_DONE}" = "1" ] && return 0
+        CLEANUP_DONE=1
+        trap '' INT TERM
         echo ""
         echo ">>> Restoring production configuration..."
         restore_production
@@ -1544,6 +1555,23 @@ cmd_matrix() {
             *)  VALIDITY="FAILED";  VALIDATION_NOTE="${LAUNCH_NOTE}"
                 echo "    FAILED — ${LAUNCH_NOTE}" ;;
         esac
+
+        # A row that validated but produced no decode rate was interrupted, not
+        # measured. Recording it VALID with a null decode is worse than
+        # recording nothing: the name is in the ledger, so the resume logic
+        # skips it next run, and the report ranks a config by a number it does
+        # not have.
+        #
+        # This happened for real — Ctrl-C during spec-dspark3 killed the decode
+        # request after the server came up, and the row was written as
+        # "VALID ... decode ? tok/s".
+        if [ "${VALIDITY}" = "VALID" ] || [ "${VALIDITY}" = "PARTIAL" ]; then
+            if [ -z "${DECODE_TOKS}" ]; then
+                VALIDITY="FAILED"
+                VALIDATION_NOTE="measurement did not complete (interrupted?); ${VALIDATION_NOTE}"
+                echo "    recorded FAILED — server came up but no decode rate was measured"
+            fi
+        fi
 
         ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
         cmd_render >/dev/null 2>&1 || true
