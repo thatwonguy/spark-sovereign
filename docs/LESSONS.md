@@ -787,16 +787,29 @@ Run the same day, after the SGLang result made the vLLM side the cheaper place t
 
 The CLI flag is genuinely accepted — the server starts, so the argument exists — and vLLM overrides the request anyway, most likely because this hybrid needs FlashInfer for its GatedDeltaNet layers or its FP8 KV cache. Both rows are PARTIAL and neither measured Triton. It would not have mattered regardless: every backend/KV/utilisation row in the matrix landed inside 15.07–15.19 tok/s.
 
-**N-gram is ruled out, and it was ruled out fairly.** The first test handed it its worst case — fresh prose, 10 drafted tokens across a whole generation, never firing. #18 said explicitly that this was not a verdict. So it was re-tested on its *best* case: a source file in context with a request to return the whole thing rewritten, so most output tokens exist verbatim in the prompt, plus a longer lookup window.
+**N-gram is still NOT ruled out — and the second attempt to rule it out was mis-tuned by the person writing this.** The first test handed it its worst case: fresh prose, 10 drafted tokens across a whole generation, never firing. #18 said explicitly that this was not a verdict. So it was re-tested on its best case — a source file in context, a request to return the whole thing rewritten, and a longer lookup window.
 
-| Same prompt (`docs/prompts/agentic-coding.txt`) | Decode | Drafted |
+The decode number looked like a clean loss. The **acceptance** column says otherwise:
+
+| Same prompt (`docs/prompts/agentic-coding.txt`) | Decode | Drafted | Accepted |
+|---|---|---|---|
+| MTP, 3 draft tokens | **19.66 tok/s** | 138 | **59.4%** |
+| n-gram, 8 tokens, window **2**–8 | 13.04 tok/s | 104 | **13.5%** |
+
+86.5% of those drafts were rejected, and every rejected draft still costs its verification pass. That is not "string matching predicts worse than MTP" — that is a drafter configured to guess constantly and be wrong.
+
+**The cause is `prompt_lookup_min: 2`, which this branch set.** A two-token suffix matches almost anywhere in a long context and predicts almost nothing. Compare the earlier row that left the minimum at vLLM's stricter default:
+
+| Config | Drafted | Accepted |
 |---|---|---|
-| MTP, 3 draft tokens | **19.66 tok/s** | 138 |
-| n-gram, 8 tokens, window 2–8 | 13.04 tok/s | 104 |
+| `spec-ngram5` (no min set) | 10 | **70.0%** — better than MTP |
+| `spec-ngram8` (min 2) | 104 | 13.5% |
 
-It fired roughly 10× more than before, which confirms the first test really was handicapping it — **and it still lost by 34%.** MTP's drafts come from the model's own heads and are simply better predictions than string matches against context.
+**The two rows bracket the tuning problem without testing it.** One is precise and silent, the other chatty and wrong. Prompt-lookup lives in the middle — fire often *and* be right — and no row has been there yet. `spec-ngram-tuned` (6 tokens, window 5–10) is that row.
 
-That comparison is clean by accident: `attn-triton-cli` failed to change the backend, which made it a plain baseline run on the identical prompt. A row that measured nothing it was asked to measure still produced the control the other row needed.
+The MTP comparison is clean by accident, at least: `attn-triton-cli` failed to change the backend, which made it a plain baseline run on the identical prompt. A row that measured nothing it was asked to measure produced the control the other row needed.
+
+**This is the fourth time in two days that a config was declared dead when the tooling or the tuning was at fault** — after speculation-reads-zero, prefix-cache-reads-inert, and the roofline that divided by tokens instead of forward passes. The tell was the same every time: a headline number that looked decisive, with a mechanism counter next to it that nobody read.
 
 **What is left.** One lever: a stronger drafter. Tokens-per-pass is the only thing that beats a 12.04 tok/s roofline, and it is entirely a function of draft acceptance. That is `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until an EAGLE3 head trained against *this* checkpoint is pinned.
 
