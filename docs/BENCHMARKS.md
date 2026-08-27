@@ -41,9 +41,12 @@ its effect, and treat a threshold as a claim about a specific architecture.
 
 | Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `spec-dspark7` | vllm | VALID | 23.9 tok/s | 398 ms | 80.2 tok/s | 38.1% | 5.29x | 420 | 16.4% | 470,091 tok |
+| `spec-dspark5` | vllm | VALID | 22.7 tok/s | 397 ms | 78.3 tok/s | 37.4% | 4.90x | 275 | 27.6% | 482,818 tok |
+| `spec-dspark3` | vllm | VALID | 20.1 tok/s | 393 ms | 89.6 tok/s | 37.0% | 4.89x | 150 | 52.0% | 489,335 tok |
 | `spec-mtp3` | vllm | VALID | 19.7 tok/s | 254 ms | 108.9 tok/s | 37.0% | 4.51x | 132 | 64.4% | 768,858 tok |
+| `spec-dspark12` | vllm | VALID | 19.1 tok/s | 413 ms | 70.5 tok/s | 39.2% | 5.71x | 504 | 17.1% | 442,350 tok |
 | `spec-mtp2` | vllm | VALID | 18.5 tok/s | 239 ms | 109.6 tok/s | 37.0% | 4.93x | 116 | 60.3% | 781,963 tok |
+| `spec-dspark20` | vllm | VALID | 17.2 tok/s | 430 ms | 39.4 tok/s | 30.8% | 2.96x | 620 | 15.8% | 400,861 tok |
 | `kv-bf16` | vllm | VALID | 15.2 tok/s | 261 ms | 80.3 tok/s | 37.4% | 4.27x | 265 | 29.4% | 736,567 tok |
 | `baseline` | vllm | VALID | 15.2 tok/s | 263 ms | 78.6 tok/s | 37.4% | 4.36x | 215 | 39.5% | 736,567 tok |
 | `attn-flashinfer` | vllm | VALID | 15.2 tok/s | 269 ms | 80.7 tok/s | 37.4% | 4.40x | 185 | 48.6% | 732,293 tok |
@@ -62,6 +65,7 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
 | `spec-dflash7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `spec-dflash3` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dspark7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
 | `spec-eagle3` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
 | `spec-eagle3-5` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
@@ -86,16 +90,16 @@ be reached.
 
 ## Recommendation
 
-**Fastest VALID single-stream configuration: `spec-dspark7` (vllm) at 23.9 tok/s.**
+**Fastest VALID single-stream configuration: `spec-dspark5` (vllm) at 22.7 tok/s.**
 
 Apply it by setting these in `config/models.yml`, then 
 `bash scripts/03_vllm_servers.sh`:
 
 ```yaml
-speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}
+speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":5}
 ```
 
-Runner-up `spec-mtp3` at 19.7 tok/s (+4.2 tok/s, +21.3%). 
+Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%). 
 
 ## Configurations whose numbers must not be cited
 
@@ -190,12 +194,40 @@ Runner-up `spec-mtp3` at 19.7 tok/s (+4.2 tok/s, +21.3%).
 - **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash7.log]
 - **Measured:** 2026-08-26T19:23:47-07:00 (3 runs x 256 tokens)
 
+### `spec-dspark12`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":12}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:51:50-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark20`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":20}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T21:01:28-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":3}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:32:40-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark5`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:41:46-07:00 (3 runs x 256 tokens)
+
 ### `spec-dspark7`
 
 - **Engine:** vllm
-- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}`
-- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
-- **Measured:** 2026-08-26T19:54:12-07:00 (3 runs x 256 tokens)
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark-nvfp4","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (EngineCore pid=182) ERROR 08-27 04:14:32 [core.py:1343] RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1 (EngineCore pid=182)     raise e (EngineCore pid=182) RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dspark7.log]
+- **Measured:** 2026-08-26T21:14:38-07:00 (3 runs x 256 tokens)
 
 ### `spec-eagle3`
 
@@ -276,4 +308,4 @@ Runner-up `spec-mtp3` at 19.7 tok/s (+4.2 tok/s, +21.3%).
 
 ---
 
-*Generated 2026-08-26T19:54:12-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T21:14:38-07:00 from 28 ledger entries by `scripts/benchmark.sh render`.*
