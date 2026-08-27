@@ -41,21 +41,34 @@ its effect, and treat a threshold as a claim about a specific architecture.
 
 | Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |
 |---|---|---|---|---|---|---|---|---|---|---|
+| `spec-dspark5` | vllm | VALID | 22.7 tok/s | 397 ms | 78.3 tok/s | 37.4% | 4.90x | 275 | 27.6% | 482,818 tok |
+| `spec-dspark3` | vllm | VALID | 20.1 tok/s | 393 ms | 89.6 tok/s | 37.0% | 4.89x | 150 | 52.0% | 489,335 tok |
 | `spec-mtp3` | vllm | VALID | 19.7 tok/s | 254 ms | 108.9 tok/s | 37.0% | 4.51x | 132 | 64.4% | 768,858 tok |
+| `spec-dspark12` | vllm | VALID | 19.1 tok/s | 413 ms | 70.5 tok/s | 39.2% | 5.71x | 504 | 17.1% | 442,350 tok |
 | `spec-mtp2` | vllm | VALID | 18.5 tok/s | 239 ms | 109.6 tok/s | 37.0% | 4.93x | 116 | 60.3% | 781,963 tok |
+| `spec-dspark20` | vllm | VALID | 17.2 tok/s | 430 ms | 39.4 tok/s | 30.8% | 2.96x | 620 | 15.8% | 400,861 tok |
 | `kv-bf16` | vllm | VALID | 15.2 tok/s | 261 ms | 80.3 tok/s | 37.4% | 4.27x | 265 | 29.4% | 736,567 tok |
 | `baseline` | vllm | VALID | 15.2 tok/s | 263 ms | 78.6 tok/s | 37.4% | 4.36x | 215 | 39.5% | 736,567 tok |
 | `attn-flashinfer` | vllm | VALID | 15.2 tok/s | 269 ms | 80.7 tok/s | 37.4% | 4.40x | 185 | 48.6% | 732,293 tok |
 | `util-080` | vllm | VALID | 15.1 tok/s | 408 ms | 83.4 tok/s | 37.4% | 5.05x | 180 | 52.2% | 1,896,269 tok |
 | `INTERACTION-flashinfer-bf16kv` | vllm | VALID | 14.9 tok/s | 266 ms | 82.8 tok/s | 37.4% | 4.32x | 195 | 45.6% | 740,841 tok |
+| `spec-ngram8` | vllm | VALID | 13.1 tok/s | 255 ms | 71.3 tok/s | 47.7% | 18.88x | 104 | 13.5% | 771,255 tok |
+| `spec-ngram-narrow` | vllm | VALID | 12.7 tok/s | 259 ms | 76.9 tok/s | 46.7% | 16.17x | 8 | 50.0% | 831,329 tok |
 | `spec-ngram5` | vllm | VALID | 12.5 tok/s | 111 ms | 79.3 tok/s | 46.7% | 17.69x | 10 | 70.0% | 804,953 tok |
 | `spec-ngram3` | vllm | VALID | 12.1 tok/s | 113 ms | 79.7 tok/s | 46.3% | 15.58x | 12 | 66.7% | 839,153 tok |
-| `spec-off` | vllm | VALID | 12.0 tok/s | 121 ms | 84.1 tok/s | 45.3% | 11.99x | — | — | 851,214 tok |
+| `spec-ngram-tuned` | vllm | VALID | 12.1 tok/s | 259 ms | 74.2 tok/s | 47.2% | 18.33x | 24 | 41.7% | 786,432 tok |
+| `spec-off` | vllm | VALID | 11.2 tok/s | 258 ms | 79.6 tok/s | 45.3% | 10.60x | — | — | 854,227 tok |
+| `sglang-baseline` | sglang | VALID | 9.8 tok/s | 556 ms | 73.0 tok/s | — | 15.67x | — | — | — |
+| `attn-triton-cli` | vllm | PARTIAL | 19.7 tok/s | 418 ms | 102.5 tok/s | 37.0% | 4.19x | 138 | 59.4% | 758,606 tok |
 | `prefix-off` | vllm | PARTIAL | 15.2 tok/s | 266 ms | 78.8 tok/s | 37.4% | 4.71x | 155 | 63.9% | 736,567 tok |
 | `attn-triton` | vllm | PARTIAL | 15.1 tok/s | 267 ms | 78.2 tok/s | 37.4% | 4.56x | 180 | 50.6% | 743,691 tok |
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
-| `sglang-baseline` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
+| `spec-dflash7` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash3` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dspark7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
+| `spec-eagle3` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
+| `spec-eagle3-5` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
 
 **Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. 
 *Aggregate* is total tok/s at the highest concurrency tested — what the box can do in 
@@ -77,22 +90,23 @@ be reached.
 
 ## Recommendation
 
-**Fastest VALID single-stream configuration: `spec-mtp3` (vllm) at 19.7 tok/s.**
+**Fastest VALID single-stream configuration: `spec-dspark5` (vllm) at 22.7 tok/s.**
 
 Apply it by setting these in `config/models.yml`, then 
 `bash scripts/03_vllm_servers.sh`:
 
 ```yaml
-speculative_config: {"method":"mtp","num_speculative_tokens":3}
+speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":5}
 ```
 
-Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%). 
+Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%). 
 
 ## Configurations whose numbers must not be cited
 
 - `prefix-off` (PARTIAL) — prefix_caching requested=false observed=yes (hit rate 0.374);
 - `attn-triton` (PARTIAL) — attention_backend requested=TRITON_ATTN observed=FLASHINFER;
 - `INTERACTION-triton-util080` (PARTIAL) — attention_backend requested=TRITON_ATTN observed=FLASHINFER;
+- `attn-triton-cli` (PARTIAL) — extra_args requested TRITON_ATTN observed FLASHINFER;
 
 ## Detail
 
@@ -124,6 +138,13 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Validity:** PARTIAL — attention_backend requested=TRITON_ATTN observed=FLASHINFER;
 - **Measured:** 2026-08-26T13:37:19-07:00 (3 runs x 256 tokens)
 
+### `attn-triton-cli`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_extra_args=--attention-backend=TRITON_ATTN`
+- **Validity:** PARTIAL — extra_args requested TRITON_ATTN observed FLASHINFER;
+- **Measured:** 2026-08-26T17:18:33-07:00 (3 runs x 256 tokens)
+
 ### `baseline`
 
 - **Engine:** vllm
@@ -149,8 +170,8 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 - **Engine:** sglang
 - **Overrides:** `none — models.yml as committed`
-- **Validity:** BLOCKED — no SGLang image pinned in config/models.yml (sglang.docker_image)
-- **Measured:** 2026-08-26T14:56:05-07:00 (3 runs x 256 tokens)
+- **Validity:** VALID — all 0 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T16:59:09-07:00 (3 runs x 256 tokens)
 
 ### `sglang-radix-off`
 
@@ -158,6 +179,69 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Overrides:** `OVERRIDE_disable_radix_cache=true`
 - **Validity:** BLOCKED — no SGLang image pinned in config/models.yml (sglang.docker_image)
 - **Measured:** 2026-08-26T14:56:05-07:00 (3 runs x 256 tokens)
+
+### `spec-dflash3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":3}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash3.log]
+- **Measured:** 2026-08-26T19:24:18-07:00 (3 runs x 256 tokens)
+
+### `spec-dflash7`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash7.log]
+- **Measured:** 2026-08-26T19:23:47-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark12`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":12}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:51:50-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark20`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":20}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T21:01:28-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":3}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:32:40-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark5`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T20:41:46-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark7`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark-nvfp4","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (EngineCore pid=182) ERROR 08-27 04:14:32 [core.py:1343] RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1 (EngineCore pid=182)     raise e (EngineCore pid=182) RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dspark7.log]
+- **Measured:** 2026-08-26T21:14:38-07:00 (3 runs x 256 tokens)
+
+### `spec-eagle3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":3}`
+- **Validity:** BLOCKED — no drafter pinned in config/models.yml (brain.speculative_draft_model)
+- **Measured:** 2026-08-26T19:15:16-07:00 (3 runs x 256 tokens)
+
+### `spec-eagle3-5`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":5}`
+- **Validity:** BLOCKED — no drafter pinned in config/models.yml (brain.speculative_draft_model)
+- **Measured:** 2026-08-26T19:15:16-07:00 (3 runs x 256 tokens)
 
 ### `spec-mtp2`
 
@@ -173,6 +257,20 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
 - **Measured:** 2026-08-26T14:07:24-07:00 (3 runs x 256 tokens)
 
+### `spec-ngram-narrow`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":10,"prompt_lookup_min":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T18:14:56-07:00 (3 runs x 256 tokens)
+
+### `spec-ngram-tuned`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":6,"prompt_lookup_max":10,"prompt_lookup_min":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T18:06:00-07:00 (3 runs x 256 tokens)
+
 ### `spec-ngram3`
 
 - **Engine:** vllm
@@ -187,12 +285,19 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
 - **Measured:** 2026-08-26T14:26:38-07:00 (3 runs x 256 tokens)
 
+### `spec-ngram8`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T17:44:28-07:00 (3 runs x 256 tokens)
+
 ### `spec-off`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config=`
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
-- **Measured:** 2026-08-26T13:58:36-07:00 (3 runs x 256 tokens)
+- **Measured:** 2026-08-26T17:38:33-07:00 (3 runs x 256 tokens)
 
 ### `util-080`
 
@@ -203,4 +308,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T15:45:15-07:00 from 15 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T21:14:38-07:00 from 28 ledger entries by `scripts/benchmark.sh render`.*

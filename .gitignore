@@ -216,3 +216,6 @@ __marimo__/
 docs/memory/
 memory/
 
+
+# Full container logs from failed benchmark launches — regenerated per run.
+docs/failed-*.log
