@@ -1060,6 +1060,7 @@ spec-ngram5|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_
 spec-ngram3|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":3,"prompt_lookup_max":4}
 spec-ngram8|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}
 spec-ngram-tuned|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":6,"prompt_lookup_max":10,"prompt_lookup_min":5}
+spec-ngram-narrow|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":10,"prompt_lookup_min":5}
 spec-eagle3|vllm|OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":3}
 spec-eagle3-5|vllm|OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":5}
 util-080|vllm|OVERRIDE_gpu_memory_utilization=0.80
