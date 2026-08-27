@@ -110,7 +110,15 @@ brain:
   docker_build_git: https://github.com/blazux/qwen3.8-Flash-DGX.git
   docker_build_ref: 82ed48d373d8a2c03d142d203f07bce0a6b69125   # Apache-2.0, pinned by SHA
   gpu_memory_utilization: 0.78        # ~94 GiB for weights+KV; 78.23 resident leaves ~16 GiB KV
-  max_model_len: 32768                # not native 262144 — KV is scarce. Raise after free -g confirms the load
+  # 131072, raised from the 32768 the first load used. The measured KV pool
+  # holds 289,129 tokens, so two streams at full length still fit (2 x 131072 =
+  # 262,144). Costs no memory: the pool is sized by gpu_memory_utilization at
+  # load, and this is only a per-sequence cap.
+  #
+  # 262144 is native and also legal, but one sequence would then take ~90% of
+  # the pool and concurrency drops to 1. No rope/yarn overrides are needed at
+  # either value — that block is extension toward 1M, not base operation (#21).
+  max_model_len: 131072
 
   # BF16, NOT fp8. Qwen Sparse Attention refuses an FP8 KV cache outright:
   #   NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
