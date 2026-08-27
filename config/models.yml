@@ -42,7 +42,16 @@ brain:
   docker_image: vllm/vllm-openai:qwen38-flash-next-arm64-cu130   # registers Qwen4Exp*; the qwen38-arm64 tag does not
   gpu_memory_utilization: 0.85        # preflight ceiling is 0.90; margin for host PLE prefetch buffers
   max_model_len: 262144
-  kv_cache_dtype: fp8
+  # BF16, NOT fp8. Qwen Sparse Attention refuses an FP8 KV cache outright:
+  #   NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
+  # The 27B runs fp8 KV happily; this is model-specific and fails at load, not
+  # silently, which is the good kind of incompatibility.
+  #
+  # COSTS MEMORY: BF16 KV entries are twice the size of fp8, so the same ~35 GiB
+  # budget holds half the tokens. If the engine reports a KV cache smaller than
+  # max_model_len, lower max_num_seqs before lowering max_model_len — the
+  # context window is the headline feature, concurrency is not.
+  kv_cache_dtype: auto
   max_num_seqs: 8                     # 35 GiB of KV cache, half the 27B budget
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
