@@ -49,8 +49,10 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `util-080` | vllm | VALID | 15.1 tok/s | 408 ms | 83.4 tok/s | 37.4% | 5.05x | 180 | 52.2% | 1,896,269 tok |
 | `INTERACTION-flashinfer-bf16kv` | vllm | VALID | 14.9 tok/s | 266 ms | 82.8 tok/s | 37.4% | 4.32x | 195 | 45.6% | 740,841 tok |
 | `spec-ngram8` | vllm | VALID | 13.1 tok/s | 255 ms | 71.3 tok/s | 47.7% | 18.88x | 104 | 13.5% | 771,255 tok |
+| `spec-ngram-narrow` | vllm | VALID | 12.7 tok/s | 259 ms | 76.9 tok/s | 46.7% | 16.17x | 8 | 50.0% | 831,329 tok |
 | `spec-ngram5` | vllm | VALID | 12.5 tok/s | 111 ms | 79.3 tok/s | 46.7% | 17.69x | 10 | 70.0% | 804,953 tok |
 | `spec-ngram3` | vllm | VALID | 12.1 tok/s | 113 ms | 79.7 tok/s | 46.3% | 15.58x | 12 | 66.7% | 839,153 tok |
+| `spec-ngram-tuned` | vllm | VALID | 12.1 tok/s | 259 ms | 74.2 tok/s | 47.2% | 18.33x | 24 | 41.7% | 786,432 tok |
 | `spec-off` | vllm | VALID | 11.2 tok/s | 258 ms | 79.6 tok/s | 45.3% | 10.60x | — | — | 854,227 tok |
 | `sglang-baseline` | sglang | VALID | 9.8 tok/s | 556 ms | 73.0 tok/s | — | 15.67x | — | — | — |
 | `attn-triton-cli` | vllm | PARTIAL | 19.7 tok/s | 418 ms | 102.5 tok/s | 37.0% | 4.19x | 138 | 59.4% | 758,606 tok |
@@ -183,6 +185,20 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
 - **Measured:** 2026-08-26T14:07:24-07:00 (3 runs x 256 tokens)
 
+### `spec-ngram-narrow`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":10,"prompt_lookup_min":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T18:14:56-07:00 (3 runs x 256 tokens)
+
+### `spec-ngram-tuned`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":6,"prompt_lookup_max":10,"prompt_lookup_min":5}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T18:06:00-07:00 (3 runs x 256 tokens)
+
 ### `spec-ngram3`
 
 - **Engine:** vllm
@@ -220,4 +236,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T17:44:28-07:00 from 17 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T18:14:56-07:00 from 19 ledger entries by `scripts/benchmark.sh render`.*
