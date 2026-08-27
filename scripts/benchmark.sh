@@ -1080,6 +1080,8 @@ spec-ngram-tuned|vllm|OVERRIDE_speculative_config={"method":"ngram","num_specula
 spec-ngram-narrow|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":10,"prompt_lookup_min":5}
 spec-dflash7|vllm|OVERRIDE_speculative_config={"method":"dflash","model":"__DRAFT__","num_speculative_tokens":7}
 spec-dflash3|vllm|OVERRIDE_speculative_config={"method":"dflash","model":"__DRAFT__","num_speculative_tokens":3}
+spec-dspark7|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":7}
+spec-dspark3|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":3}
 util-080|vllm|OVERRIDE_gpu_memory_utilization=0.80
 INTERACTION-flashinfer-bf16kv|vllm|OVERRIDE_attention_backend=FLASHINFER OVERRIDE_kv_cache_dtype=auto
 INTERACTION-triton-util080|vllm|OVERRIDE_attention_backend=TRITON_ATTN OVERRIDE_gpu_memory_utilization=0.80

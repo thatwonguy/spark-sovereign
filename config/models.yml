@@ -232,7 +232,14 @@ brain:
   # through unchanged. Then:
   #   bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
   # Two drafters exist for THIS checkpoint (verified to exist, not yet tested):
-  #   incoai/Qwen3.8-27B-DFlash2   — the drafter behind the community SGLang
+  #   incoai/Qwen3.8-27B-DFlash2   — REJECTED by our image. Its config declares
+  #                                  architecture DFlash2DraftModel; this build
+  #                                  registers DFlashDraftModel (no "2"), so it
+  #                                  landed DFlash v1. Needs a newer vLLM.
+  #   RadixArk/Qwen3.8-27B-DSpark  — the live candidate. This build registers
+  #                                  DSparkDraftModel AND Qwen3DSparkModel by
+  #                                  name, and accepts method "dspark".
+  #   (was: the drafter behind the community SGLang
   #                                  numbers; vLLM method is "eagle3" or
   #                                  "draft_model" depending on how it ships
   #   RadixArk/Qwen3.8-27B-DSpark  — extends DFlash with target-model auxiliary
