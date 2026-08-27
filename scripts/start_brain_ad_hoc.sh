@@ -116,6 +116,22 @@ BRAIN_ATTN=$(get_field brain attention_backend)
 BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
 
+# Raw CLI arguments appended to the vLLM command, space-separated.
+#
+# Exists because VLLM_ATTENTION_BACKEND above is set and vLLM ignores it on this
+# build: the matrix requested TRITON_ATTN and the server logged "Using
+# FLASHINFER attention backend" anyway, so those rows measured FlashInfer twice.
+# Rather than guess which mechanism this build honours and bake the guess into
+# the launcher, this passes arbitrary flags through so a guess can be tested in
+# ONE benchmark row. A wrong flag fails that row and is recorded as FAILED; it
+# does not touch the production path, which leaves this blank.
+#
+# Use the --flag=value form, not --flag value: benchmark.sh splits overrides on
+# whitespace, so a space inside one would become two overrides.
+#
+# Unquoted on purpose below — the whole point is word-splitting into argv.
+BRAIN_EXTRA_ARGS=$(get_field brain extra_args)
+
 # Stop any existing Brain container before starting fresh.
 echo ">>> Stopping existing Brain container..."
 for name in brain qwen-brain; do
@@ -153,7 +169,8 @@ docker run -d --name brain \
         ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
         $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
         --max-num-seqs "${BRAIN_SEQS}" \
-        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"}
+        ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
+        ${BRAIN_EXTRA_ARGS}
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"

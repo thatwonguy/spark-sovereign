@@ -722,6 +722,62 @@ Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly
 
 ---
 
+## 19. SGLang Tested — Slower, and the Claim Was Never About the Engine
+
+**Status: measured 2026-08-26.** Branch `brain-sglang-eval`. One row, `sglang-baseline`, on the same weights, same port, same box.
+
+Lesson #18 left SGLang as "a plausible future direction, explicitly out of scope" on the strength of community reports of ~50 tok/s single-stream. It is no longer out of scope, because it took about twenty minutes to test and the answer is unambiguous.
+
+| Engine | Speculation | Decode | Aggregate @8 |
+|---|---|---|---|
+| vLLM | MTP, 3 draft tokens | 19.66 tok/s | 108.9 |
+| vLLM | off | 12.04 tok/s | 84.1 |
+| **SGLang** | **off (no drafter)** | **9.79 tok/s** | **73.0** |
+
+Like for like — both engines with speculation off — **SGLang is 19% slower**, 9.79 against 12.04, and 13% lower on aggregate. Against the tuned vLLM config it is less than half the speed.
+
+### What that settles
+
+**None of the reported SGLang advantage comes from the engine.** Its forward pass is *less* efficient than vLLM's on this hardware. The reported configs pair SGLang with a DFlash2 drafter, and the drafter is doing all the work.
+
+The roofline makes this quantitative rather than a hunch. 12.04 tok/s is one forward pass over the weights; no engine changes that. So a reported 50 tok/s requires:
+
+```
+from vLLM's base:    50 / 12.04 = 4.15 tokens per forward pass
+from SGLang's base:  50 /  9.79 = 5.11 tokens per forward pass
+```
+
+We get 2.4–3.7 from MTP. **SGLang starts 19% further back and therefore needs an even better drafter to reach the same place.** Porting the stack to chase it would be paying a known 19% penalty for access to a drafter that may or may not exist for this checkpoint.
+
+**So the lever is the drafter, not the engine** — and drafters are available under vLLM, where every launcher, watchdog recovery path, health check and API-key provision already works. That is now `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until a checkpoint is pinned.
+
+### Two things the run cost, both cheap and both bugs
+
+**A wrong quantization guess.** The committed `sglang:` block suggested `quantization: modelopt_fp4`. The checkpoint declares `compressed-tensors`, and SGLang refused to start:
+
+```
+Quantization method specified in the model config (compressed-tensors) does not
+match the quantization method specified in the `quantization` argument (modelopt_fp4)
+```
+
+Blanking it, so the engine reads the checkpoint instead of being told, fixed it. A guess in a config comment is still a guess.
+
+**A resume check that skipped the row it had just enabled.** `sglang-baseline` was already in the ledger as BLOCKED from the full matrix. The skip logic only asked whether the *name* appeared, so pinning the image and re-running printed:
+
+```
+SKIP sglang-baseline — already measured (--redo to repeat)
+```
+
+It had never been measured. BLOCKED and FAILED record the *absence* of a measurement and are exactly the rows you return to after removing the blocker. They now retry and say why. Same family as the four measurement bugs in #18: the tool reported a clean run having done no work.
+
+### Key lesson
+
+A rumour with a number in it is worth twenty minutes to test, and the test is worth designing so it can distinguish *which part* of the claim is true. Measuring SGLang **without** a drafter looked like the less interesting experiment; it was the one that produced the answer, because it isolated the engine from the technique. Had we run SGLang with a drafter first and seen a speedup, we would have concluded "switch engines" and been wrong about why.
+
+Related: #18 (the roofline that makes these claims checkable), #12 (bandwidth is physics).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
