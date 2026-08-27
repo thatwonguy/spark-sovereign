@@ -1452,10 +1452,6 @@ cmd_matrix() {
         if [ "${OVERRIDES}" != "${OVERRIDES/__DRAFT__/}" ]; then
             DRAFT_PATH=$(get_field brain speculative_draft_model)
             if [ -z "${DRAFT_PATH}" ]; then
-                echo ""
-                echo "============================================================"
-                echo " ${NAME}   [${ENGINE}]"
-                echo "============================================================"
                 VALIDITY="BLOCKED"
                 VALIDATION_NOTE="no drafter pinned in config/models.yml (brain.speculative_draft_model)"
                 echo "    BLOCKED — ${VALIDATION_NOTE}"
