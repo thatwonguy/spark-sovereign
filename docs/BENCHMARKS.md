@@ -51,10 +51,10 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `spec-ngram5` | vllm | VALID | 12.5 tok/s | 111 ms | 79.3 tok/s | 46.7% | 17.69x | 10 | 70.0% | 804,953 tok |
 | `spec-ngram3` | vllm | VALID | 12.1 tok/s | 113 ms | 79.7 tok/s | 46.3% | 15.58x | 12 | 66.7% | 839,153 tok |
 | `spec-off` | vllm | VALID | 12.0 tok/s | 121 ms | 84.1 tok/s | 45.3% | 11.99x | — | — | 851,214 tok |
+| `sglang-baseline` | sglang | VALID | 9.8 tok/s | 556 ms | 73.0 tok/s | — | 15.67x | — | — | — |
 | `prefix-off` | vllm | PARTIAL | 15.2 tok/s | 266 ms | 78.8 tok/s | 37.4% | 4.71x | 155 | 63.9% | 736,567 tok |
 | `attn-triton` | vllm | PARTIAL | 15.1 tok/s | 267 ms | 78.2 tok/s | 37.4% | 4.56x | 180 | 50.6% | 743,691 tok |
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
-| `sglang-baseline` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
 
 **Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. 
@@ -149,8 +149,8 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 - **Engine:** sglang
 - **Overrides:** `none — models.yml as committed`
-- **Validity:** BLOCKED — no SGLang image pinned in config/models.yml (sglang.docker_image)
-- **Measured:** 2026-08-26T14:56:05-07:00 (3 runs x 256 tokens)
+- **Validity:** VALID — all 0 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T16:59:09-07:00 (3 runs x 256 tokens)
 
 ### `sglang-radix-off`
 
@@ -203,4 +203,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T15:45:15-07:00 from 15 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T16:59:09-07:00 from 15 ledger entries by `scripts/benchmark.sh render`.*
