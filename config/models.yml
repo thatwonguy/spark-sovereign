@@ -411,7 +411,20 @@ brain:
   #      version behind the checkpoint.
   #   2. The only UNGATED repo is the unquantized upload — 335.3 GiB across 131
   #      shards, against 121.69 GiB of GPU. Both NVFP4 repos exist but are
-  #      GATED: set HF_TOKEN and accept the license, then re-run preflight to
+  #      GATED — and per Unsloth's own docs the NVFP4 quant DOES NOT EXIST
+  #      YET. They gate it on three things: license review, architecture
+  #      verification (MTP head layout, linear-attention naming, and the 51B
+  #      n-gram embedding path all need mapping), and TOOLCHAIN SUPPORT —
+  #      llm-compressor / vLLM / llama.cpp shipping the new architecture.
+  #
+  #      So blockers 1 and 2 are the SAME blocker. The registry gap is not our
+  #      image lagging; it is vLLM upstream not supporting Qwen4 yet, which is
+  #      exactly what Unsloth is waiting on before they can quantize. Accepting
+  #      a license cannot produce weights nobody has made.
+  #
+  #      Their gate 2 also names the risk this block already flagged: the 51B
+  #      n-gram path is the unmapped piece, and it decides whether this fits.
+  #      (was: set HF_TOKEN and accept the license, then re-run preflight to
   #      get the real shard total.
   #
   # MEASURED BY PREFLIGHT (these are no longer guesses):
