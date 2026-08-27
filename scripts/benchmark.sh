@@ -251,7 +251,24 @@ wait_ready() {
     until brain_ready; do
         if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
             echo ""
-            LAUNCH_NOTE="container exited during load: $(docker logs brain 2>&1 | tail -2 | redact | tr '\n' ' ')"
+            # Keep the CAUSE, not the last lines. A pydantic validation
+            # failure ends with a stable footer ("For further information
+            # visit https://errors.pydantic.dev/...") and tail -2 captured
+            # exactly that footer for two dflash rows — a note that said a
+            # failure occurred and nothing about why, while restore_production
+            # then replaced the container and destroyed the log.
+            #
+            # Prefer the first line that names an error; fall back to the tail
+            # only when nothing matches. Also dump the full log to disk, since
+            # the container it came from will not exist minutes from now.
+            local logfile="${REPO_ROOT}/docs/failed-${NAME:-launch}.log"
+            docker logs brain >"${logfile}" 2>&1 || true
+            local cause
+            cause=$(grep -iE "error|exception|not supported|unsupported|invalid|no such" "${logfile}" \
+                    | grep -viE "errors\.pydantic\.dev|further information" \
+                    | head -3 | redact | cut -c1-400 | tr '\n' ' ')
+            [ -z "${cause}" ] && cause=$(tail -5 "${logfile}" | redact | tr '\n' ' ')
+            LAUNCH_NOTE="container exited during load: ${cause} [full log: ${logfile}]"
             return 1
         fi
         if [ "${waited}" -ge "${timeout}" ]; then
