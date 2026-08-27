@@ -13,7 +13,33 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): 23.85 tok/s decode with the DSpark drafter, up from
+# STATUS (2026-08-27): BLOCKED — this model does NOT fit on one GB10.
+#
+# Downloaded, loaded, and died. 76.07 GiB of weights went to GPU exactly as
+# predicted and PLE offload registered correctly, but the Spark's 128 GB is
+# UNIFIED: host and device share one pool, so offloading the 51B n-gram table
+# relocates bytes inside the same 121 GiB rather than freeing any.
+#
+#   weights on GPU        76.07 GiB   (measured)
+#   n-gram table          ~95 GiB     ("offloaded", same pool)
+#   required             ~171 GiB
+#   available             121 GiB
+#
+# THE CAUSE IS ONE UNQUANTIZED TABLE, not the MoE. NVFP4 measures 170.2 GiB and
+# FP8 measures 172.8 — 2% apart, which is not what quantization looks like. The
+# 125B MoE IS 4-bit (~80 GB); the 51B n-gram embedding ships BF16 (~102 GB) in
+# both builds and dominates. Quantizing the MoE harder saves nothing.
+#
+#   n-gram BF16 (today)   ~183 GB total   does not fit
+#   n-gram FP8            ~131 GB total   does not fit
+#   n-gram NVFP4          ~106 GB total   FITS, ~11 GiB for KV
+#
+# So the trigger to retry is a build that quantizes the EMBEDDING TABLE, not a
+# newer image and not a smaller MoE quant. Watch the shard total: any NVFP4
+# upload meaningfully below 170 GiB has done it. Preflight reports that in
+# stage 1 in ten seconds.
+#
+# Full write-up: docs/LESSONS.md #21.
 # 19.66 on tuned MTP and 15.18 on what v5.0/v5.1 shipped. VRAM ~55 GB at 0.45
 # util. Output is unchanged at every step — speculative decoding verifies every
 # draft against the real model. See the speculative_config block below, and

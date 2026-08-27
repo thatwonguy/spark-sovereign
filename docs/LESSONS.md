@@ -937,6 +937,84 @@ Related: #19 (SGLang — the engine was never the lever), #18 (the roofline thes
 
 ---
 
+## 21. Qwen3.8-Flash-Next Does Not Fit — and the Reason Is One Unquantized Table
+
+**Status: attempted and blocked, 2026-08-27.** Branch `brain-flash-next-eval`. Weights downloaded, model loaded, server died. The blocker is arithmetic, not configuration.
+
+### What worked
+
+Everything except the last step, which is worth stating because the parts that worked were the parts predicted to be hard:
+
+- `vllm/vllm-openai:qwen38-flash-next-arm64-cu130` registers `Qwen4ExpForCausalLM` and `Qwen4ExpForConditionalGeneration`. Stock and nightly images register neither, and the tag was found by listing Docker Hub rather than waiting for an announcement.
+- `Resolved architecture: Qwen4ExpForConditionalGeneration`, NVFP4 detected, MTP speculative config accepted, mamba cache aligned.
+- **PLE offload registered and worked**: `PleOffload: registered 1 PleOffloadLayer(s)`, and `Model loading took 76.07 GiB` — against a predicted 74.8 GiB.
+
+### What killed it
+
+```
+free -g
+               total  used  free  available
+Mem:             121    83     4         38
+```
+
+The Spark's 128 GB is **unified**. GPU and host share one pool. PLE-Offload assumes a discrete GPU where host RAM is memory the accelerator does not have — moving the n-gram table "to host" on GB10 relocates bytes within the same 121 GiB.
+
+| | |
+|---|---|
+| Weights on GPU | 76.07 GiB (measured) |
+| n-gram table, "offloaded" | ~95 GiB |
+| **Required** | **~171 GiB** |
+| **Available** | **121 GiB** |
+
+### The reason is one table, and it is not quantized
+
+The tell was in preflight's own output and went unread for an hour:
+
+```
+Inferact/Qwen3.8-Flash-Next-NVFP4  — 170.2 GiB
+Qwen/Qwen3.8-Flash-Next-FP8        — 172.8 GiB
+```
+
+**Four-bit weights are not 2% smaller than eight-bit.** The 125B MoE *is* NVFP4 (~80 GB). The 51B n-gram embedding table ships **BF16** (~102 GB) in both builds, and it dominates. Quantizing the MoE harder saves almost nothing, because the MoE is not what overflows.
+
+| n-gram precision | Table | Total | Fits 121 GiB? |
+|---|---|---|---|
+| BF16 (both current builds) | ~102 GB | ~183 GB | no |
+| FP8 | ~51 GB | ~131 GB | no |
+| **NVFP4** | **~26 GB** | **~106 GB ≈ 99 GiB** | **yes, ~11 GiB KV** |
+
+So this is not "wait for vLLM" and not "wait for a smaller MoE quant". It is **wait for a build that quantizes the embedding table**. The model card notes the n-gram path has a "4-bit minimum", which reads as achievable rather than impossible.
+
+### The instrumentation was confidently wrong, again
+
+`preflight_model.sh` reported **CLEAR** with `Left for KV cache: 35.0 GiB`, three hours after being taught about PLE-Offload. It subtracted offloadable weight from the GPU budget without asking whether host RAM was a separate pool. On a discrete GPU that arithmetic is right; the bug was assuming it.
+
+That verdict cost a 170 GiB download and two failed launches. It now reads `/proc/meminfo`, and when GPU-visible memory exceeds half of system RAM it treats the pool as shared and refuses to count offloaded weight as free.
+
+Second time this week a fit check was correct for ordinary models and wrong for this one — after `cmd_bandwidth` dividing by a whole checkpoint when only some experts are read. Both were written by someone who had just finished writing about exactly that failure.
+
+### Two real incompatibilities found along the way
+
+**QSA rejects an FP8 KV cache.** `kv_cache_dtype: fp8` carried over from the 27B, where it is measured and fine:
+
+```
+NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
+```
+
+Fails at load, loudly. The good kind — a ten-second diagnosis rather than silent degradation.
+
+**The rope overrides are not required.** The vLLM recipe's `mrope_interleaved` / `mrope_section` / yarn block is context *extension* toward ~1M, not base operation. Native 262144 needs none of it. An earlier note in `models.yml` called it mandatory and listed launcher work as a prerequisite; both were wrong.
+
+### Key lesson
+
+A fit check has to know what kind of memory it is counting. "Offload to host" is a claim about machine topology, and on unified memory it is false — the same bytes, counted twice, produce a CLEAR verdict for a model that needs 50 GiB more than exists.
+
+The number that would have caught it was printed by preflight in stage 1, an hour before the download: two quantizations of the same model, 2% apart in size. That is not what quantization looks like, and nobody asked why.
+
+Related: #18 (roofline denominators), #20 (the drafter that had to fit the target's geometry).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
