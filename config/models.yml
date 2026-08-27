@@ -187,7 +187,16 @@ brain:
   # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
   # Is a ceiling real?:  bash scripts/benchmark.sh bandwidth  (read-only)
-  # ACTIVE CONFIG — DSpark drafter, 7 tokens. Measured 23.85 tok/s against the
+  # ACTIVE CONFIG — DSpark drafter, 7 tokens. Three runs: 23.85, 23.91, 23.79.
+  #
+  # THE GAIN IS WORKLOAD-DEPENDENT and the number belongs with its workload:
+  #   agentic coding (a file in context, rewritten)   19.66 -> 23.9   +21.6%
+  #   open-ended prose (the default bench prompt)     ~17.0 -> 16.8   none
+  # A drafter only wins where output is predictable. Code that echoes context is;
+  # fresh explanatory prose is not. Quoting 23.9 flat would be the same error as
+  # quoting 19.66 as what the box does.
+  #
+  # Measured against the
   # MTP numbers above (19.66 at its best width), same weights, same outputs.
   # Full write-up in docs/LESSONS.md #20.
   #

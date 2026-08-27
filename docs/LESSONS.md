@@ -899,6 +899,34 @@ Aggregate throughput at 8 streams moves the *other* way. `mtp3` does 102.5 tok/s
 
 The residual is visible above. Widths 3 and 5 imply 1.4 and 1.2 blocks where the answer must be exactly 1.0.
 
+
+### Shipped — and the qualification that came with it
+
+Deployed as the default and re-measured three times: **23.85 / 23.91 / 23.79 tok/s**. Tight and reproducible, which is more than the MTP result had when it was adopted.
+
+But the same three runs exposed a limit on the claim:
+
+| Prompt | `mtp3` | `dspark7` | Gain |
+|---|---|---|---|
+| Agentic coding (a file in context, rewritten) | 19.66 | **23.9** | **+21.6%** |
+| Default (fresh explanatory prose) | 16.74–17.13 | 16.83 | **none** |
+
+**The +21% is a property of the workload, not of the box.** A drafter can only win where output is predictable, and code that echoes context is predictable in a way that open-ended prose is not. On this repo's own default benchmark prompt, DSpark and MTP are indistinguishable.
+
+That is fine — agentic coding is what this machine is for — but the number belongs with its workload attached. Quoting "23.9 tok/s" flat would repeat, in a smaller way, the error of quoting 19.66 as what the box does.
+
+**Two things the deployment log gave away for free:**
+
+**CUDA graphs stay FULL under DSpark.** Every MTP run logged:
+
+```
+FULL_AND_PIECEWISE is not supported with spec-decode for FlashInferBackend;
+setting cudagraph_mode=PIECEWISE
+```
+
+That warning is absent with DSpark, and capture sizes go to 256 instead of 192. MTP forced a graph-mode downgrade; DSpark does not. Nobody predicted this, and it is plausibly part of why DSpark wins at all — meaning the comparison was never purely drafter-versus-drafter.
+
+**And an advisory that turned out to be nothing.** vLLM warned that `max_num_scheduled_tokens` had dropped to 8096, because 16 sequences × 8 draft slots reserve budget from `max_num_batched_tokens: 8192`, and suggested raising it. Raising it to 16384 measured 23.79 against 23.91 — noise. Reverted. A warning naming a real mechanism still has to be measured before it is believed.
 ### Key lesson
 
 Two predictions were made and both were wrong in the same direction: that wider drafts would be free, and that acceptance was the number that mattered. What actually governs it is **accepted tokens per unit of drafting cost**, and drafting cost is a step function with a step at `block_size` — a constant sitting in the drafter's own config, unread until the measurements demanded an explanation.
@@ -920,8 +948,9 @@ Related: #19 (SGLang — the engine was never the lever), #18 (the roofline thes
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Speed traded for vision + higher per-token reasoning |
 | **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Superseded by v5.2. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
-| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model and weights. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18** |
+| v5.2 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.3. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18 |
+| **v5.3** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — same weights. DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20** |
 
 ---
 
-*Last updated: August 26, 2026 — Lesson #18, throughput question ANSWERED: roofline real at 12 tok/s, draft length was the bug, 15.18 -> 19.66 tok/s*
+*Last updated: August 27, 2026 — Lesson #20, DSpark drafter adopted: 23.9 tok/s on agentic work vs 19.66 on tuned MTP, output unchanged*
