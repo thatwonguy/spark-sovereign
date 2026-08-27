@@ -1059,6 +1059,8 @@ spec-mtp2|vllm|OVERRIDE_speculative_config={"method":"mtp","num_speculative_toke
 spec-ngram5|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4}
 spec-ngram3|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":3,"prompt_lookup_max":4}
 spec-ngram8|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}
+spec-eagle3|vllm|OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":3}
+spec-eagle3-5|vllm|OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":5}
 util-080|vllm|OVERRIDE_gpu_memory_utilization=0.80
 INTERACTION-flashinfer-bf16kv|vllm|OVERRIDE_attention_backend=FLASHINFER OVERRIDE_kv_cache_dtype=auto
 INTERACTION-triton-util080|vllm|OVERRIDE_attention_backend=TRITON_ATTN OVERRIDE_gpu_memory_utilization=0.80
@@ -1393,6 +1395,28 @@ cmd_matrix() {
         # under this row's name — attributing the previous config's numbers to
         # this one. That is the worst possible ledger entry: plausible, wrong,
         # and indistinguishable from a real result later.
+        # __DRAFT__ rows need a drafter checkpoint that is not part of this
+        # model. Substitute the configured path, or record BLOCKED — the same
+        # treatment SGLang gets without a pinned image. BLOCKED is "we did not
+        # measure this", which is different from FAILED ("we tried and it broke")
+        # and from a slow number. Launching anyway would burn a 5-minute model
+        # load on every run to re-learn that no checkpoint is configured.
+        if [ "${OVERRIDES}" != "${OVERRIDES/__DRAFT__/}" ]; then
+            DRAFT_PATH=$(get_field brain speculative_draft_model)
+            if [ -z "${DRAFT_PATH}" ]; then
+                echo ""
+                echo "============================================================"
+                echo " ${NAME}   [${ENGINE}]"
+                echo "============================================================"
+                VALIDITY="BLOCKED"
+                VALIDATION_NOTE="no drafter pinned in config/models.yml (brain.speculative_draft_model)"
+                echo "    BLOCKED — ${VALIDATION_NOTE}"
+                ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
+                continue
+            fi
+            OVERRIDES="${OVERRIDES//__DRAFT__/${DRAFT_PATH}}"
+        fi
+
         VALIDITY=""; VALIDATION_NOTE=""; LAUNCH_NOTE=""
         DECODE_TOKS=""; TTFT_MS=""; AGG_MAX=""; PREFIX_REUSE=""
         SPEC_DRAFTED=""; KV_TOKENS=""; BANDWIDTH=""
