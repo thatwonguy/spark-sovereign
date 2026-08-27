@@ -722,6 +722,221 @@ Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly
 
 ---
 
+## 19. SGLang Tested — Slower, and the Claim Was Never About the Engine
+
+**Status: measured 2026-08-26.** Branch `brain-sglang-eval`. One row, `sglang-baseline`, on the same weights, same port, same box.
+
+Lesson #18 left SGLang as "a plausible future direction, explicitly out of scope" on the strength of community reports of ~50 tok/s single-stream. It is no longer out of scope, because it took about twenty minutes to test and the answer is unambiguous.
+
+| Engine | Speculation | Decode | Aggregate @8 |
+|---|---|---|---|
+| vLLM | MTP, 3 draft tokens | 19.66 tok/s | 108.9 |
+| vLLM | off | 12.04 tok/s | 84.1 |
+| **SGLang** | **off (no drafter)** | **9.79 tok/s** | **73.0** |
+
+Like for like — both engines with speculation off — **SGLang is 19% slower**, 9.79 against 12.04, and 13% lower on aggregate. Against the tuned vLLM config it is less than half the speed.
+
+### What that settles
+
+**None of the reported SGLang advantage comes from the engine.** Its forward pass is *less* efficient than vLLM's on this hardware. The reported configs pair SGLang with a DFlash2 drafter, and the drafter is doing all the work.
+
+The roofline makes this quantitative rather than a hunch. 12.04 tok/s is one forward pass over the weights; no engine changes that. So a reported 50 tok/s requires:
+
+```
+from vLLM's base:    50 / 12.04 = 4.15 tokens per forward pass
+from SGLang's base:  50 /  9.79 = 5.11 tokens per forward pass
+```
+
+We get 2.4–3.7 from MTP. **SGLang starts 19% further back and therefore needs an even better drafter to reach the same place.** Porting the stack to chase it would be paying a known 19% penalty for access to a drafter that may or may not exist for this checkpoint.
+
+**So the lever is the drafter, not the engine** — and drafters are available under vLLM, where every launcher, watchdog recovery path, health check and API-key provision already works. That is now `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until a checkpoint is pinned.
+
+### Two things the run cost, both cheap and both bugs
+
+**A wrong quantization guess.** The committed `sglang:` block suggested `quantization: modelopt_fp4`. The checkpoint declares `compressed-tensors`, and SGLang refused to start:
+
+```
+Quantization method specified in the model config (compressed-tensors) does not
+match the quantization method specified in the `quantization` argument (modelopt_fp4)
+```
+
+Blanking it, so the engine reads the checkpoint instead of being told, fixed it. A guess in a config comment is still a guess.
+
+**A resume check that skipped the row it had just enabled.** `sglang-baseline` was already in the ledger as BLOCKED from the full matrix. The skip logic only asked whether the *name* appeared, so pinning the image and re-running printed:
+
+```
+SKIP sglang-baseline — already measured (--redo to repeat)
+```
+
+It had never been measured. BLOCKED and FAILED record the *absence* of a measurement and are exactly the rows you return to after removing the blocker. They now retry and say why. Same family as the four measurement bugs in #18: the tool reported a clean run having done no work.
+
+### Key lesson
+
+A rumour with a number in it is worth twenty minutes to test, and the test is worth designing so it can distinguish *which part* of the claim is true. Measuring SGLang **without** a drafter looked like the less interesting experiment; it was the one that produced the answer, because it isolated the engine from the technique. Had we run SGLang with a drafter first and seen a speedup, we would have concluded "switch engines" and been wrong about why.
+
+### Addendum — the last two vLLM levers, both closed
+
+Run the same day, after the SGLang result made the vLLM side the cheaper place to look. Both are now measurements rather than open questions.
+
+**TRITON_ATTN cannot be selected on this model.** Tested two ways, both accepted and both ignored:
+
+| Mechanism | Row | Result |
+|---|---|---|
+| `VLLM_ATTENTION_BACKEND=TRITON_ATTN` | `attn-triton` | logged `Using FLASHINFER` |
+| `--attention-backend=TRITON_ATTN` | `attn-triton-cli` | logged `Using FLASHINFER` |
+
+The CLI flag is genuinely accepted — the server starts, so the argument exists — and vLLM overrides the request anyway, most likely because this hybrid needs FlashInfer for its GatedDeltaNet layers or its FP8 KV cache. Both rows are PARTIAL and neither measured Triton. It would not have mattered regardless: every backend/KV/utilisation row in the matrix landed inside 15.07–15.19 tok/s.
+
+**N-gram is still NOT ruled out — and the second attempt to rule it out was mis-tuned by the person writing this.** The first test handed it its worst case: fresh prose, 10 drafted tokens across a whole generation, never firing. #18 said explicitly that this was not a verdict. So it was re-tested on its best case — a source file in context, a request to return the whole thing rewritten, and a longer lookup window.
+
+The decode number looked like a clean loss. The **acceptance** column says otherwise:
+
+| Same prompt (`docs/prompts/agentic-coding.txt`) | Decode | Drafted | Accepted |
+|---|---|---|---|
+| MTP, 3 draft tokens | **19.66 tok/s** | 138 | **59.4%** |
+| n-gram, 8 tokens, window **2**–8 | 13.04 tok/s | 104 | **13.5%** |
+
+86.5% of those drafts were rejected, and every rejected draft still costs its verification pass. That is not "string matching predicts worse than MTP" — that is a drafter configured to guess constantly and be wrong.
+
+**The cause is `prompt_lookup_min: 2`, which this branch set.** A two-token suffix matches almost anywhere in a long context and predicts almost nothing. Compare the earlier row that left the minimum at vLLM's stricter default:
+
+| Config | Drafted | Accepted |
+|---|---|---|
+| `spec-ngram5` (no min set) | 10 | **70.0%** — better than MTP |
+| `spec-ngram8` (min 2) | 104 | 13.5% |
+
+**The two rows bracket the tuning problem without testing it.** One is precise and silent, the other chatty and wrong. Prompt-lookup lives in the middle — fire often *and* be right — so the middle was tested.
+
+**It isn't there. N-gram is now genuinely ruled out for this model**, across five configurations spanning the tuning space:
+
+| Config | `min` | k | Drafted | Accepted | **Accepted tokens** | Decode |
+|---|---|---|---|---|---|---|
+| `spec-off` | — | — | — | — | 0 | 11.22 |
+| `spec-ngram-narrow` | 5 | 4 | 8 | 50.0% | **4** | 12.70 |
+| `spec-ngram-tuned` | 5 | 6 | 24 | 41.7% | **10** | 12.06 |
+| `spec-ngram8` | 2 | 8 | 104 | 13.5% | **14** | 13.09 |
+| `spec-mtp3` | — | 3 | 138 | 59.4% | **82** | 19.66 |
+
+Raising `prompt_lookup_min` to 5 fixed accuracy exactly as predicted — 13.5% up to 42–50% — and collapsed the firing rate from 104 drafts to 8–24. **The tradeoff is real and neither end of it wins.** What matters is the product, drafted × accepted, and every n-gram variant lands between 4 and 14 accepted tokens against MTP's 82.
+
+MTP wins because it fires constantly *and* accurately. Prompt-lookup cannot reach that even on a prompt built to favour it, because the supply of verbatim-echo spans in the output is limited however you tune the matcher. That is a property of the workload, not of the configuration — which is why more tuning will not rescue it.
+
+**But keep the `spec-off` row in view: every n-gram variant still beat no speculation**, 12.06–13.09 against 11.22. On a checkpoint with no MTP heads, prompt-lookup is worth having. It loses here only because something better ships inside this model.
+
+The MTP comparison is clean by accident, at least: `attn-triton-cli` failed to change the backend, which made it a plain baseline run on the identical prompt. A row that measured nothing it was asked to measure produced the control the other row needed.
+
+**This is the fourth time in two days that a config was declared dead when the tooling or the tuning was at fault** — after speculation-reads-zero, prefix-cache-reads-inert, and the roofline that divided by tokens instead of forward passes. The tell was the same every time: a headline number that looked decisive, with a mechanism counter next to it that nobody read.
+
+### Two numbers that fell out of the same-prompt baseline
+
+Running `spec-off` on the agentic prompt — the control that was missing — produced both.
+
+| Same prompt | Decode | Accepted | Tokens/pass | Passes/s |
+|---|---|---|---|---|
+| `spec-off` | 11.22 tok/s | — | 1.00 | **11.22** |
+| `spec-ngram8` | 13.09 tok/s | 13.5% | 2.08 | **6.29** |
+| `spec-mtp3` | 19.66 tok/s | 59.4% | 2.78 | **7.07** |
+
+**Even badly tuned, n-gram beats no speculation** — 13.09 against 11.22, +17%. That matters for the next model rather than this one: if a checkpoint ships no MTP heads, prompt-lookup is worth having at 13.5% acceptance, which is the opposite of the conclusion the decode column alone invited.
+
+**Speculation is not free per forward pass.** Passes drop from 11.22/s to 6.3–7.1/s when it is enabled — each verification pass costs **1.6–1.8× a plain one**. Decode being bandwidth-bound made it tempting to assume verifying extra positions is nearly free, since the weight read is shared. It is not: `ngram8` verifies 9 positions and pays more per pass than `mtp3` verifying 4.
+
+So the quantity to maximise is **acceptance per draft token**, not draft count — wider drafts cost real time and only pay if they land. That is the same force that made `mtp5` (39.5% acceptance) lose to `mtp3` (64.4%), now visible as a mechanism instead of an empirical curiosity, and it is why `spec-ngram-narrow` (4 tokens) is worth testing alongside `spec-ngram-tuned` (6).
+
+**What is left.** One lever: a stronger drafter. Tokens-per-pass is the only thing that beats a 12.04 tok/s roofline, and it is entirely a function of draft acceptance. That is `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until an EAGLE3 head trained against *this* checkpoint is pinned.
+
+Related: #18 (the roofline that makes these claims checkable), #12 (bandwidth is physics).
+
+---
+
+## 20. A Stronger Drafter — DSpark, +21%, and Why Width Peaks at 7
+
+**Status: measured 2026-08-26/27.** Branch `brain-sglang-eval`.
+
+#19 concluded the community's SGLang throughput claims were about the *drafter*, not the engine. Two drafters exist for this exact checkpoint, both were testable under vLLM, and one works.
+
+| Config | Decode | Accept | Agg @8 |
+|---|---|---|---|
+| `spec-off` | 11.22 | — | 79.6 |
+| `spec-mtp3` *(shipped v5.2)* | 19.66 | 59.4% | **102.5** |
+| **`spec-dspark7`** | **23.85** | 16.4% | 80.2 |
+
+**+21% over the tuned MTP config, +113% over no speculation, and output is unchanged** — every draft is verified against the real model and discarded if wrong. Speed only.
+
+### Getting there cost three separate blockers
+
+1. **`incoai/Qwen3.8-27B-DFlash2` is rejected outright.** Its config declares `DFlash2DraftModel`; the image registers `DFlashDraftModel`. The build landed DFlash v1. No config bridges that.
+2. **The draft path was a host path.** `MODELS_DIR` is bind-mounted at `/models`, and the brain's own weights are translated at launch while the draft model rode through the `speculative_config` JSON verbatim. `Invalid repository ID or local directory specified: '/opt/models/...'`.
+3. **`DSparkDraftModel` dispatches to the DeepSeek-V4 implementation.** `AttributeError: 'Qwen3Config' object has no attribute 'hc_mult'` — a Qwen3 drafter loaded into a DeepSeek class, failing on a DeepSeek-only config field 300 lines deep. **Renaming `architectures` to `Qwen3DSparkModel` in the drafter's `config.json` fixes it.**
+
+That third fix lives in `/opt/models/`, **outside the repo**. Nothing in git protects it, and a re-download silently reverts it.
+
+### Why 7, and why not 50
+
+The obvious next move was more draft tokens, on the reasoning that block-diffusion drafts a whole block per pass so width is free. Wrong — the curve is an inverted U:
+
+| Width | Decode | Accept | Tokens/pass | Passes/s | Implied blocks |
+|---|---|---|---|---|---|
+| 3 | 20.12 | 52.0% | 2.56 | 7.86 | 1.4 |
+| 5 | 22.72 | 27.6% | 2.38 | 9.55 | 1.2 |
+| **7** | **23.85** | 16.4% | 2.15 | **11.10** | **1.0** |
+| 12 | 19.13 | 17.1% | 3.05 | 6.27 | 1.8 |
+| 20 | 17.16 | 15.8% | 4.16 | 4.12 | 2.7 |
+
+The drafter's config says `block_size: 7`. **Width is free inside one block and costs a full extra draft pass beyond it.** Pass rate falls in ratios of 1 : 1.8 : 2.7 at widths 7/12/20 — 1, 2 and 3 blocks. At width 20 the drafter accepts nearly three tokens per draft and is still *slower* than no speculation would suggest, because it pays three drafting passes to get them.
+
+So the projection that 20 draft tokens would reach ~47 tok/s was wrong twice over: acceptance decays with position (52% → 16%), and drafting stops being free at the block boundary. **50 tok/s is not reachable by width.** The remaining lever is acceptance, and 16.4% is low for a purpose-built drafter — the likeliest cause being that DSpark is trained against `Qwen/Qwen3.8-27B` in BF16 while we serve the Unsloth NVFP4 quant, so it predicts a slightly different distribution than the target samples.
+
+### The trade nobody asked about: concurrency
+
+Aggregate throughput at 8 streams moves the *other* way. `mtp3` does 102.5 tok/s; `dspark7` does 80.2, and `dspark20` collapses to 39.4. Under batching the GPU is already saturated, so drafting competes with work the batch was doing productively.
+
+**Speculation helps an idle box and hurts a busy one.** For an interactive daily driver that is the right trade. For heavy parallel-agent use it is not, and `mtp3` remains the better configuration despite being 21% slower single-stream.
+
+### A methodological failure worth more than the result
+
+`m_spec_drafted` measured acceptance with a hardcoded prompt while `m_decode` used `--prompt-file`. Every tokens-per-pass figure in the sweep therefore blends two workloads — including the claim that "DSpark drafting costs 1% against MTP's 37%". The conclusions survive because the effect sizes are large, which is luck, not method. Fixed: acceptance now uses the same prompt as decode.
+
+The residual is visible above. Widths 3 and 5 imply 1.4 and 1.2 blocks where the answer must be exactly 1.0.
+
+
+### Shipped — and the qualification that came with it
+
+Deployed as the default and re-measured three times: **23.85 / 23.91 / 23.79 tok/s**. Tight and reproducible, which is more than the MTP result had when it was adopted.
+
+But the same three runs exposed a limit on the claim:
+
+| Prompt | `mtp3` | `dspark7` | Gain |
+|---|---|---|---|
+| Agentic coding (a file in context, rewritten) | 19.66 | **23.9** | **+21.6%** |
+| Default (fresh explanatory prose) | 16.74–17.13 | 16.83 | **none** |
+
+**The +21% is a property of the workload, not of the box.** A drafter can only win where output is predictable, and code that echoes context is predictable in a way that open-ended prose is not. On this repo's own default benchmark prompt, DSpark and MTP are indistinguishable.
+
+That is fine — agentic coding is what this machine is for — but the number belongs with its workload attached. Quoting "23.9 tok/s" flat would repeat, in a smaller way, the error of quoting 19.66 as what the box does.
+
+**Two things the deployment log gave away for free:**
+
+**CUDA graphs stay FULL under DSpark.** Every MTP run logged:
+
+```
+FULL_AND_PIECEWISE is not supported with spec-decode for FlashInferBackend;
+setting cudagraph_mode=PIECEWISE
+```
+
+That warning is absent with DSpark, and capture sizes go to 256 instead of 192. MTP forced a graph-mode downgrade; DSpark does not. Nobody predicted this, and it is plausibly part of why DSpark wins at all — meaning the comparison was never purely drafter-versus-drafter.
+
+**And an advisory that turned out to be nothing.** vLLM warned that `max_num_scheduled_tokens` had dropped to 8096, because 16 sequences × 8 draft slots reserve budget from `max_num_batched_tokens: 8192`, and suggested raising it. Raising it to 16384 measured 23.79 against 23.91 — noise. Reverted. A warning naming a real mechanism still has to be measured before it is believed.
+### Key lesson
+
+Two predictions were made and both were wrong in the same direction: that wider drafts would be free, and that acceptance was the number that mattered. What actually governs it is **accepted tokens per unit of drafting cost**, and drafting cost is a step function with a step at `block_size` — a constant sitting in the drafter's own config, unread until the measurements demanded an explanation.
+
+The right question was never "how many tokens should we draft". It was "what does the drafter charge to draft them", and that was answerable from a config file before any of the five model loads.
+
+Related: #19 (SGLang — the engine was never the lever), #18 (the roofline these all live under).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
@@ -733,8 +948,9 @@ Related: Lesson #12 (bandwidth is physics), Lesson #16 (the trade made knowingly
 | **v4.2.1** | **Qwen3.6-35B-A3B-FP8** | **MoE + DeltaNet** | **3B** | **~53** | **No** | **Prior baseline. Available via `git checkout v4.2.1`. Watchdog v4.2 stack** |
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Speed traded for vision + higher per-token reasoning |
 | **v5.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Superseded by v5.2. Loopback bind, auto-provisioned API key, persisted compile cache. See #17** |
-| **v5.2** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~17** | **Yes** | **Current — same model and weights. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18** |
+| v5.2 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.3. `num_speculative_tokens` 5 -> 3. Output-preserving. +29.5% same-session vs mtp5; ~17 day to day, acceptance-dependent. See #18 |
+| **v5.3** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — same weights. DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20** |
 
 ---
 
-*Last updated: August 26, 2026 — Lesson #18, throughput question ANSWERED: roofline real at 12 tok/s, draft length was the bug, 15.18 -> 19.66 tok/s*
+*Last updated: August 27, 2026 — Lesson #20, DSpark drafter adopted: 23.9 tok/s on agentic work vs 19.66 on tuned MTP, output unchanged*

@@ -19,6 +19,7 @@
 #   audit      declared config vs what the server actually did   (read-only, ~1 min)
 #   quick      decode rate + TTFT of the running config          (read-only, ~1 min)
 #   bandwidth  achieved memory bandwidth + derived bytes/token   (read-only, ~1 min)
+#   metrics    what the running server actually exports            (read-only, instant)
 #   matrix     sweep every configuration                         (hours, Brain down)
 #   render     regenerate BENCHMARKS.md from the ledger          (instant)
 #   list       show the matrix and what has been measured        (instant)
@@ -192,6 +193,20 @@ launch_sglang() {
     reason=$(get_field sglang reasoning_parser)
     radix=$(get_field sglang disable_radix_cache)
 
+    # Speculative decoding — the whole reason SGLang is on the list.
+    #
+    # Our own roofline makes the community claim checkable rather than a rumour:
+    # 12.04 tok/s per forward pass is the bandwidth limit and no engine changes
+    # it, so a reported ~50 tok/s requires ~4.15 tokens per forward pass against
+    # the 2.4-2.9 we get from MTP. That gap is a DRAFTER difference. Launching
+    # SGLang without passing these flags would measure the engine while leaving
+    # the only variable that could explain the claim switched off — and would
+    # then report "SGLang is no faster", which would be true and meaningless.
+    local spec_algo spec_steps spec_draft
+    spec_algo=$(get_field sglang speculative_algorithm)
+    spec_steps=$(get_field sglang speculative_num_steps)
+    spec_draft=$(get_field sglang speculative_draft_model_path)
+
     for n in brain qwen-brain; do docker rm -f "${n}" >/dev/null 2>&1 || true; done
 
     # NOTE the inverted sense: SGLang's radix cache (its prefix cache) is ON by
@@ -214,6 +229,9 @@ launch_sglang() {
             ${attn:+--attention-backend "${attn}"} \
             ${tool:+--tool-call-parser "${tool}"} \
             ${reason:+--reasoning-parser "${reason}"} \
+            ${spec_algo:+--speculative-algorithm "${spec_algo}"} \
+            ${spec_steps:+--speculative-num-steps "${spec_steps}"} \
+            ${spec_draft:+--speculative-draft-model-path "${spec_draft}"} \
             $([ "${radix}" = "true" ] && echo "--disable-radix-cache")
 }
 
@@ -233,7 +251,46 @@ wait_ready() {
     until brain_ready; do
         if ! docker ps -q --filter "name=^brain$" --filter "status=running" | grep -q .; then
             echo ""
-            LAUNCH_NOTE="container exited during load: $(docker logs brain 2>&1 | tail -2 | redact | tr '\n' ' ')"
+            # Keep the CAUSE, not the last lines. A pydantic validation
+            # failure ends with a stable footer ("For further information
+            # visit https://errors.pydantic.dev/...") and tail -2 captured
+            # exactly that footer for two dflash rows — a note that said a
+            # failure occurred and nothing about why, while restore_production
+            # then replaced the container and destroyed the log.
+            #
+            # Prefer the first line that names an error; fall back to the tail
+            # only when nothing matches. Also dump the full log to disk, since
+            # the container it came from will not exist minutes from now.
+            local logfile="${REPO_ROOT}/docs/failed-${NAME:-launch}.log"
+            docker logs brain >"${logfile}" 2>&1 || true
+            local cause
+            # tail, not head. A fatal error is the LAST thing a process says;
+            # the first "error" in a vLLM log is routinely a transformers
+            # docstring complaint about undocumented kwargs, which is noise and
+            # which duly filled this field for two rows in a row.
+            #
+            # Known-noise patterns are excluded by name rather than by hoping
+            # the ordering works out.
+            # vLLM runs the model in a separate EngineCore process. When that
+            # dies, the API server prints its own traceback ending in
+            #
+            #   RuntimeError: Engine core initialization failed.
+            #   See root cause above.
+            #
+            # which is a POINTER, not a cause — and being last, it is exactly
+            # what a naive tail captures. The root cause is in the EngineCore
+            # lines further up.
+            #
+            # So: look in EngineCore output first, and fall back to the whole
+            # log only if there is none.
+            local pat='error|exception|not supported|unsupported|invalid|no such|raise '
+            local noise='errors\.pydantic\.dev|further information|but not documented|Triton is installed|See root cause above|Engine core initialization failed'
+            cause=$(grep "EngineCore" "${logfile}" | grep -iE "${pat}" \
+                    | grep -viE "${noise}" | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
+            [ -z "${cause}" ] && cause=$(grep -iE "${pat}" "${logfile}" \
+                    | grep -viE "${noise}" | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
+            [ -z "${cause}" ] && cause=$(tail -5 "${logfile}" | redact | tr '\n' ' ')
+            LAUNCH_NOTE="container exited during load: ${cause} [full log: ${logfile}]"
             return 1
         fi
         if [ "${waited}" -ge "${timeout}" ]; then
@@ -388,8 +445,8 @@ PYEOF
 # noisy effect size, not an on/off switch.
 m_prefix_reuse() {
     local q0 h0 q1 h1
-    q0=$(metric_sum "vllm:prefix_cache_queries_total")
-    h0=$(metric_sum "vllm:prefix_cache_hits_total")
+    q0=$(metric_sum "prefix_cache_queries_total")
+    h0=$(metric_sum "prefix_cache_hits_total")
     PREFIX_REUSE=$(BASE="${BASE}" BRAIN_NAME="${BRAIN_NAME}" BRAIN_API_KEY="${BRAIN_API_KEY}" \
         python3 - <<'PYEOF' 2>/dev/null || echo ""
 import json, os, time, urllib.request
@@ -418,8 +475,8 @@ cold = ask("Summarise function_1."); warm = ask("Summarise function_2.")
 print(f"{cold/warm:.2f}" if warm > 0 else "")
 PYEOF
     )
-    q1=$(metric_sum "vllm:prefix_cache_queries_total")
-    h1=$(metric_sum "vllm:prefix_cache_hits_total")
+    q1=$(metric_sum "prefix_cache_queries_total")
+    h1=$(metric_sum "prefix_cache_hits_total")
     PREFIX_HIT_RATE=""
     if [ -n "${q0}" ] && [ -n "${q1}" ] && [ -n "${h0}" ] && [ -n "${h1}" ] \
        && [ "$((q1 - q0))" -gt 0 ]; then
@@ -452,10 +509,27 @@ PYEOF
 # is unauthenticated today, not guaranteed to be tomorrow, and a probe that
 # starts failing closed would fail into that same "0" — which is precisely the
 # reading this function exists to make impossible.
+# Takes the metric name WITHOUT its engine prefix. vLLM exports
+# `vllm:spec_decode_num_draft_tokens_total`; another engine exports the same
+# quantity under its own prefix. Stripping the prefix before comparing means one
+# probe works across engines, and — importantly — an engine that does NOT export
+# the metric still yields empty rather than a fabricated zero.
+#
+# The suffix is still matched EXACTLY, so `_total` never collides with
+# `_created`. That distinction is the whole reason this function exists; see the
+# comment above about a live speculative decoder reading as zero.
+#
+# Run `benchmark.sh metrics` against a live server to see what it actually
+# exports before assuming any name.
 metric_sum() {
     curl -sf --max-time 10 "${AUTH[@]}" "${BASE}/metrics" 2>/dev/null \
-        | awk -v name="$1" '
-            index($1, name "{") == 1 || $1 == name { s += $NF; n += 1 }
+        | awk -v suf="$1" '
+            {
+                n1 = $1
+                b = index(n1, "{"); if (b) n1 = substr(n1, 1, b - 1)
+                c = index(n1, ":"); if (c) n1 = substr(n1, c + 1)
+                if (n1 == suf) { s += $NF; n += 1 }
+            }
             END { if (n) printf "%.0f\n", s }'
 }
 
@@ -468,16 +542,34 @@ metric_sum() {
 # rate is the number that decides, so it is measured here too.
 m_spec_drafted() {
     local d0 d1 a0 a1 n0 n1
-    d0=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
-    a0=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
-    n0=$(metric_sum "vllm:spec_decode_num_drafts_total")
-    curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
-        -X POST "${BASE}/v1/chat/completions" \
-        -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
-        >/dev/null 2>&1
-    d1=$(metric_sum "vllm:spec_decode_num_draft_tokens_total")
-    a1=$(metric_sum "vllm:spec_decode_num_accepted_tokens_total")
-    n1=$(metric_sum "vllm:spec_decode_num_drafts_total")
+    d0=$(metric_sum "spec_decode_num_draft_tokens_total")
+    a0=$(metric_sum "spec_decode_num_accepted_tokens_total")
+    n0=$(metric_sum "spec_decode_num_drafts_total")
+    # Same prompt as m_decode. Acceptance is workload-dependent — it was 52% at
+    # 3 draft tokens and 16% at 7 on one workload — so measuring it against a
+    # different prompt than the decode rate makes tokens-per-pass
+    # uncomputable, and every derived figure a blend of two workloads.
+    #
+    # This was the case for the whole dspark width sweep: decode used
+    # --prompt-file, acceptance used a hardcoded "Write a quicksort in Python".
+    # The conclusions survived because the effect sizes were large, which is
+    # luck rather than method.
+    local sp="${PROMPT:-Explain how a hash map handles collisions, then write one in Python.}"
+    SPEC_PROMPT="${sp}" BRAIN_NAME="${BRAIN_NAME}" BASE="${BASE}" \
+    BRAIN_API_KEY="${BRAIN_API_KEY}" python3 - >/dev/null 2>&1 <<'PYEOF' || true
+import json, os, urllib.request
+base, model = os.environ["BASE"], os.environ["BRAIN_NAME"]
+body = {"model": model, "max_tokens": 128,
+        "messages": [{"role": "user", "content": os.environ["SPEC_PROMPT"]}]}
+req = urllib.request.Request(f"{base}/v1/chat/completions",
+    data=json.dumps(body).encode(),
+    headers={"Content-Type": "application/json",
+             "Authorization": f"Bearer {os.environ.get('BRAIN_API_KEY','')}"})
+urllib.request.urlopen(req, timeout=300).read()
+PYEOF
+    d1=$(metric_sum "spec_decode_num_draft_tokens_total")
+    a1=$(metric_sum "spec_decode_num_accepted_tokens_total")
+    n1=$(metric_sum "spec_decode_num_drafts_total")
 
     # Absent counters yield empty, which every caller must treat as UNKNOWN.
     if [ -z "${d0}" ] || [ -z "${d1}" ]; then
@@ -592,6 +684,29 @@ validate_runtime() {
                         problems=$((problems + 1))
                     fi
                 fi
+                ;;
+            extra_args)
+                # Raw CLI passthrough. Only one thing is verifiable in general —
+                # that the server came up at all, which wait_ready already
+                # established. But when the flag names a backend, check that the
+                # backend actually loaded, or this row repeats the exact failure
+                # it exists to fix: requesting TRITON_ATTN, getting FLASHINFER,
+                # and being recorded VALID.
+                case "${want}" in
+                    *attention-backend=*)
+                        local req sel2
+                        req="${want##*attention-backend=}"; req="${req%% *}"
+                        sel2=$(echo "${logs}" | grep -ioE "Using [A-Z0-9_]+ attention backend" \
+                               | head -1 | awk '{print $2}')
+                        if [ -z "${sel2}" ]; then
+                            VALIDATION_NOTE+="extra_args ${want} unverifiable — no selection line in log; "
+                            problems=$((problems + 1))
+                        elif [ "${sel2^^}" != "${req^^}" ]; then
+                            VALIDATION_NOTE+="extra_args requested ${req} observed ${sel2}; "
+                            problems=$((problems + 1))
+                        fi
+                        ;;
+                esac
                 ;;
             kv_cache_dtype)
                 # Verified in BOTH directions. The old check only fired when
@@ -955,6 +1070,20 @@ while [ $# -gt 0 ]; do
         audit|quick|bandwidth|matrix|render|list|all) CMD="$1"; shift ;;
         --only) ONLY="${2:-}"; shift 2 ;;
         --redo) REDO=1; shift ;;
+        # Measure against YOUR workload, not the built-in prompt.
+        #
+        # This matters most for prompt-lookup (ngram). The default prompt writes
+        # fresh prose from nothing, which is prompt-lookup's WORST case — it
+        # drafted 10 tokens across an entire generation and scored 12.46 tok/s,
+        # barely above no speculation at all. That number says nothing about
+        # agentic coding, where output echoes files already in context, which is
+        # prompt-lookup's best case. Judging ngram on the default prompt would
+        # rule out the one technique most likely to suit how this box is used.
+        --prompt-file)
+            [ -r "${2:-}" ] || { echo "cannot read prompt file: ${2:-<missing>}"; exit 1; }
+            PROMPT=$(cat "$2"); export PROMPT
+            echo "  prompt: ${2} ($(wc -c < "$2") bytes)"
+            shift 2 ;;
         -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1 (try --help)"; exit 1 ;;
     esac
@@ -978,6 +1107,7 @@ MATRIX=$(cat <<'EOF'
 baseline|vllm|
 prefix-off|vllm|OVERRIDE_enable_prefix_caching=false
 attn-triton|vllm|OVERRIDE_attention_backend=TRITON_ATTN
+attn-triton-cli|vllm|OVERRIDE_extra_args=--attention-backend=TRITON_ATTN
 attn-flashinfer|vllm|OVERRIDE_attention_backend=FLASHINFER
 kv-bf16|vllm|OVERRIDE_kv_cache_dtype=auto
 spec-off|vllm|OVERRIDE_speculative_config=
@@ -985,6 +1115,16 @@ spec-mtp3|vllm|OVERRIDE_speculative_config={"method":"mtp","num_speculative_toke
 spec-mtp2|vllm|OVERRIDE_speculative_config={"method":"mtp","num_speculative_tokens":2}
 spec-ngram5|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4}
 spec-ngram3|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":3,"prompt_lookup_max":4}
+spec-ngram8|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}
+spec-ngram-tuned|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":6,"prompt_lookup_max":10,"prompt_lookup_min":5}
+spec-ngram-narrow|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":4,"prompt_lookup_max":10,"prompt_lookup_min":5}
+spec-dflash7|vllm|OVERRIDE_speculative_config={"method":"dflash","model":"__DRAFT__","num_speculative_tokens":7}
+spec-dflash3|vllm|OVERRIDE_speculative_config={"method":"dflash","model":"__DRAFT__","num_speculative_tokens":3}
+spec-dspark7|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":7}
+spec-dspark3|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":3}
+spec-dspark5|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":5}
+spec-dspark12|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":12}
+spec-dspark20|vllm|OVERRIDE_speculative_config={"method":"dspark","model":"__DRAFT__","num_speculative_tokens":20}
 util-080|vllm|OVERRIDE_gpu_memory_utilization=0.80
 INTERACTION-flashinfer-bf16kv|vllm|OVERRIDE_attention_backend=FLASHINFER OVERRIDE_kv_cache_dtype=auto
 INTERACTION-triton-util080|vllm|OVERRIDE_attention_backend=TRITON_ATTN OVERRIDE_gpu_memory_utilization=0.80
@@ -1022,6 +1162,34 @@ for line in open(os.environ['LEDGER'], encoding='utf-8'):
 
 cmd_render() { render_report; }
 
+# What does the running server ACTUALLY export? Read-only, instant.
+#
+# Exists because the alternative is guessing metric names for a new engine, and
+# a guessed name that does not match is indistinguishable from a feature that is
+# switched off — which is exactly how this tool once reported a live speculative
+# decoder as dead. Run this against SGLang before trusting any SGLang row.
+cmd_metrics() {
+    require_brain || return 2
+    echo ""
+    echo "-- Metrics exported by the running server --"
+    local raw
+    raw=$(curl -sf --max-time 10 "${AUTH[@]}" "${BASE}/metrics" 2>/dev/null)
+    if [ -z "${raw}" ]; then
+        echo "   /metrics returned nothing — wrong port, or the engine does not export Prometheus."
+        return 2
+    fi
+    echo "   $(echo "${raw}" | grep -c '^[a-z]') sample lines total"
+    echo ""
+    echo "   Cache / speculation / prefix metrics (what the audit needs):"
+    echo "${raw}" | grep -oE '^[a-z_]+:?[a-z_0-9]+' | sort -u \
+        | grep -iE "cache|spec|draft|accept|prefix|radix" | sed 's/^/     /' \
+        || echo "     (none found — the audit will report UNKNOWN, which is correct)"
+    echo ""
+    echo "   The audit matches these names WITHOUT their engine prefix, so"
+    echo "   vllm:X and sglang:X both resolve. If the suffixes differ, the"
+    echo "   checks report UNKNOWN rather than guessing."
+}
+
 cmd_quick() {
     require_brain || return 2
     echo ""
@@ -1054,7 +1222,29 @@ cmd_bandwidth() {
         m_spec_drafted
         local wpath; wpath=$(get_field brain local_path)
         local wgb=""; [ -d "${wpath}" ] && wgb=$(du -sb "${wpath}" 2>/dev/null | awk '{printf "%.1f", $1/1e9}')
+
+        # DENSE vs MoE. The ratio compares bytes-read-per-pass against the
+        # weights a pass actually READS. For a dense model that is the whole
+        # checkpoint. For a Mixture-of-Experts it is emphatically not: only a
+        # few experts fire per token, so a 35B-A3B reads roughly a tenth of its
+        # own file per pass.
+        #
+        # Left uncorrected, an MoE would land near 0.2x, fall into the "< 1.25"
+        # branch, and print "the roofline is REAL, config tuning cannot beat
+        # it" — a confident verdict computed from the wrong denominator, which
+        # is the exact failure this whole file exists to prevent. Worse, it
+        # would be printed about the model we are most likely to try next.
+        #
+        # So: if the checkpoint declares experts and nobody has supplied the
+        # active weight size, this reports UNKNOWN and explains why. An honest
+        # blank beats a confident wrong number.
+        local active_gb; active_gb=$(get_field brain active_weight_gb)
+        local moe=""
+        [ -f "${wpath}/config.json" ] && moe=$(grep -oE '"(num_experts|n_routed_experts|num_local_experts|num_experts_per_tok)"' \
+            "${wpath}/config.json" 2>/dev/null | head -1)
+
         BANDWIDTH="${BANDWIDTH}" DECODE_TOKS="${DECODE_TOKS}" WGB="${wgb}" \
+        MOE="${moe}" ACTIVE_GB="${active_gb}" \
         TPP="${TOKENS_PER_PASS:-}" ACC="${SPEC_ACCEPT_RATE:-}" python3 -c "
 import os
 bw, toks = float(os.environ['BANDWIDTH']), float(os.environ['DECODE_TOKS'])
@@ -1077,7 +1267,29 @@ print(f'   => bytes per FORWARD PASS: {per:.1f} GB')
 w = os.environ.get('WGB') or ''
 if not w:
     raise SystemExit(0)
-weights = float(w); ratio = per / weights
+weights = float(w)
+
+# An MoE reads only its active experts per pass, so the checkpoint size is the
+# wrong denominator and every verdict below would be computed from it.
+active = os.environ.get('ACTIVE_GB') or ''
+if active:
+    weights = float(active)
+    print(f'   active weights: {weights:.1f} GB (declared, not the {w} GB checkpoint)')
+elif os.environ.get('MOE'):
+    print(f'   checkpoint on disk: {weights:.1f} GB')
+    print('')
+    print('   *** RATIO NOT COMPUTED — this checkpoint declares experts ***')
+    print('   A Mixture-of-Experts reads only its active experts per forward')
+    print('   pass, so comparing bytes-per-pass against the whole checkpoint')
+    print('   understates the ratio several-fold and would print \"the roofline')
+    print('   is REAL\" for a model nowhere near it.')
+    print('')
+    print('   Set brain.active_weight_gb in config/models.yml to the bytes one')
+    print('   token actually reads — shared layers plus experts_per_tok worth')
+    print('   of expert weights — and re-run. Until then this is UNKNOWN, which')
+    print('   is not the same as fine.')
+    raise SystemExit(0)
+ratio = per / weights
 print(f'   checkpoint on disk: {weights:.1f} GB   ratio: {ratio:.2f}x')
 print('')
 # The ceiling is per-pass. What a user feels is per-token, which speculation
@@ -1245,7 +1457,18 @@ cmd_matrix() {
             return 1
         }
     fi
+    # Idempotent, and deaf to further interrupts once started.
+    #
+    # trap ... EXIT INT TERM means an interrupt runs cleanup and THEN fires it
+    # again on exit, and a second Ctrl-C during the restart re-enters it. One
+    # interrupted run printed "Restoring production configuration..." ten times
+    # and finished with "WARN: restore failed" — the recovery path defeated by
+    # the same key that invoked it, leaving Brain down.
+    CLEANUP_DONE=0
     cleanup() {
+        [ "${CLEANUP_DONE}" = "1" ] && return 0
+        CLEANUP_DONE=1
+        trap '' INT TERM
         echo ""
         echo ">>> Restoring production configuration..."
         restore_production
@@ -1259,12 +1482,27 @@ cmd_matrix() {
     trap cleanup EXIT INT TERM
 
     mkdir -p "$(dirname "${LEDGER}")"; touch "${LEDGER}"
+    MATCHED=0
 
     while IFS='|' read -r NAME ENGINE OVERRIDES; do
         [ -z "${NAME}" ] && continue
         if [ -n "${ONLY}" ] && ! echo ",${ONLY}," | grep -q ",${NAME},"; then continue; fi
-        if [ "${REDO}" = "0" ] && grep -q "\"name\": \"${NAME}\"" "${LEDGER}" 2>/dev/null; then
-            echo ""; echo "SKIP ${NAME} — already measured (--redo to repeat)"; continue
+        MATCHED=$((MATCHED + 1))
+        # Skip only rows that actually HOLD a measurement. BLOCKED and FAILED
+        # record the absence of one — a missing image, an engine that would not
+        # start — and those are exactly the rows you return to after fixing the
+        # blocker. Treating them as "already measured" means pinning the SGLang
+        # image and re-running silently skips the row you just enabled, and
+        # reports success while measuring nothing.
+        PRIOR=$(grep "\"name\": \"${NAME}\"" "${LEDGER}" 2>/dev/null | tail -1)
+        if [ "${REDO}" = "0" ] && [ -n "${PRIOR}" ]; then
+            if echo "${PRIOR}" | grep -qE '"validity": "(BLOCKED|FAILED)"'; then
+                echo ""
+                echo "RETRY ${NAME} — previously $(echo "${PRIOR}" \
+                    | grep -oE '"validity": "[A-Z]+"' | grep -oE '[A-Z]+'), not a measurement"
+            else
+                echo ""; echo "SKIP ${NAME} — already measured (--redo to repeat)"; continue
+            fi
         fi
 
         echo ""
@@ -1278,6 +1516,42 @@ cmd_matrix() {
         # under this row's name — attributing the previous config's numbers to
         # this one. That is the worst possible ledger entry: plausible, wrong,
         # and indistinguishable from a real result later.
+        # __DRAFT__ rows need a drafter checkpoint that is not part of this
+        # model. Substitute the configured path, or record BLOCKED — the same
+        # treatment SGLang gets without a pinned image. BLOCKED is "we did not
+        # measure this", which is different from FAILED ("we tried and it broke")
+        # and from a slow number. Launching anyway would burn a 5-minute model
+        # load on every run to re-learn that no checkpoint is configured.
+        if [ "${OVERRIDES}" != "${OVERRIDES/__DRAFT__/}" ]; then
+            DRAFT_PATH=$(get_field brain speculative_draft_model)
+            if [ -z "${DRAFT_PATH}" ]; then
+                VALIDITY="BLOCKED"
+                VALIDATION_NOTE="no drafter pinned in config/models.yml (brain.speculative_draft_model)"
+                echo "    BLOCKED — ${VALIDATION_NOTE}"
+                ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
+                continue
+            fi
+            # HOST path -> CONTAINER path. MODELS_DIR is bind-mounted at
+            # /models, so a host path handed to the engine verbatim fails:
+            #
+            #   Value error, Invalid repository ID or local directory
+            #   specified: '/opt/models/qwen38-27b-dflash2'
+            #
+            # The brain's own weights are already translated at launch
+            # (--model "/models/$(basename ...)"), but the draft model rides
+            # through the speculative_config JSON untouched, so it needed the
+            # same treatment.
+            #
+            # Only absolute paths are rewritten. An HF repo id such as
+            # incoai/Qwen3.8-27B-DFlash2 contains a slash but does not start
+            # with one, and must be passed through unchanged for the engine to
+            # resolve it from the cache.
+            case "${DRAFT_PATH}" in
+                /*) DRAFT_PATH="/models/$(basename "${DRAFT_PATH}")" ;;
+            esac
+            OVERRIDES="${OVERRIDES//__DRAFT__/${DRAFT_PATH}}"
+        fi
+
         VALIDITY=""; VALIDATION_NOTE=""; LAUNCH_NOTE=""
         DECODE_TOKS=""; TTFT_MS=""; AGG_MAX=""; PREFIX_REUSE=""
         SPEC_DRAFTED=""; KV_TOKENS=""; BANDWIDTH=""
@@ -1303,9 +1577,41 @@ cmd_matrix() {
                 echo "    FAILED — ${LAUNCH_NOTE}" ;;
         esac
 
+        # A row that validated but produced no decode rate was interrupted, not
+        # measured. Recording it VALID with a null decode is worse than
+        # recording nothing: the name is in the ledger, so the resume logic
+        # skips it next run, and the report ranks a config by a number it does
+        # not have.
+        #
+        # This happened for real — Ctrl-C during spec-dspark3 killed the decode
+        # request after the server came up, and the row was written as
+        # "VALID ... decode ? tok/s".
+        if [ "${VALIDITY}" = "VALID" ] || [ "${VALIDITY}" = "PARTIAL" ]; then
+            if [ -z "${DECODE_TOKS}" ]; then
+                VALIDITY="FAILED"
+                VALIDATION_NOTE="measurement did not complete (interrupted?); ${VALIDATION_NOTE}"
+                echo "    recorded FAILED — server came up but no decode rate was measured"
+            fi
+        fi
+
         ledger_append "${NAME}" "${ENGINE}" "${OVERRIDES}"
         cmd_render >/dev/null 2>&1 || true
     done <<< "${MATRIX}"
+
+    # A --only that matches nothing ran zero configurations and, before this
+    # check, said so by printing the report and exiting 0. That happened for
+    # real: a branch adding two new rows was not pushed, the Spark filtered on
+    # names its copy did not have, and the run reported success having measured
+    # nothing. Silence is the one thing a benchmark must never mean.
+    if [ -n "${ONLY}" ] && [ "${MATCHED}" -eq 0 ]; then
+        echo ""
+        echo "  ERROR: --only '${ONLY}' matched no configuration in the matrix."
+        echo "  Nothing was measured. Known names:"
+        echo "${MATRIX}" | cut -d'|' -f1 | grep -v '^$' | sed 's/^/    /'
+        echo ""
+        echo "  If a name above is missing, this checkout predates it — git pull."
+        return 1
+    fi
 
     cmd_render
 }
@@ -1316,6 +1622,7 @@ case "${CMD}" in
     quick)     cmd_quick ;;
     audit)     cmd_audit ;;
     bandwidth) cmd_bandwidth ;;
+    metrics)   cmd_metrics ;;
     matrix)    cmd_matrix ;;
     all)
         # The default: everything needed to fill docs/BENCHMARKS.md.
