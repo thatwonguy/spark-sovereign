@@ -136,21 +136,30 @@ brain:
   # 15.2 tok/s baseline and a 12.0 tok/s non-speculative floor, that is still
   # the win; it is just not 19.66 on a working machine.
   #
-  # NGRAM IS RULED OUT, and it was ruled out fairly. The first test gave it its
-  # worst case — fresh prose, where it drafted 10 tokens across an entire
-  # generation and never fired. So it was re-tested on its BEST case:
-  # docs/prompts/agentic-coding.txt puts a source file in context and asks for
-  # the whole file back rewritten, so most output tokens exist verbatim in the
-  # prompt. Longer lookup window too (ngram8: 8 tokens, window 2-8).
+  # NGRAM IS NOT RULED OUT. Two attempts, both mis-tuned in opposite directions.
   #
-  #   same prompt, agentic-coding.txt:
-  #     mtp3     19.66 tok/s   138 drafted
-  #     ngram8   13.04 tok/s   104 drafted
+  #   same prompt (docs/prompts/agentic-coding.txt):
+  #     mtp3     19.66 tok/s   138 drafted   59.4% accepted
+  #     ngram8   13.04 tok/s   104 drafted   13.5% accepted   <- min 2
   #
-  # It fired ~10x more than before, confirming the first test really was
-  # handicapping it — and it still lost by 34%. MTP's drafts come from the
-  # model's own heads and are simply better predictions than string matches.
-  # This is now a measurement, not an assumption.
+  # The decode number reads as a clean loss. The acceptance number says why, and
+  # it is not "string matching is worse": 86.5% of those drafts were REJECTED,
+  # and a rejected draft still costs its verification pass. prompt_lookup_min: 2
+  # means a two-token suffix counts as a match, and a two-token suffix matches
+  # almost anywhere in a long context while predicting almost nothing.
+  #
+  # The earlier row, which left the minimum at vLLM's stricter default, has the
+  # opposite problem:
+  #
+  #     ngram5   10 drafted    70.0% accepted   <- more accurate than MTP,
+  #                                                and it almost never fires
+  #
+  # Precise and silent, versus chatty and wrong. Prompt-lookup lives in the
+  # middle and no row has tested there. spec-ngram-tuned (6 tokens, window 5-10)
+  # is that row.
+  #
+  # Judge any ngram config on ACCEPTANCE, not on drafted count. High drafted
+  # with low acceptance is worse than not speculating at all.
   #
   # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
