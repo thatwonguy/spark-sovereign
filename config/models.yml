@@ -143,6 +143,22 @@ brain:
     CUTE_DSL_ARCH: sm_121a
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   limit_mm_per_prompt: '{"image":10}'   # keep space-free: the `serve` entrypoint branch word-splits VLLM_EXTRA_ARGS
+  # Raw CLI flags appended to the vLLM command, space-separated. BLANK IN
+  # PRODUCTION and should stay that way — this is an experiment hatch.
+  #
+  # Why it exists: attention_backend above is passed as VLLM_ATTENTION_BACKEND
+  # and this vLLM build IGNORES it. The matrix requested TRITON_ATTN and the
+  # server logged "Using FLASHINFER attention backend" regardless, so those rows
+  # measured FlashInfer twice and are marked PARTIAL in docs/BENCHMARKS.md.
+  # Rather than bake a guess about the right mechanism into the launcher, this
+  # lets one benchmark row test a guess: a wrong flag fails that row and is
+  # recorded FAILED, while production keeps this blank and is unaffected.
+  #
+  # Use --flag=value, never --flag value: benchmark.sh splits overrides on
+  # whitespace, so a space would become two separate overrides.
+  #
+  #   bash scripts/benchmark.sh --only attn-triton-cli
+  extra_args:
   #
   # --- SWAP EXAMPLES ---
   # ROLLBACK — tag v4.2.1 is the last release verified on this hardware

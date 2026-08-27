@@ -628,6 +628,29 @@ validate_runtime() {
                     fi
                 fi
                 ;;
+            extra_args)
+                # Raw CLI passthrough. Only one thing is verifiable in general —
+                # that the server came up at all, which wait_ready already
+                # established. But when the flag names a backend, check that the
+                # backend actually loaded, or this row repeats the exact failure
+                # it exists to fix: requesting TRITON_ATTN, getting FLASHINFER,
+                # and being recorded VALID.
+                case "${want}" in
+                    *attention-backend=*)
+                        local req sel2
+                        req="${want##*attention-backend=}"; req="${req%% *}"
+                        sel2=$(echo "${logs}" | grep -ioE "Using [A-Z0-9_]+ attention backend" \
+                               | head -1 | awk '{print $2}')
+                        if [ -z "${sel2}" ]; then
+                            VALIDATION_NOTE+="extra_args ${want} unverifiable — no selection line in log; "
+                            problems=$((problems + 1))
+                        elif [ "${sel2^^}" != "${req^^}" ]; then
+                            VALIDATION_NOTE+="extra_args requested ${req} observed ${sel2}; "
+                            problems=$((problems + 1))
+                        fi
+                        ;;
+                esac
+                ;;
             kv_cache_dtype)
                 # Verified in BOTH directions. The old check only fired when
                 # fp8 was requested, so the kv-bf16 row (want=auto) was checked
@@ -990,6 +1013,20 @@ while [ $# -gt 0 ]; do
         audit|quick|bandwidth|matrix|render|list|all) CMD="$1"; shift ;;
         --only) ONLY="${2:-}"; shift 2 ;;
         --redo) REDO=1; shift ;;
+        # Measure against YOUR workload, not the built-in prompt.
+        #
+        # This matters most for prompt-lookup (ngram). The default prompt writes
+        # fresh prose from nothing, which is prompt-lookup's WORST case — it
+        # drafted 10 tokens across an entire generation and scored 12.46 tok/s,
+        # barely above no speculation at all. That number says nothing about
+        # agentic coding, where output echoes files already in context, which is
+        # prompt-lookup's best case. Judging ngram on the default prompt would
+        # rule out the one technique most likely to suit how this box is used.
+        --prompt-file)
+            [ -r "${2:-}" ] || { echo "cannot read prompt file: ${2:-<missing>}"; exit 1; }
+            PROMPT=$(cat "$2"); export PROMPT
+            echo "  prompt: ${2} ($(wc -c < "$2") bytes)"
+            shift 2 ;;
         -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1 (try --help)"; exit 1 ;;
     esac
@@ -1013,6 +1050,7 @@ MATRIX=$(cat <<'EOF'
 baseline|vllm|
 prefix-off|vllm|OVERRIDE_enable_prefix_caching=false
 attn-triton|vllm|OVERRIDE_attention_backend=TRITON_ATTN
+attn-triton-cli|vllm|OVERRIDE_extra_args=--attention-backend=TRITON_ATTN
 attn-flashinfer|vllm|OVERRIDE_attention_backend=FLASHINFER
 kv-bf16|vllm|OVERRIDE_kv_cache_dtype=auto
 spec-off|vllm|OVERRIDE_speculative_config=
@@ -1020,6 +1058,7 @@ spec-mtp3|vllm|OVERRIDE_speculative_config={"method":"mtp","num_speculative_toke
 spec-mtp2|vllm|OVERRIDE_speculative_config={"method":"mtp","num_speculative_tokens":2}
 spec-ngram5|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4}
 spec-ngram3|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":3,"prompt_lookup_max":4}
+spec-ngram8|vllm|OVERRIDE_speculative_config={"method":"ngram","num_speculative_tokens":8,"prompt_lookup_max":8,"prompt_lookup_min":2}
 util-080|vllm|OVERRIDE_gpu_memory_utilization=0.80
 INTERACTION-flashinfer-bf16kv|vllm|OVERRIDE_attention_backend=FLASHINFER OVERRIDE_kv_cache_dtype=auto
 INTERACTION-triton-util080|vllm|OVERRIDE_attention_backend=TRITON_ATTN OVERRIDE_gpu_memory_utilization=0.80
