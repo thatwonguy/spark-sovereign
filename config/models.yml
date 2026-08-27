@@ -13,7 +13,25 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): BLOCKED — this model does NOT fit on one GB10.
+# STATUS (2026-08-27): retrying with a build whose PLE table IS quantized.
+#
+# The first attempt (Inferact NVFP4, 170.2 GiB) failed: 76 GiB on GPU plus a
+# ~95 GiB n-gram table, against 121 GiB of UNIFIED memory. PLE-Offload does not
+# help on a shared pool — see docs/LESSONS.md #21.
+#
+# local-inference-lab/...-NVFP4-4p89 is 102.4 GiB and declares
+# "ple_embedding_dtype": "nvfp4" — the embedding table is 4-bit, which is the
+# one thing the first build was missing. MIXED_PRECISION via modelopt: MXFP8 on
+# most layers, NVFP4 on the large expert blocks, 4.89 bpw average.
+#
+#   weights   102.4 GiB
+#   budget    109.79 GiB
+#   KV cache   ~7.4 GiB   <- tight, and QSA forces BF16 so tokens are expensive
+#
+# UNVERIFIED: README says WIP, uploaded 2026-08-27. The index resolves and the
+# shards are coherent, but nobody has run it. max_model_len 262144 may not fit
+# in 7.4 GiB of BF16 KV; vLLM reports the real capacity at startup and fails
+# loudly if it cannot honour the declared window.
 #
 # Downloaded, loaded, and died. 76.07 GiB of weights went to GPU exactly as
 # predicted and PLE offload registered correctly, but the Spark's 128 GB is
@@ -51,7 +69,7 @@
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-flash-next-nvfp4
-  hf_repo: Inferact/Qwen3.8-Flash-Next-NVFP4      # 170.2 GiB, 21 shards, modelopt NVFP4
+  hf_repo: local-inference-lab/Qwen3.8-Flash-Next-NVFP4-4p89   # 102.4 GiB — PLE table quantized too
   # Optional revision pin. Omitted = latest on main at pull time, which is the
   # right default for a fresh drop (first uploads ship broken — that is what the
   # tokenizer-truncation check in 02_download_models.sh exists to catch).
@@ -59,14 +77,14 @@ brain:
   # <local_path>/DOWNLOADED_REVISION.txt, so the running weights are always
   # attributable even when this is blank. Set it to that SHA to freeze them.
   # hf_revision: <sha>
-  local_path: /opt/models/qwen38-flash-next-nvfp4
+  local_path: /opt/models/qwen38-flash-next-4p89
   port: 8000
   # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
   # this box only
   bind_host: 127.0.0.1
   served_name: qwen38-flash-next      # CHANGED from qwen38-27b -> re-point OpenClaw
   docker_image: vllm/vllm-openai:qwen38-flash-next-arm64-cu130   # registers Qwen4Exp*; the qwen38-arm64 tag does not
-  gpu_memory_utilization: 0.85        # preflight ceiling is 0.90; margin for host PLE prefetch buffers
+  gpu_memory_utilization: 0.90        # the ceiling preflight allows; KV is the scarce resource here, not headroom
   max_model_len: 262144
   # BF16, NOT fp8. Qwen Sparse Attention refuses an FP8 KV cache outright:
   #   NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
@@ -78,7 +96,7 @@ brain:
   # max_model_len, lower max_num_seqs before lowering max_model_len — the
   # context window is the headline feature, concurrency is not.
   kv_cache_dtype: auto
-  max_num_seqs: 8                     # 35 GiB of KV cache, half the 27B budget
+  max_num_seqs: 4                     # ~7.4 GiB of BF16 KV. Lower this before lowering max_model_len
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
