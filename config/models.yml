@@ -401,6 +401,55 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
 
+  # CORRECTION (2026-08-27): the previous note here said vLLM upstream does not
+  # support this architecture and that Unsloth could not quantize until it did.
+  # BOTH WRONG. vLLM has an official recipe page for Qwen3.8-Flash-Next, and
+  # NVFP4/FP8/GGUF builds exist today. What is actually missing is Qwen4Exp
+  # support in OUR PINNED arm64 image — a much narrower and more tractable gap.
+  # The error came from reading one vendor's gating notes instead of checking
+  # the engine, which is the same failure this repo keeps recording.
+  #
+  # THE REAL BLOCKER: vllm/vllm-openai:qwen38-arm64-cu130 registers no Qwen4*
+  # architecture. Verify before anything else, and re-check after any image bump:
+  #   docker run --rm --entrypoint python3 <image> -c \
+  #     "from vllm.model_executor.models.registry import ModelRegistry as R; \
+  #      print([a for a in R.get_supported_archs() if 'Qwen4' in a])"
+  # Empty list = blocked, and no config below matters.
+  #
+  # WEIGHTS THAT EXIST (preflight each before trusting a name):
+  #   Inferact/Qwen3.8-Flash-Next-NVFP4    <- the one that fits, see below
+  #   Qwen/Qwen3.8-Flash-Next-FP8          official FP8
+  #   unsloth/Qwen3.8-Flash-Next-FP8
+  #   unsloth/Qwen3.8-Flash-Next-GGUF      llama.cpp path, outside this stack
+  #   Qwen/Qwen3.8-Flash-Next              unquantized, 335.3 GiB, will not fit
+  #
+  # PLE-OFFLOAD IS WHAT MAKES THIS FIT, and it removes the risk flagged above.
+  # vLLM can offload the 51B n-gram embedding table to HOST memory so it never
+  # occupies VRAM. With that, only the 125B MoE is resident:
+  #
+  #   NVFP4 + PLE-Offload   ~62 GiB on GPU   ~48 GiB left for KV   <- viable
+  #   NVFP4, both resident  ~88 GiB          no real KV headroom
+  #   FP8  + PLE-Offload    ~125 GiB         does not fit
+  #
+  # So NVFP4 is not a preference here, it is the only build that fits, and the
+  # offload flag is mandatory rather than an optimisation.
+  #
+  # REQUIRED HF OVERRIDES — the recipe specifies rope parameters that are not
+  # in config.json. Omitting them does not error, it degrades long context:
+  #   mrope_interleaved: true
+  #   mrope_section: [11, 11, 10]
+  #   rope_type: yarn
+  #   rope_theta: 10000000
+  #   partial_rotary_factor: 0.25
+  #   factor: 4.0
+  #   original_max_position_embeddings: 262144
+  # Also recommended: --no-enable-flashinfer-autotune, --enable-expert-parallel,
+  # --tool-call-parser qwen3_coder, --reasoning-parser qwen3.
+  #
+  # Note the recipe's hardware guidance targets GB300 with TP2 minimum for FP8.
+  # We have ONE GB10, so TP1 with NVFP4 plus PLE-Offload is a configuration
+  # nobody has published numbers for. Expect to measure rather than copy.
+  #
   # OPTION 3 — Qwen3.8-Flash-Next (STAGED, BLOCKED — preflight 2026-08-27):
   #
   # PREFLIGHT RESULT: BLOCKED on two counts. Neither is a config problem.
