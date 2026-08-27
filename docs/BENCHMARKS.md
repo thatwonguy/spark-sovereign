@@ -184,14 +184,14 @@ Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%).
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":3}`
-- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash3.log]
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: docs/failed-spec-dflash3.log]
 - **Measured:** 2026-08-26T19:24:18-07:00 (3 runs x 256 tokens)
 
 ### `spec-dflash7`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":7}`
-- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash7.log]
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: docs/failed-spec-dflash7.log]
 - **Measured:** 2026-08-26T19:23:47-07:00 (3 runs x 256 tokens)
 
 ### `spec-dspark12`
@@ -226,7 +226,7 @@ Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%).
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark-nvfp4","num_speculative_tokens":7}`
-- **Validity:** FAILED — container exited during load: (EngineCore pid=182) ERROR 08-27 04:14:32 [core.py:1343] RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1 (EngineCore pid=182)     raise e (EngineCore pid=182) RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dspark7.log]
+- **Validity:** FAILED — container exited during load: (EngineCore pid=182) ERROR 08-27 04:14:32 [core.py:1343] RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1 (EngineCore pid=182)     raise e (EngineCore pid=182) RuntimeError: The size of tensor a (128) must match the size of tensor b (256) at non-singleton dimension 1  [full log: docs/failed-spec-dspark7.log]
 - **Measured:** 2026-08-26T21:14:38-07:00 (3 runs x 256 tokens)
 
 ### `spec-eagle3`
