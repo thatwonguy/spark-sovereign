@@ -287,9 +287,15 @@ if ! command -v docker >/dev/null 2>&1; then
     echo "    SKIP: docker not available on this host (run this on the Spark)."
     WARN=1
 elif ! docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
-    echo "    Image not present locally. Pull it first, then re-run:"
-    echo "      docker pull ${DOCKER_IMAGE}"
-    echo "    Skipping the registry check for now."
+    echo "    Image not present locally. Skipping the registry check."
+    # Locally-built images (models.yml docker_build_git) are on no registry, so
+    # telling the operator to pull one sends them at a command that must fail.
+    if grep -q "^  docker_build_git:" "${REPO_ROOT}/config/models.yml" 2>/dev/null; then
+        echo "    models.yml declares docker_build_git — 03_vllm_servers.sh builds"
+        echo "    it on first run. Do NOT docker pull; re-run this after that."
+    else
+        echo "    Pull it first, then re-run:  docker pull ${DOCKER_IMAGE}"
+    fi
     WARN=1
 elif [ "${ARCHS}" = "UNKNOWN" ]; then
     echo "    SKIP: architecture unknown, nothing to look up."

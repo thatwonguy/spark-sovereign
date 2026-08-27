@@ -45,15 +45,27 @@
 # Check any candidate before downloading:
 #   PLE_MMAP=1 bash scripts/preflight_model.sh <repo>
 #
-# STATE ON THE SPARK as of 2026-08-27, which git cannot record:
-#   /opt/models/qwen38-flash-next-4p89     102 GiB, DOWNLOADED AND BROKEN
-#   /opt/model-archive/qwen38-27b-nvfp4     22 GiB, the production 27B
-#   /opt/model-archive/qwen38-27b-dspark   2.6 GiB, its drafter
+# STATE ON THE SPARK, measured 2026-08-27 with du. An earlier version of this
+# block put the 27B in the archive; it is in /opt/models. Re-measure, do not
+# trust this list:  df -h /opt && du -sh /opt/models/* /opt/model-archive/*
+#   /opt/models/qwen38-27b-nvfp4            22 GiB  PRODUCTION 27B (main/v5.3)
+#   /opt/models/qwen38-27b-dspark          2.6 GiB  its drafter
+#   /opt/models/qwen38-flash-next-4p89     103 GiB  attempt 2, BROKEN
+#   /opt/model-archive/qwen38-flash-next-nvfp4  171 GiB  attempt 1, BROKEN
+#   /opt/model-archive/qwen36-35b-a3b-nvfp4      25 GiB  v4.x rollback
+# Disk is 3.6T with ~2.9T free, so nothing has to be deleted to make room.
 #
-# Attempt 3 needs 126 GiB free and 4p89 will never run again. Before download:
-#   df -h /opt && rm -rf /opt/models/qwen38-flash-next-4p89
+# 02_download_models.sh PRUNES ANY /opt/models DIR NOT NAMED IN THIS FILE, and
+# on this branch that includes the production 27B and its drafter. Run it as
+#   ARCHIVE_OLD_MODEL=yes bash scripts/02_download_models.sh
+# so they are moved to /opt/model-archive rather than deleted. Answering "n" at
+# the prompt DELETES, and that costs a 22 GiB re-download to get back to main.
 #
-# Rolling back to main means restoring the archived 27B first:
+# The two BROKEN checkpoints (274 GiB) are dead ends, not rollback targets:
+#   sudo rm -rf /opt/models/qwen38-flash-next-4p89
+#   sudo rm -rf /opt/model-archive/qwen38-flash-next-nvfp4
+#
+# Rolling back to main means moving the 27B back first:
 #   sudo mv /opt/model-archive/qwen38-27b-nvfp4 /opt/models/
 #   sudo mv /opt/model-archive/qwen38-27b-dspark /opt/models/
 # Full write-up: docs/LESSONS.md #21.
