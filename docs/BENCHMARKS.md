@@ -59,7 +59,12 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `prefix-off` | vllm | PARTIAL | 15.2 tok/s | 266 ms | 78.8 tok/s | 37.4% | 4.71x | 155 | 63.9% | 736,567 tok |
 | `attn-triton` | vllm | PARTIAL | 15.1 tok/s | 267 ms | 78.2 tok/s | 37.4% | 4.56x | 180 | 50.6% | 743,691 tok |
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
+| `spec-dflash7` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash3` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dspark7` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
+| `spec-eagle3` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
+| `spec-eagle3-5` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
 
 **Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. 
 *Aggregate* is total tok/s at the highest concurrency tested — what the box can do in 
@@ -171,6 +176,41 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 - **Validity:** BLOCKED — no SGLang image pinned in config/models.yml (sglang.docker_image)
 - **Measured:** 2026-08-26T14:56:05-07:00 (3 runs x 256 tokens)
 
+### `spec-dflash3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":3}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash3.log]
+- **Measured:** 2026-08-26T19:24:18-07:00 (3 runs x 256 tokens)
+
+### `spec-dflash7`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dflash7.log]
+- **Measured:** 2026-08-26T19:23:47-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark7`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (EngineCore pid=275) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py.  [full log: /home/thatwonguy/spark-sovereign/docs/failed-spec-dspark7.log]
+- **Measured:** 2026-08-26T19:30:31-07:00 (3 runs x 256 tokens)
+
+### `spec-eagle3`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":3}`
+- **Validity:** BLOCKED — no drafter pinned in config/models.yml (brain.speculative_draft_model)
+- **Measured:** 2026-08-26T19:15:16-07:00 (3 runs x 256 tokens)
+
+### `spec-eagle3-5`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"eagle3","model":"__DRAFT__","num_speculative_tokens":5}`
+- **Validity:** BLOCKED — no drafter pinned in config/models.yml (brain.speculative_draft_model)
+- **Measured:** 2026-08-26T19:15:16-07:00 (3 runs x 256 tokens)
+
 ### `spec-mtp2`
 
 - **Engine:** vllm
@@ -236,4 +276,4 @@ Runner-up `spec-mtp2` at 18.5 tok/s (+1.2 tok/s, +6.4%).
 
 ---
 
-*Generated 2026-08-26T18:14:56-07:00 from 19 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-08-26T19:30:31-07:00 from 24 ledger entries by `scripts/benchmark.sh render`.*
