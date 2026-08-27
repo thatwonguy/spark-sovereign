@@ -805,7 +805,23 @@ The decode number looked like a clean loss. The **acceptance** column says other
 | `spec-ngram5` (no min set) | 10 | **70.0%** — better than MTP |
 | `spec-ngram8` (min 2) | 104 | 13.5% |
 
-**The two rows bracket the tuning problem without testing it.** One is precise and silent, the other chatty and wrong. Prompt-lookup lives in the middle — fire often *and* be right — and no row has been there yet. `spec-ngram-tuned` (6 tokens, window 5–10) is that row.
+**The two rows bracket the tuning problem without testing it.** One is precise and silent, the other chatty and wrong. Prompt-lookup lives in the middle — fire often *and* be right — so the middle was tested.
+
+**It isn't there. N-gram is now genuinely ruled out for this model**, across five configurations spanning the tuning space:
+
+| Config | `min` | k | Drafted | Accepted | **Accepted tokens** | Decode |
+|---|---|---|---|---|---|---|
+| `spec-off` | — | — | — | — | 0 | 11.22 |
+| `spec-ngram-narrow` | 5 | 4 | 8 | 50.0% | **4** | 12.70 |
+| `spec-ngram-tuned` | 5 | 6 | 24 | 41.7% | **10** | 12.06 |
+| `spec-ngram8` | 2 | 8 | 104 | 13.5% | **14** | 13.09 |
+| `spec-mtp3` | — | 3 | 138 | 59.4% | **82** | 19.66 |
+
+Raising `prompt_lookup_min` to 5 fixed accuracy exactly as predicted — 13.5% up to 42–50% — and collapsed the firing rate from 104 drafts to 8–24. **The tradeoff is real and neither end of it wins.** What matters is the product, drafted × accepted, and every n-gram variant lands between 4 and 14 accepted tokens against MTP's 82.
+
+MTP wins because it fires constantly *and* accurately. Prompt-lookup cannot reach that even on a prompt built to favour it, because the supply of verbatim-echo spans in the output is limited however you tune the matcher. That is a property of the workload, not of the configuration — which is why more tuning will not rescue it.
+
+**But keep the `spec-off` row in view: every n-gram variant still beat no speculation**, 12.06–13.09 against 11.22. On a checkpoint with no MTP heads, prompt-lookup is worth having. It loses here only because something better ships inside this model.
 
 The MTP comparison is clean by accident, at least: `attn-triton-cli` failed to change the backend, which made it a plain baseline run on the identical prompt. A row that measured nothing it was asked to measure produced the control the other row needed.
 

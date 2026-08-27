@@ -154,12 +154,28 @@ brain:
   #     ngram5   10 drafted    70.0% accepted   <- more accurate than MTP,
   #                                                and it almost never fires
   #
-  # Precise and silent, versus chatty and wrong. Prompt-lookup lives in the
-  # middle and no row has tested there. spec-ngram-tuned (6 tokens, window 5-10)
-  # is that row.
+  # Precise and silent, versus chatty and wrong. The middle was then tested,
+  # and it is not there. Five configs, same agentic prompt:
   #
-  # Judge any ngram config on ACCEPTANCE, not on drafted count. High drafted
-  # with low acceptance is worse than not speculating at all.
+  #     config          min  k   drafted  accept   ACCEPTED TOKENS   decode
+  #     spec-off         -   -      -       -            0           11.22
+  #     ngram-narrow     5   4      8     50.0%          4           12.70
+  #     ngram-tuned      5   6     24     41.7%         10           12.06
+  #     ngram8           2   8    104     13.5%         14           13.09
+  #     mtp3             -   3    138     59.4%         82           19.66
+  #
+  # Raising the minimum to 5 fixed accuracy exactly as predicted and collapsed
+  # the firing rate. The product — drafted x accepted — is what matters, and
+  # every ngram variant lands between 4 and 14 accepted tokens against MTP's 82.
+  # MTP fires constantly AND accurately; prompt-lookup cannot, because the
+  # supply of verbatim-echo spans is limited however you tune the matcher.
+  # That is a property of the workload, so more tuning will not rescue it.
+  #
+  # NGRAM IS RULED OUT FOR THIS MODEL — but note every variant still beat
+  # spec-off (12.06-13.09 vs 11.22). On a checkpoint with no MTP heads it is
+  # worth having. It loses here only because something better ships inside.
+  #
+  # Judge any ngram config on ACCEPTANCE x FIRING RATE, never on either alone.
   #
   # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
