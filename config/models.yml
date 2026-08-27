@@ -439,6 +439,35 @@ brain:
   # reasoning_parser:
   # moe_backend: flashinfer_b12x        # MoE — omitting this cost 2.5x on the last MoE brain
   # enable_prefix_caching: true
+  #
+  # # LOOKUP, and REQUIRED before any roofline number is believable. This is the
+  # # bytes ONE TOKEN reads: shared layers plus experts_per_tok worth of expert
+  # # weights, NOT the checkpoint size. A 125B/6B-active model reads a small
+  # # fraction of its own file per pass, and benchmark.sh refuses to compute a
+  # # ratio for a checkpoint declaring experts until this is set — it would
+  # # otherwise divide by ~92 GiB, land near 0.2x, and print "the roofline is
+  # # REAL" about a model nowhere near it. See LESSONS #18.
+  # active_weight_gb:
+  #
+  # # SPECULATION — the single biggest lever on the 27B (+57% end to end), and
+  # # the one thing about this model that is genuinely unknown.
+  # #
+  # # Everything measured on the 27B rests on MTP heads shipping INSIDE the
+  # # checkpoint. If Qwen4 ships them, start at 3 draft tokens: 5 lost to 3, and
+  # # 3 beat 2, because acceptance decays with draft position while every
+  # # rejected token still costs its verification pass.
+  # #
+  # # If it does NOT ship them, n-gram is the free fallback and IS worth having.
+  # # On the 27B it lost only because MTP was better — against no speculation it
+  # # still won, 12.06-13.09 vs 11.22. Start at prompt_lookup_min 2: firing rate
+  # # mattered more than per-draft accuracy in the product. See LESSONS #19.
+  # #
+  # # DSpark/DFlash drafters are 27B-specific and will NOT transfer. They are
+  # # trained against one checkpoint's attention geometry — the NVFP4-trained
+  # # DSpark failed on our own 27B with a 128-vs-256 tensor mismatch purely
+  # # because the head dim differed. Do not assume a Flash-Next drafter exists.
+  # speculative_config:
+  #
   # extra_env:
   #   CUTE_DSL_ARCH: sm_121a
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
