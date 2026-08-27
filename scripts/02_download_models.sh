@@ -29,10 +29,20 @@ ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
 # Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
-# Optional early check so failures are obvious
-# huggingface-cli was removed in huggingface_hub v1.0; `hf` replaces it.
-if ! command -v hf >/dev/null 2>&1; then
-    echo "ERROR: hf CLI not found in PATH"
+# huggingface_hub v1.0 renamed huggingface-cli to `hf`. Both are in the wild —
+# an install predating v1.0 has only huggingface-cli, and this script aborted on
+# a box that could download perfectly well by the older name.
+#
+# HF_CLI holds whichever exists. Downloads go through "${HF_CLI}", never a bare
+# `hf`, so one working install is enough regardless of which era it came from.
+if command -v hf >/dev/null 2>&1; then
+    HF_CLI="hf"
+elif command -v huggingface-cli >/dev/null 2>&1; then
+    HF_CLI="huggingface-cli"
+    echo "NOTE: using legacy huggingface-cli (huggingface_hub < 1.0)."
+    echo "      'python3 -m pip install --user -U huggingface_hub' gets the newer 'hf'."
+else
+    echo "ERROR: neither 'hf' nor 'huggingface-cli' found in PATH"
     echo "PATH=${PATH}"
     echo "Try: python3 -m pip install --user -U huggingface_hub"
     exit 1
@@ -164,7 +174,7 @@ download_model() {
     echo "    HF repo: ${hf_repo}"
     echo "    Revision: ${hf_revision:-<latest on main>}"
     mkdir -p "${local_path}"
-    hf download "${hf_repo}" --local-dir "${local_path}" \
+    "${HF_CLI}" download "${hf_repo}" --local-dir "${local_path}" \
         ${hf_revision:+--revision "${hf_revision}"}
 
     # Record which commit we actually got. Without this the running weights are
@@ -268,7 +278,7 @@ if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
         echo "  Downloading Drafter → ${DRAFT_PATH}"
         echo "    HF repo: ${DRAFT_REPO}"
         mkdir -p "${DRAFT_PATH}"
-        hf download "${DRAFT_REPO}" --local-dir "${DRAFT_PATH}"
+        "${HF_CLI}" download "${DRAFT_REPO}" --local-dir "${DRAFT_PATH}"
     fi
 
     if [ -f "${DRAFT_PATH}/config.json" ]; then
