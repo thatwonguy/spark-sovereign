@@ -233,7 +233,14 @@ brain:
   #                                  "draft_model" depending on how it ships
   #   RadixArk/Qwen3.8-27B-DSpark  — extends DFlash with target-model auxiliary
   #                                  features and a confidence head
-  # Pin one, then: bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
+  # DFlash2 model card gives the exact vLLM invocation:
+  #     "method": "dflash", "model": <this path>, "num_speculative_tokens": 7
+  # It is NOT eagle3 — DFlash2 is a block-diffusion drafter with its own method
+  # name, and it requires vLLM built from PR #52816, which our pinned arm64
+  # image may predate. Check before downloading several GB:
+  #     docker run --rm --entrypoint bash <brain.docker_image> \n  #       -c "grep -rl dflash /usr/local/lib/python3*/dist-packages/vllm/ | head"
+  # No hits = this build cannot serve it, and no config field will change that.
+  # Pin one, then: bash scripts/benchmark.sh --only spec-dflash7,spec-dflash3
   speculative_draft_model:
 
   # Bytes ONE TOKEN actually reads. Dense models read the whole checkpoint, so
