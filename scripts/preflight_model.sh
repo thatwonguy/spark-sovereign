@@ -333,10 +333,17 @@ else
     WARN=1
 fi
 
-python3 - "${REPO_GIB}" "${VISIBLE_GIB}" "${RESERVED_GIB}" "${CFG_JSON:-}" <<'PYEOF'
+# Total system RAM, so the fit check can tell unified memory from a discrete
+# GPU. On a discrete card, host RAM is memory the GPU does not have. On GB10 it
+# is the SAME memory, and "offload to host" moves bytes from one side of one
+# pool to the other without creating any.
+SYS_RAM_GIB="$(awk '/MemTotal/ {printf "%.2f", $2/1048576}' /proc/meminfo 2>/dev/null || echo 0)"
+
+python3 - "${REPO_GIB}" "${VISIBLE_GIB}" "${RESERVED_GIB}" "${CFG_JSON:-}" "${SYS_RAM_GIB}" <<'PYEOF'
 import json, os, sys
 
 weights, visible, reserved = (float(x) for x in sys.argv[1:4])
+sys_ram = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
 budget = visible - reserved
 
 # OFFLOADABLE WEIGHT. Comparing the whole checkpoint against GPU memory is
@@ -368,12 +375,40 @@ if cfg_path and os.path.isfile(cfg_path):
         offload = 0.0
 
 resident = weights - offload
-kv = budget - resident
+
+# UNIFIED MEMORY. If the GPU's visible memory is most of the machine's RAM,
+# this is a shared pool (GB10, Grace-Hopper, Apple silicon) and offloading
+# frees nothing — the bytes land in the same 128 GB.
+#
+# This check exists because its absence produced a confidently wrong CLEAR.
+# Qwen3.8-Flash-Next was reported as fitting with 35 GiB of KV cache to spare:
+# 76 GiB on GPU plus 95 GiB "offloaded to host". The box has 121 GiB total. It
+# needed 171. The server loaded the weights, registered the offload layer, and
+# died — after a 170 GiB download.
+#
+# On a discrete GPU the original arithmetic is right. The bug was assuming it.
+unified = sys_ram > 0 and visible > 0.5 * sys_ram
 
 print("    GPU visible        : %.2f GiB" % visible)
+if sys_ram > 0:
+    print("    System RAM         : %.2f GiB%s"
+          % (sys_ram, "   <- UNIFIED with GPU memory" if unified else ""))
 print("    Always-on reserved : %.2f GiB (ASR/TTS/SearXNG/OS/Docker)" % reserved)
 print("    Weights (total)    : %.1f GiB" % weights)
-if offload > 0:
+
+if offload > 0 and unified:
+    # The pool is shared, so the whole checkpoint has to live in it at once.
+    kv = budget - weights
+    print("    n-gram/PLE table   : %.1f GiB  (offloadable on a DISCRETE GPU)" % offload)
+    print("    Left for KV cache  : %.1f GiB" % kv)
+    print("")
+    print("    UNIFIED MEMORY: offloading does NOT help here. Host and device")
+    print("    share one pool, so %.1f GiB of weights must fit in %.2f GiB"
+          % (weights, budget))
+    print("    whether the table is 'on GPU' or 'on host'. PLE-Offload assumes")
+    print("    host RAM the GPU does not already have.")
+elif offload > 0:
+    kv = budget - resident
     print("    n-gram/PLE table   : %.1f GiB  <- offloadable to HOST RAM" % offload)
     print("    Weights on GPU     : %.1f GiB  (with PLE-Offload enabled)" % resident)
     print("    Left for KV cache  : %.1f GiB" % kv)
@@ -381,6 +416,7 @@ if offload > 0:
     print("      and the real figure is %.1f GiB of weights, %.1f GiB of KV."
           % (weights, budget - weights))
 else:
+    kv = budget - resident
     print("    Left for KV cache  : %.1f GiB" % kv)
 
 if kv <= 0:
