@@ -19,7 +19,11 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 STATE_DIR="${STATE_DIR:-/var/lib/spark-sovereign/state}"
 MAX_FAILS="${WATCHDOG_MAX_FAILS:-3}"
 BRAIN_PORT="${BRAIN_PORT:-8000}"
-BRAIN_LOAD_GRACE_SECONDS="${BRAIN_LOAD_GRACE_SECONDS:-600}"  # 10 min
+# 20 min. Was 10, which the Flash-Next mmap build exceeds: it measured ~14 min
+# from engine init to startup complete (16:14:02 -> 16:28:18), so a recovery
+# would have killed it mid-load and restarted into the same wall until
+# MAX_FAILS quarantined it. The 27B loads in well under this either way.
+BRAIN_LOAD_GRACE_SECONDS="${BRAIN_LOAD_GRACE_SECONDS:-1200}"
 
 mkdir -p "${STATE_DIR}" 2>/dev/null || true
 

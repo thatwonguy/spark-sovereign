@@ -13,8 +13,17 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): ATTEMPT 3, STAGED AND UNTESTED. Not live.
-# Production is the 27B on main / v5.3. Nothing here has served a token.
+# STATUS (2026-08-27): ATTEMPT 3 RUNS. Loaded, coherent, measured.
+# Not yet promoted to main — throughput is still unmeasured, see the end.
+#
+# MEASURED ON THIS BOX, from the engine's own accounting:
+#   consumed (weights + non-torch)  80.85 GiB   <- predicted 78.23
+#   peak activation / CUDAGraph      1.78 / 0.36 GiB
+#   KV cache                        289,129 tokens at max_model_len 32768
+#   MTP 2 acceptance                0.485 (130 drafted)
+#   load time                       ~14 min, 16:14:02 -> 16:28:18
+# The 47.68 GiB table is NOT in that 80.85. Coherent output and a survived
+# second identical prompt confirm the gather and the prefix-caching fix.
 #
 # The blocker is a 51B n-gram lookup table (PLE), not the MoE. Each attempt is
 # a different answer to where that table lives:
@@ -39,8 +48,16 @@
 # and no MXFP8 exists in this checkpoint.
 #
 # THE TABLE IS FP8, NOT 4-BIT (ple_embedding_dtype float8_e4m3fn). If the mmap
-# does not engage this is attempt 1 again. VERIFY: watch `free -g` during load.
-# Used must settle near 78 GiB, not near 126. No partial credit.
+# does not engage this is attempt 1 again. VERIFY: watch `free -g` during load,
+# and grep the log for the line that proves the placeholder swap happened:
+#   docker logs brain 2>&1 | grep -i "placeholder embedding"
+#   -> PLE mmap: ...ple_embedding -> placeholder embedding (320001536 rows x 160)
+# 320,001,536 x 160 x 1 byte = 47.68 GiB, matching the plefp8 shards exactly.
+# Absent that line the table is resident and the load is attempt 1 again.
+#
+# The three "Unknown vLLM environment variable: VLLM_PLE_MMAP*" warnings at
+# startup are COSMETIC. The patch reads os.environ directly, not vllm.envs, so
+# vLLM's registry does not know the names. The placeholder line is the proof.
 #
 # Check any candidate before downloading:
 #   PLE_MMAP=1 bash scripts/preflight_model.sh <repo>
@@ -79,7 +96,8 @@ brain:
   # 02_download_models.sh records whatever it resolved to in
   # <local_path>/DOWNLOADED_REVISION.txt, so the running weights are always
   # attributable even when this is blank. Set it to that SHA to freeze them.
-  # hf_revision: <sha>
+  # Pinned to the weights actually measured above, from DOWNLOADED_REVISION.txt.
+  hf_revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
   local_path: /opt/models/qwen38-flash-next-radixark   # MUST be NVMe — PLE rows are read from here per token
   port: 8000
   # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
