@@ -849,6 +849,66 @@ Related: #18 (the roofline that makes these claims checkable), #12 (bandwidth is
 
 ---
 
+## 20. A Stronger Drafter — DSpark, +21%, and Why Width Peaks at 7
+
+**Status: measured 2026-08-26/27.** Branch `brain-sglang-eval`.
+
+#19 concluded the community's SGLang throughput claims were about the *drafter*, not the engine. Two drafters exist for this exact checkpoint, both were testable under vLLM, and one works.
+
+| Config | Decode | Accept | Agg @8 |
+|---|---|---|---|
+| `spec-off` | 11.22 | — | 79.6 |
+| `spec-mtp3` *(shipped v5.2)* | 19.66 | 59.4% | **102.5** |
+| **`spec-dspark7`** | **23.85** | 16.4% | 80.2 |
+
+**+21% over the tuned MTP config, +113% over no speculation, and output is unchanged** — every draft is verified against the real model and discarded if wrong. Speed only.
+
+### Getting there cost three separate blockers
+
+1. **`incoai/Qwen3.8-27B-DFlash2` is rejected outright.** Its config declares `DFlash2DraftModel`; the image registers `DFlashDraftModel`. The build landed DFlash v1. No config bridges that.
+2. **The draft path was a host path.** `MODELS_DIR` is bind-mounted at `/models`, and the brain's own weights are translated at launch while the draft model rode through the `speculative_config` JSON verbatim. `Invalid repository ID or local directory specified: '/opt/models/...'`.
+3. **`DSparkDraftModel` dispatches to the DeepSeek-V4 implementation.** `AttributeError: 'Qwen3Config' object has no attribute 'hc_mult'` — a Qwen3 drafter loaded into a DeepSeek class, failing on a DeepSeek-only config field 300 lines deep. **Renaming `architectures` to `Qwen3DSparkModel` in the drafter's `config.json` fixes it.**
+
+That third fix lives in `/opt/models/`, **outside the repo**. Nothing in git protects it, and a re-download silently reverts it.
+
+### Why 7, and why not 50
+
+The obvious next move was more draft tokens, on the reasoning that block-diffusion drafts a whole block per pass so width is free. Wrong — the curve is an inverted U:
+
+| Width | Decode | Accept | Tokens/pass | Passes/s | Implied blocks |
+|---|---|---|---|---|---|
+| 3 | 20.12 | 52.0% | 2.56 | 7.86 | 1.4 |
+| 5 | 22.72 | 27.6% | 2.38 | 9.55 | 1.2 |
+| **7** | **23.85** | 16.4% | 2.15 | **11.10** | **1.0** |
+| 12 | 19.13 | 17.1% | 3.05 | 6.27 | 1.8 |
+| 20 | 17.16 | 15.8% | 4.16 | 4.12 | 2.7 |
+
+The drafter's config says `block_size: 7`. **Width is free inside one block and costs a full extra draft pass beyond it.** Pass rate falls in ratios of 1 : 1.8 : 2.7 at widths 7/12/20 — 1, 2 and 3 blocks. At width 20 the drafter accepts nearly three tokens per draft and is still *slower* than no speculation would suggest, because it pays three drafting passes to get them.
+
+So the projection that 20 draft tokens would reach ~47 tok/s was wrong twice over: acceptance decays with position (52% → 16%), and drafting stops being free at the block boundary. **50 tok/s is not reachable by width.** The remaining lever is acceptance, and 16.4% is low for a purpose-built drafter — the likeliest cause being that DSpark is trained against `Qwen/Qwen3.8-27B` in BF16 while we serve the Unsloth NVFP4 quant, so it predicts a slightly different distribution than the target samples.
+
+### The trade nobody asked about: concurrency
+
+Aggregate throughput at 8 streams moves the *other* way. `mtp3` does 102.5 tok/s; `dspark7` does 80.2, and `dspark20` collapses to 39.4. Under batching the GPU is already saturated, so drafting competes with work the batch was doing productively.
+
+**Speculation helps an idle box and hurts a busy one.** For an interactive daily driver that is the right trade. For heavy parallel-agent use it is not, and `mtp3` remains the better configuration despite being 21% slower single-stream.
+
+### A methodological failure worth more than the result
+
+`m_spec_drafted` measured acceptance with a hardcoded prompt while `m_decode` used `--prompt-file`. Every tokens-per-pass figure in the sweep therefore blends two workloads — including the claim that "DSpark drafting costs 1% against MTP's 37%". The conclusions survive because the effect sizes are large, which is luck, not method. Fixed: acceptance now uses the same prompt as decode.
+
+The residual is visible above. Widths 3 and 5 imply 1.4 and 1.2 blocks where the answer must be exactly 1.0.
+
+### Key lesson
+
+Two predictions were made and both were wrong in the same direction: that wider drafts would be free, and that acceptance was the number that mattered. What actually governs it is **accepted tokens per unit of drafting cost**, and drafting cost is a step function with a step at `block_size` — a constant sitting in the drafter's own config, unread until the measurements demanded an explanation.
+
+The right question was never "how many tokens should we draft". It was "what does the drafter charge to draft them", and that was answerable from a config file before any of the five model loads.
+
+Related: #19 (SGLang — the engine was never the lever), #18 (the roofline these all live under).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |

@@ -545,10 +545,28 @@ m_spec_drafted() {
     d0=$(metric_sum "spec_decode_num_draft_tokens_total")
     a0=$(metric_sum "spec_decode_num_accepted_tokens_total")
     n0=$(metric_sum "spec_decode_num_drafts_total")
-    curl -sf --max-time 300 "${AUTH[@]}" -H "Content-Type: application/json" \
-        -X POST "${BASE}/v1/chat/completions" \
-        -d "{\"model\":\"${BRAIN_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a quicksort in Python.\"}],\"max_tokens\":128}" \
-        >/dev/null 2>&1
+    # Same prompt as m_decode. Acceptance is workload-dependent — it was 52% at
+    # 3 draft tokens and 16% at 7 on one workload — so measuring it against a
+    # different prompt than the decode rate makes tokens-per-pass
+    # uncomputable, and every derived figure a blend of two workloads.
+    #
+    # This was the case for the whole dspark width sweep: decode used
+    # --prompt-file, acceptance used a hardcoded "Write a quicksort in Python".
+    # The conclusions survived because the effect sizes were large, which is
+    # luck rather than method.
+    local sp="${PROMPT:-Explain how a hash map handles collisions, then write one in Python.}"
+    SPEC_PROMPT="${sp}" BRAIN_NAME="${BRAIN_NAME}" BASE="${BASE}" \
+    BRAIN_API_KEY="${BRAIN_API_KEY}" python3 - >/dev/null 2>&1 <<'PYEOF' || true
+import json, os, urllib.request
+base, model = os.environ["BASE"], os.environ["BRAIN_NAME"]
+body = {"model": model, "max_tokens": 128,
+        "messages": [{"role": "user", "content": os.environ["SPEC_PROMPT"]}]}
+req = urllib.request.Request(f"{base}/v1/chat/completions",
+    data=json.dumps(body).encode(),
+    headers={"Content-Type": "application/json",
+             "Authorization": f"Bearer {os.environ.get('BRAIN_API_KEY','')}"})
+urllib.request.urlopen(req, timeout=300).read()
+PYEOF
     d1=$(metric_sum "spec_decode_num_draft_tokens_total")
     a1=$(metric_sum "spec_decode_num_accepted_tokens_total")
     n1=$(metric_sum "spec_decode_num_drafts_total")
