@@ -13,10 +13,11 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-26): ~17 tok/s decode (16.7–19.7 across four runs), TTFT
-# ~251–264 ms, VRAM ~55 GB at 0.45 util. The earlier 15–17 was a mistuned MTP
-# draft length, not a hardware limit — see the speculative_config block below
-# and docs/LESSONS.md #18.
+# STATUS (2026-08-27): 23.85 tok/s decode with the DSpark drafter, up from
+# 19.66 on tuned MTP and 15.18 on what v5.0/v5.1 shipped. VRAM ~55 GB at 0.45
+# util. Output is unchanged at every step — speculative decoding verifies every
+# draft against the real model. See the speculative_config block below, and
+# docs/LESSONS.md #18 and #20.
 # The non-speculative floor is a measured 12.0 tok/s at 245 GB/s achieved
 # bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
 # configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
@@ -101,6 +102,12 @@ brain:
   attention_backend:
   # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
   #
+  # SUPERSEDED by the DSpark drafter below (23.85 tok/s vs 19.66). Kept because
+  # it is the fallback that needs no external checkpoint: set speculative_config
+  # back to '{"method":"mtp","num_speculative_tokens":3}' and everything works
+  # with nothing downloaded. Also the better choice under heavy concurrency —
+  # 102.5 tok/s aggregate at 8 streams against DSpark's 80.2.
+  #
   # MEASURED 2026-08-26, full matrix, 3 runs x 256 tokens each (docs/BENCHMARKS.md):
   #
   #   off      12.04 tok/s              <- the bandwidth roofline, and it is real
@@ -180,7 +187,29 @@ brain:
   # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
   # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
   # Is a ceiling real?:  bash scripts/benchmark.sh bandwidth  (read-only)
-  speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+  # ACTIVE CONFIG — DSpark drafter, 7 tokens. Measured 23.85 tok/s against the
+  # MTP numbers above (19.66 at its best width), same weights, same outputs.
+  # Full write-up in docs/LESSONS.md #20.
+  #
+  # 7 is not arbitrary: the drafter's own config declares block_size 7, and it
+  # proposes a whole block in ONE pass. Width is free inside the block and costs
+  # an entire extra draft pass beyond it — 12 measured 19.13 and 20 measured
+  # 17.16, worse than 7 despite accepting more tokens per draft.
+  #
+  # NOTE THE PATH IS THE CONTAINER PATH. MODELS_DIR is bind-mounted at /models
+  # and this JSON is passed to the engine verbatim, so it must be
+  # /models/<name> — not the host path in speculative_draft_model below, which
+  # is what 02_download_models.sh writes to. They point at the same weights
+  # through different namespaces, and getting this wrong yields
+  # "Invalid repository ID or local directory specified".
+  #
+  # TRADE-OFF, taken deliberately: aggregate throughput at 8 concurrent streams
+  # drops from 102.5 to 80.2 tok/s. Speculation competes for compute a
+  # saturated GPU was already using, so it helps an idle box and hurts a busy
+  # one. This box is used interactively, one stream at a time, where +21% is
+  # what you feel. Revert to '{"method":"mtp","num_speculative_tokens":3}' if
+  # that ever stops being true.
+  speculative_config: '{"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
@@ -253,6 +282,7 @@ brain:
   # No hits = this build cannot serve it, and no config field will change that.
   # Pin one, then: bash scripts/benchmark.sh --only spec-dflash7,spec-dflash3
   speculative_draft_model: /opt/models/qwen38-27b-dspark
+  speculative_draft_repo: RadixArk/Qwen3.8-27B-DSpark
 
   # Bytes ONE TOKEN actually reads. Dense models read the whole checkpoint, so
   # leave this blank and benchmark.sh uses the file size. An MoE reads only its
