@@ -268,21 +268,21 @@ brain:
 # crash during an SGLang session silently reverts the engine. Stop the watchdog
 # timer for any SGLang work (benchmark.sh does this for you).
 #
-# sglang:
-#   docker_image:                       # REQUIRED — SM121/arm64 build, none verified yet
-#   mem_fraction_static: 0.45           # SGLang's name for gpu_memory_utilization
-#   quantization: modelopt_fp4          # NVFP4 path; confirm against the build you pin
-#   attention_backend: flashinfer       # SGLang's own backend names, not vLLM's
-#   tool_call_parser: qwen25
-#   reasoning_parser: qwen3
-#   disable_radix_cache: false          # radix cache = SGLang's prefix cache, ON by default.
-#                                       # Note the inverted sense vs vLLM's enable_prefix_caching.
-#   # --- Speculative decoding (the reason SGLang is on the list at all) ---
-#   # DFlash2 needs a drafter checkpoint downloaded separately; leave the path
-#   # blank and this falls back to whatever the build supports natively.
-#   speculative_algorithm:              # e.g. EAGLE / NEXTN — depends on the build
-#   speculative_num_steps:
-#   speculative_draft_model_path:
+sglang:
+  docker_image: lmsysorg/sglang:latest
+  mem_fraction_static: 0.45           # SGLang's name for gpu_memory_utilization
+  quantization:
+  attention_backend: flashinfer       # SGLang's own backend names, not vLLM's
+  tool_call_parser: qwen25
+  reasoning_parser: qwen3
+  disable_radix_cache: false          # radix cache = SGLang's prefix cache, ON by default.
+                                      # Note the inverted sense vs vLLM's enable_prefix_caching.
+  # --- Speculative decoding (the reason SGLang is on the list at all) ---
+  # DFlash2 needs a drafter checkpoint downloaded separately; leave the path
+  # blank and this falls back to whatever the build supports natively.
+  speculative_algorithm:              # e.g. EAGLE / NEXTN — depends on the build
+  speculative_num_steps:
+  speculative_draft_model_path:
 
 # -----------------------------------------------------------------------------
 # SUB-AGENTS — not used
