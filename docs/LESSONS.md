@@ -811,6 +811,22 @@ The MTP comparison is clean by accident, at least: `attn-triton-cli` failed to c
 
 **This is the fourth time in two days that a config was declared dead when the tooling or the tuning was at fault** — after speculation-reads-zero, prefix-cache-reads-inert, and the roofline that divided by tokens instead of forward passes. The tell was the same every time: a headline number that looked decisive, with a mechanism counter next to it that nobody read.
 
+### Two numbers that fell out of the same-prompt baseline
+
+Running `spec-off` on the agentic prompt — the control that was missing — produced both.
+
+| Same prompt | Decode | Accepted | Tokens/pass | Passes/s |
+|---|---|---|---|---|
+| `spec-off` | 11.22 tok/s | — | 1.00 | **11.22** |
+| `spec-ngram8` | 13.09 tok/s | 13.5% | 2.08 | **6.29** |
+| `spec-mtp3` | 19.66 tok/s | 59.4% | 2.78 | **7.07** |
+
+**Even badly tuned, n-gram beats no speculation** — 13.09 against 11.22, +17%. That matters for the next model rather than this one: if a checkpoint ships no MTP heads, prompt-lookup is worth having at 13.5% acceptance, which is the opposite of the conclusion the decode column alone invited.
+
+**Speculation is not free per forward pass.** Passes drop from 11.22/s to 6.3–7.1/s when it is enabled — each verification pass costs **1.6–1.8× a plain one**. Decode being bandwidth-bound made it tempting to assume verifying extra positions is nearly free, since the weight read is shared. It is not: `ngram8` verifies 9 positions and pays more per pass than `mtp3` verifying 4.
+
+So the quantity to maximise is **acceptance per draft token**, not draft count — wider drafts cost real time and only pay if they land. That is the same force that made `mtp5` (39.5% acceptance) lose to `mtp3` (64.4%), now visible as a mechanism instead of an empirical curiosity, and it is why `spec-ngram-narrow` (4 tokens) is worth testing alongside `spec-ngram-tuned` (6).
+
 **What is left.** One lever: a stronger drafter. Tokens-per-pass is the only thing that beats a 12.04 tok/s roofline, and it is entirely a function of draft acceptance. That is `brain.speculative_draft_model` and the `spec-eagle3` rows, BLOCKED until an EAGLE3 head trained against *this* checkpoint is pinned.
 
 Related: #18 (the roofline that makes these claims checkable), #12 (bandwidth is physics).
