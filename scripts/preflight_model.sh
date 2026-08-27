@@ -147,6 +147,16 @@ for repo in sys.argv[1:]:
 
     gib = total / (1024 ** 3)
     archs = ((meta.get("config") or {}).get("architectures")) or []
+
+    # A repo with zero weight shards is a placeholder — a README, a model card,
+    # an announcement of intent. It EXISTS, so the API returns 200 and the old
+    # code counted it as found, selected it as the winner, and reported
+    # "PASSED WITH WARNINGS ... 109.8 GiB left for KV cache" for a model with no
+    # weights at all. Existence is not availability.
+    if shards == 0:
+        print("EMPTY\t%s\tno weight shards — placeholder or card-only repo" % repo)
+        continue
+
     print("HIT\t%s\t%.1f GiB, %d shards" % (repo, gib, shards))
     if winner is None:
         winner = (repo, gib, shards, ",".join(archs) if archs else "UNKNOWN")
@@ -161,7 +171,8 @@ PYEOF
 printf '%s\n' "${RESOLVED}" | while IFS=$'\t' read -r tag repo detail _rest; do
     case "${tag}" in
         HIT)  echo "    FOUND    ${repo} — ${detail}" ;;
-        MISS) echo "    missing  ${repo} — ${detail}" ;;
+        MISS)  echo "    missing  ${repo} — ${detail}" ;;
+        EMPTY) echo "    EMPTY    ${repo} — ${detail}" ;;
     esac
 done
 
