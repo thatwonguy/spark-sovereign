@@ -143,6 +143,9 @@ done
 
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
 
+# Globbing off: BRAIN_EXTRA_ARGS may carry a JSON list whose [ ] bash would
+# expand as a bracket pattern. Kept in sync with 03_vllm_servers.sh.
+set -f
 # shellcheck disable=SC2086
 docker run -d --name brain \
     --gpus all --ipc host --network host \
@@ -168,9 +171,11 @@ docker run -d --name brain \
         --tool-call-parser "${BRAIN_TOOL}" \
         ${BRAIN_REASON:+--reasoning-parser "${BRAIN_REASON}"} \
         $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
+        $([ "${BRAIN_PREFIX_CACHE}" = "false" ] && echo "--no-enable-prefix-caching") \
         --max-num-seqs "${BRAIN_SEQS}" \
         ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
         ${BRAIN_EXTRA_ARGS}
+set +f
 
 echo "    brain started → http://localhost:${BRAIN_PORT}/v1"
 echo "    Watch: docker logs brain -f"
