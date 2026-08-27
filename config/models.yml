@@ -13,7 +13,32 @@
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): retrying with a build whose PLE table IS quantized.
+# STATUS (2026-08-27): BLOCKED. Two builds tried, both fail for different
+# reasons. Production stays on the 27B (main, v5.3, 23.9 tok/s).
+#
+# ATTEMPT 1 — Inferact/...-NVFP4, 170.2 GiB: does not fit. 76 GiB on GPU plus a
+# ~95 GiB BF16 n-gram table against 121 GiB of UNIFIED memory. PLE-Offload does
+# not help on a shared pool. See docs/LESSONS.md #21.
+#
+# ATTEMPT 2 — local-inference-lab/...-NVFP4-4p89, 102.4 GiB: FITS, loads
+# (76.82 GiB, PLE offload registered), then dies during profile_run:
+#
+#   AssertionError: mm_mxfp8 requires N >= 128, got N=96.
+#                   out_features is too small for mm_mxfp8.
+#   at qwen_gdn_linear_attn.py:890 -> self.in_proj_ba(hidden_states)
+#
+# The GDN in_proj_ba projection is 96 wide and the checkpoint quantized it to
+# MXFP8; FlashInfer's MXFP8 kernel requires N >= 128. That layer should have
+# been left alone or given another algo. A CHECKPOINT BUG, not a config one —
+# nothing here fixes it, and enforce_eager will not either since the assert is
+# in apply_weights at runtime rather than in the compiler. The README says WIP.
+#
+# WHAT WOULD UNBLOCK: a build that quantizes the PLE table (so it fits) WITHOUT
+# applying MXFP8 to sub-128-wide projections. Both are true of neither build
+# tried. Watch for any NVFP4 upload near ~102 GiB and check whether
+# quantized_layers covers in_proj_ba before downloading.
+#
+# retrying with a build whose PLE table IS quantized:
 #
 # The first attempt (Inferact NVFP4, 170.2 GiB) failed: 76 GiB on GPU plus a
 # ~95 GiB n-gram table, against 121 GiB of UNIFIED memory. PLE-Offload does not
