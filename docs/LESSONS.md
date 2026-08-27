@@ -937,6 +937,134 @@ Related: #19 (SGLang — the engine was never the lever), #18 (the roofline thes
 
 ---
 
+## 21. Qwen3.8-Flash-Next Does Not Fit — and the Reason Is One Unquantized Table
+
+**Status: attempted and blocked, 2026-08-27.** Branch `brain-flash-next-eval`. Weights downloaded, model loaded, server died. The blocker is arithmetic, not configuration.
+
+### What worked
+
+Everything except the last step, which is worth stating because the parts that worked were the parts predicted to be hard:
+
+- `vllm/vllm-openai:qwen38-flash-next-arm64-cu130` registers `Qwen4ExpForCausalLM` and `Qwen4ExpForConditionalGeneration`. Stock and nightly images register neither, and the tag was found by listing Docker Hub rather than waiting for an announcement.
+- `Resolved architecture: Qwen4ExpForConditionalGeneration`, NVFP4 detected, MTP speculative config accepted, mamba cache aligned.
+- **PLE offload registered and worked**: `PleOffload: registered 1 PleOffloadLayer(s)`, and `Model loading took 76.07 GiB` — against a predicted 74.8 GiB.
+
+### What killed it
+
+```
+free -g
+               total  used  free  available
+Mem:             121    83     4         38
+```
+
+The Spark's 128 GB is **unified**. GPU and host share one pool. PLE-Offload assumes a discrete GPU where host RAM is memory the accelerator does not have — moving the n-gram table "to host" on GB10 relocates bytes within the same 121 GiB.
+
+| | |
+|---|---|
+| Weights on GPU | 76.07 GiB (measured) |
+| n-gram table, "offloaded" | ~95 GiB |
+| **Required** | **~171 GiB** |
+| **Available** | **121 GiB** |
+
+### The reason is one table, and it is not quantized
+
+The tell was in preflight's own output and went unread for an hour:
+
+```
+Inferact/Qwen3.8-Flash-Next-NVFP4  — 170.2 GiB
+Qwen/Qwen3.8-Flash-Next-FP8        — 172.8 GiB
+```
+
+**Four-bit weights are not 2% smaller than eight-bit.** The 125B MoE *is* NVFP4 (~80 GB). The 51B n-gram embedding table ships **BF16** (~102 GB) in both builds, and it dominates. Quantizing the MoE harder saves almost nothing, because the MoE is not what overflows.
+
+| n-gram precision | Table | Total | Fits 121 GiB? |
+|---|---|---|---|
+| BF16 (both current builds) | ~102 GB | ~183 GB | no |
+| FP8 | ~51 GB | ~131 GB | no |
+| **NVFP4** | **~26 GB** | **~106 GB ≈ 99 GiB** | **yes, ~11 GiB KV** |
+
+So this is not "wait for vLLM" and not "wait for a smaller MoE quant". It is **wait for a build that quantizes the embedding table**. The model card notes the n-gram path has a "4-bit minimum", which reads as achievable rather than impossible.
+
+### The instrumentation was confidently wrong, again
+
+`preflight_model.sh` reported **CLEAR** with `Left for KV cache: 35.0 GiB`, three hours after being taught about PLE-Offload. It subtracted offloadable weight from the GPU budget without asking whether host RAM was a separate pool. On a discrete GPU that arithmetic is right; the bug was assuming it.
+
+That verdict cost a 170 GiB download and two failed launches. It now reads `/proc/meminfo`, and when GPU-visible memory exceeds half of system RAM it treats the pool as shared and refuses to count offloaded weight as free.
+
+Second time this week a fit check was correct for ordinary models and wrong for this one — after `cmd_bandwidth` dividing by a whole checkpoint when only some experts are read. Both were written by someone who had just finished writing about exactly that failure.
+
+### Two real incompatibilities found along the way
+
+**QSA rejects an FP8 KV cache.** `kv_cache_dtype: fp8` carried over from the 27B, where it is measured and fine:
+
+```
+NotImplementedError: Qwen3.8-Flash-Next QSA requires a BF16 main KV cache
+```
+
+Fails at load, loudly. The good kind — a ten-second diagnosis rather than silent degradation.
+
+**The rope overrides are not required.** The vLLM recipe's `mrope_interleaved` / `mrope_section` / yarn block is context *extension* toward ~1M, not base operation. Native 262144 needs none of it. An earlier note in `models.yml` called it mandatory and listed launcher work as a prerequisite; both were wrong.
+
+
+### Attempt 2 — the build that fits, and the one layer that breaks it
+
+`local-inference-lab/Qwen3.8-Flash-Next-NVFP4-4p89`, 102.4 GiB, found by listing every Flash-Next repo on HuggingFace and sorting by size. Its config declares the thing attempt 1 was missing:
+
+```json
+"ple_embedding_dtype": "nvfp4"
+```
+
+The embedding table is 4-bit. `MIXED_PRECISION` via modelopt — MXFP8 on most layers, NVFP4 on the large expert blocks, 4.89 bits per weight average. That is the entire difference between 170.2 GiB and 102.4.
+
+**It fits, and it loads.** 76.82 GiB resident, PLE offload registered, MTP accepted, mamba cache aligned. Then it dies during `profile_run`:
+
+```
+AssertionError: mm_mxfp8 requires N >= 128, got N=96.
+                out_features is too small for mm_mxfp8.
+  at qwen_gdn_linear_attn.py:890 -> self.in_proj_ba(hidden_states)
+```
+
+The GDN `in_proj_ba` projection is **96 wide**, and this checkpoint quantized it to MXFP8, whose FlashInfer kernel requires N ≥ 128. The layer should have been excluded or given a different algorithm. A defect in the quantization, not in any configuration — `enforce_eager` does not help either, since the assert fires in `apply_weights` at runtime rather than during compilation. The README says `WIP`, and this is what that means.
+
+### What the two attempts leave
+
+Everything except the weights is solved, and all of it was verified against the engine rather than inferred:
+
+| | |
+|---|---|
+| Image | `qwen38-flash-next-arm64-cu130` registers `Qwen4Exp*` |
+| PLE offload | engages; `VLLM_PLE_CPU_OFFLOAD=1`, an env var, so no launcher change |
+| Speculation | MTP heads ship (4B) — no external drafter, unlike the 27B |
+| KV dtype | must be `auto`; QSA rejects fp8 and says so at load |
+| Rope overrides | NOT required at native 262144 — they are yarn extension toward 1M |
+
+What is missing is one build that does **both**: quantizes the PLE table so it fits in 121 GiB of unified memory, *and* leaves sub-128-wide projections out of MXFP8. Six NVFP4/W4A16 builds exist; five are 123–174 GiB and too large, and the sixth has this bug.
+
+Checking a candidate costs ten seconds and no download:
+
+```bash
+bash scripts/preflight_model.sh <repo>
+curl -s https://huggingface.co/<repo>/raw/main/config.json \
+  | tr ',' '\n' | grep -iE "ple_embedding_dtype|in_proj_ba"
+```
+
+### The pattern across both attempts
+
+Every blocker was diagnosed from a single specific error message, and every one was cheap once the right thing was read. QSA rejecting fp8, the host-path-versus-container-path mismatch, the DeepSeek misdispatch, the MXFP8 width assert — all named their cause in one line.
+
+The expensive failures were the opposite: **verdicts computed from assumptions nobody checked.** Preflight's CLEAR, which cost a 170 GiB download. "vLLM upstream does not support this", retracted. "vLLM supports it today", also retracted. `sm_121` declared a requirement without testing the check against a known-good image. Each one was a confident claim standing on something unverified, and each was corrected only because the next measurement contradicted it.
+
+The model has not been ruled out. It has been reduced from "wait for the ecosystem" to one layer in one checkpoint.
+### Key lesson
+
+A fit check has to know what kind of memory it is counting. "Offload to host" is a claim about machine topology, and on unified memory it is false — the same bytes, counted twice, produce a CLEAR verdict for a model that needs 50 GiB more than exists.
+
+The number that would have caught it was printed by preflight in stage 1, an hour before the download: two quantizations of the same model, 2% apart in size. That is not what quantization looks like, and nobody asked why.
+
+Related: #18 (roofline denominators), #20 (the drafter that had to fit the target's geometry).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |
@@ -953,4 +1081,4 @@ Related: #19 (SGLang — the engine was never the lever), #18 (the roofline thes
 
 ---
 
-*Last updated: August 27, 2026 — Lesson #20, DSpark drafter adopted: 23.9 tok/s on agentic work vs 19.66 on tuned MTP, output unchanged*
+*Last updated: August 27, 2026 — Lesson #21, Flash-Next attempted twice and blocked on one quantized layer; 27B shipped at 23.9 tok/s (v5.3)*

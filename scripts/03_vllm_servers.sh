@@ -130,6 +130,28 @@ BRAIN_PREFIX_CACHE=$(get_field brain enable_prefix_caching)
 # the same server.
 BRAIN_ATTN=$(get_field brain attention_backend)
 BRAIN_EXTRA_ENV=$(get_extra_env_flags brain)
+# Raw vLLM flags from models.yml. Word-split on spaces, so each flag must be
+# space-free: --flag=value. This script ignored the field until 2026-08-27.
+BRAIN_EXTRA_ARGS=$(get_field brain extra_args)
+
+# Build the image locally when models.yml declares a build instead of a tag.
+BRAIN_BUILD_GIT=$(get_field brain docker_build_git)
+BRAIN_BUILD_REF=$(get_field brain docker_build_ref)
+if [ -n "${BRAIN_BUILD_GIT}" ]; then
+    if docker image inspect "${BRAIN_IMAGE}" >/dev/null 2>&1; then
+        echo ">>> Image ${BRAIN_IMAGE} already built — skipping (docker rmi it to rebuild)"
+    else
+        BUILD_DIR="${BUILD_DIR:-/opt/build}/$(basename "${BRAIN_BUILD_GIT}" .git)"
+        echo ">>> Building ${BRAIN_IMAGE} from ${BRAIN_BUILD_GIT}"
+        echo "    pinned ref: ${BRAIN_BUILD_REF:-<default branch>}"
+        mkdir -p "$(dirname "${BUILD_DIR}")"
+        [ -d "${BUILD_DIR}/.git" ] || git clone "${BRAIN_BUILD_GIT}" "${BUILD_DIR}"
+        git -C "${BUILD_DIR}" fetch --all --tags
+        [ -n "${BRAIN_BUILD_REF}" ] && git -C "${BUILD_DIR}" checkout --detach "${BRAIN_BUILD_REF}"
+        docker build -t "${BRAIN_IMAGE}" "${BUILD_DIR}"
+        echo "    built ${BRAIN_IMAGE}"
+    fi
+fi
 
 echo ""
 echo ">>> Starting Brain: ${BRAIN_NAME} on port ${BRAIN_PORT}"
@@ -177,6 +199,10 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
     [ -n "${BRAIN_MM}" ]           && EXTRA_ARGS+=" --limit-mm-per-prompt ${BRAIN_MM}"
     [ "${BRAIN_ASYNC}" = "true" ]  && EXTRA_ARGS+=" --async-scheduling"
     [ "${BRAIN_PREFIX_CACHE}" = "true" ] && EXTRA_ARGS+=" --enable-prefix-caching"
+    # vLLM V1 defaults prefix caching ON, so turning it off needs the explicit
+    # negative form. The launcher could not emit this before 2026-08-27.
+    [ "${BRAIN_PREFIX_CACHE}" = "false" ] && EXTRA_ARGS+=" --no-enable-prefix-caching"
+    [ -n "${BRAIN_EXTRA_ARGS}" ] && EXTRA_ARGS+=" ${BRAIN_EXTRA_ARGS}"
     # NOTE: the key is NOT added to EXTRA_ARGS. It goes in as VLLM_API_KEY
     # below, which vLLM reads directly, keeping it off the command line.
 
@@ -199,6 +225,10 @@ if [ "${BRAIN_ENTRYPOINT}" = "serve" ]; then
         "${BRAIN_IMAGE}"
 else
     # ── Standard vLLM image ───────────────────────────────────────────────────
+    # Globbing off: BRAIN_EXTRA_ARGS may carry a JSON list whose [ ] bash would
+    # expand as a bracket pattern. Word splitting, which splits the flags, is
+    # unaffected.
+    set -f
     # shellcheck disable=SC2086
     docker run -d --name brain \
         --gpus all --ipc host --network host \
@@ -228,7 +258,10 @@ else
             --max-num-seqs "${BRAIN_SEQS}" \
             ${BRAIN_MM:+--limit-mm-per-prompt "${BRAIN_MM}"} \
             $([ "${BRAIN_PREFIX_CACHE}" = "true" ] && echo "--enable-prefix-caching") \
-            $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling")
+            $([ "${BRAIN_PREFIX_CACHE}" = "false" ] && echo "--no-enable-prefix-caching") \
+            $([ "${BRAIN_ASYNC}" = "true" ] && echo "--async-scheduling") \
+            ${BRAIN_EXTRA_ARGS}
+    set +f
 fi
 
 echo "    Container 'brain' started → http://localhost:${BRAIN_PORT}/v1"
