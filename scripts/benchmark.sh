@@ -271,9 +271,24 @@ wait_ready() {
             #
             # Known-noise patterns are excluded by name rather than by hoping
             # the ordering works out.
-            cause=$(grep -iE "error|exception|not supported|unsupported|invalid|no such|raise " "${logfile}" \
-                    | grep -viE "errors\.pydantic\.dev|further information|but not documented|Triton is installed" \
-                    | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
+            # vLLM runs the model in a separate EngineCore process. When that
+            # dies, the API server prints its own traceback ending in
+            #
+            #   RuntimeError: Engine core initialization failed.
+            #   See root cause above.
+            #
+            # which is a POINTER, not a cause — and being last, it is exactly
+            # what a naive tail captures. The root cause is in the EngineCore
+            # lines further up.
+            #
+            # So: look in EngineCore output first, and fall back to the whole
+            # log only if there is none.
+            local pat='error|exception|not supported|unsupported|invalid|no such|raise '
+            local noise='errors\.pydantic\.dev|further information|but not documented|Triton is installed|See root cause above|Engine core initialization failed'
+            cause=$(grep "EngineCore" "${logfile}" | grep -iE "${pat}" \
+                    | grep -viE "${noise}" | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
+            [ -z "${cause}" ] && cause=$(grep -iE "${pat}" "${logfile}" \
+                    | grep -viE "${noise}" | tail -3 | redact | cut -c1-400 | tr '\n' ' ')
             [ -z "${cause}" ] && cause=$(tail -5 "${logfile}" | redact | tr '\n' ' ')
             LAUNCH_NOTE="container exited during load: ${cause} [full log: ${logfile}]"
             return 1
