@@ -539,61 +539,69 @@ brain:
   # ships BF16 it is ~95 GiB on its own and will not fit on one GB10 at any
   # context length. Preflight's shard total answers this before you download.
   #
+  # PREFLIGHT: CLEAR (2026-08-27). Every value below is measured or verified
+  # against the engine, not copied from a docs page — two claims about this
+  # model were wrong today from doing exactly that.
+  #
   # name: qwen38-flash-next-nvfp4
-  # # LOOKUP: exact repo — preflight step 1 reports which candidate resolved
-  # hf_repo: unsloth/Qwen3.8-Flash-Next-NVFP4
+  # hf_repo: Inferact/Qwen3.8-Flash-Next-NVFP4   # 170.2 GiB, 21 shards, quant_method modelopt
   # local_path: /opt/models/qwen38-flash-next-nvfp4
-  # served_name: qwen38-flash-next      # CHANGED -> re-point OpenClaw, or set to the current ID to skip
-  # # LOOKUP: needs a build that registers the Qwen4 arch. Unsloth's NVFP4
-  # #         quantizes lm_head to FP8, so vLLM MAIN is required — the tag
-  # #         below predates both and is a placeholder.
-  # docker_image: vllm/vllm-openai:qwen38-arm64-cu130
-  # # LOOKUP: preflight step 4 prints the max safe value for the real weights
-  # gpu_memory_utilization: 0.90
-  # # LOOKUP: preflight step 2 prints max_position_embeddings
-  # max_model_len: 65536                # conservative start; raise once nvidia-smi confirms KV headroom
+  # served_name: qwen38-flash-next     # CHANGED -> re-point OpenClaw after swapping
+  #
+  # # VERIFIED: registers Qwen4ExpForCausalLM and Qwen4ExpForConditionalGeneration,
+  # # and carries vllm/models/qwen3_8_flash_next/ — purpose-built for this model.
+  # # The stock and nightly images register neither.
+  # docker_image: vllm/vllm-openai:qwen38-flash-next-arm64-cu130
+  #
+  # # 0.90 is the ceiling preflight reports; 0.85 leaves margin for the host-side
+  # # PLE prefetch buffers, which are not in the GPU accounting.
+  # gpu_memory_utilization: 0.85
+  # max_model_len: 262144              # native. Beyond this needs yarn hf_overrides, see below
   # kv_cache_dtype: fp8
-  # max_num_seqs: 4                     # 16 will not fit in ~18 GiB of KV cache
+  # max_num_seqs: 8                    # 35 GiB of KV, so lower than the 27B's 16
   # max_num_batched_tokens: 8192
-  # # LOOKUP: confirm on the model card
   # tool_call_parser: qwen3_coder
-  # # LOOKUP: leave blank if the card says no thinking mode (as Coder-Next does)
-  # reasoning_parser:
-  # moe_backend: flashinfer_b12x        # MoE — omitting this cost 2.5x on the last MoE brain
+  # reasoning_parser: qwen3
   # enable_prefix_caching: true
   #
-  # # LOOKUP, and REQUIRED before any roofline number is believable. This is the
-  # # bytes ONE TOKEN reads: shared layers plus experts_per_tok worth of expert
-  # # weights, NOT the checkpoint size. A 125B/6B-active model reads a small
-  # # fraction of its own file per pass, and benchmark.sh refuses to compute a
-  # # ratio for a checkpoint declaring experts until this is set — it would
-  # # otherwise divide by ~92 GiB, land near 0.2x, and print "the roofline is
-  # # REAL" about a model nowhere near it. See LESSONS #18.
+  # # MTP heads SHIP in this checkpoint — 4B of them, per the model card. No
+  # # external drafter, unlike the 27B where DSpark had to be found and patched.
+  # # 3 is the 27B's measured optimum: 5 lost to 3 and 3 beat 2, because
+  # # acceptance decays with draft position while rejected tokens still cost
+  # # their verification pass. Re-measure here rather than assuming it carries.
+  # speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+  #
+  # # LOOKUP after first launch, and REQUIRED before any roofline number means
+  # # anything: bytes ONE TOKEN reads. 512 experts, 10 active, so a pass touches
+  # # a small fraction of the 74.8 GiB resident. benchmark.sh refuses to compute
+  # # a ratio until this is set — see LESSONS #18.
   # active_weight_gb:
   #
-  # # SPECULATION — the single biggest lever on the 27B (+57% end to end), and
-  # # the one thing about this model that is genuinely unknown.
-  # #
-  # # Everything measured on the 27B rests on MTP heads shipping INSIDE the
-  # # checkpoint. If Qwen4 ships them, start at 3 draft tokens: 5 lost to 3, and
-  # # 3 beat 2, because acceptance decays with draft position while every
-  # # rejected token still costs its verification pass.
-  # #
-  # # If it does NOT ship them, n-gram is the free fallback and IS worth having.
-  # # On the 27B it lost only because MTP was better — against no speculation it
-  # # still won, 12.06-13.09 vs 11.22. Start at prompt_lookup_min 2: firing rate
-  # # mattered more than per-draft accuracy in the product. See LESSONS #19.
-  # #
-  # # DSpark/DFlash drafters are 27B-specific and will NOT transfer. They are
-  # # trained against one checkpoint's attention geometry — the NVFP4-trained
-  # # DSpark failed on our own 27B with a 128-vs-256 tensor mismatch purely
-  # # because the head dim differed. Do not assume a Flash-Next drafter exists.
-  # speculative_config:
+  # # Recipe-sourced, NOT verified in this build's --help. If the flag does not
+  # # exist the server fails at launch with a clear error, which is a cheap way
+  # # to find out.
+  # extra_args: --no-enable-flashinfer-autotune
   #
   # extra_env:
+  #   # THE FLAG THAT MAKES THIS FIT. Verified present in this image:
+  #   # vllm/envs.py, model_executor/layers/ple_offload_layer.py, and
+  #   # models/qwen3_8_flash_next/nvidia/ple_layer.py all reference it.
+  #   #
+  #   # Without it the 95.4 GiB n-gram embedding table is GPU-resident and the
+  #   # arithmetic is 170.2 GiB of weights against a 109.79 GiB budget — the
+  #   # server will not start. With it: 74.8 GiB on GPU, 35.0 GiB for KV cache.
+  #   VLLM_PLE_CPU_OFFLOAD: 1
   #   CUTE_DSL_ARCH: sm_121a
-  #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
-  # # LOOKUP: preflight step 2 reports whether a vision block exists; delete if text-only
+  #
+  # # NOT NEEDED at 262144. The recipe's rope block — mrope_interleaved,
+  # # mrope_section [11,11,10], rope_type yarn, rope_theta 10000000,
+  # # partial_rotary_factor 0.25, factor 4.0, original_max_position_embeddings
+  # # 262144 — is yarn EXTENSION to ~1M context, not base operation. An earlier
+  # # note here called it mandatory. It is not, and the launcher has no
+  # # hf_overrides support, so raising context past native needs that built
+  # # first.
+  #
+  # # VERIFIED: preflight confirms a vision block is present.
   # limit_mm_per_prompt: '{"image":10}'
   #
   # Swap:
