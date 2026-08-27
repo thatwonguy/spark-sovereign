@@ -401,6 +401,38 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # # limit_mm_per_prompt: OMITTED ON PURPOSE — text-only model
 
+  # VERIFIED IMAGE MATRIX (2026-08-27) — this section is measurement, not
+  # inference. Two prior notes here were wrong in opposite directions, one
+  # claiming vLLM upstream lacked support and one claiming it had shipped.
+  # Both were read off a vendor page instead of the engine.
+  #
+  #   image                              sm_121   Qwen4Exp
+  #   vllm/vllm-openai:qwen38-arm64-cu130   yes       NO
+  #   vllm/vllm-openai:nightly              NO        NO
+  #
+  # nightly's arch list is ['sm_80','sm_90','sm_100','sm_110','sm_120'] — it
+  # stops one short of GB10, which is why the custom cu130 tag exists at all.
+  # nightly's Qwen registry tops out at Qwen3_5* with no Flash-Next entry under
+  # any alias, so support is not merged there either.
+  #
+  # A vLLM recipe page for this model does exist, which is what prompted the
+  # second wrong note. Nightly not registering the architecture means that page
+  # most likely documents a PR-branch install, the same way the DFlash2 card
+  # specified `pip install vllm @ git+...refs/pull/52816/head`. UNVERIFIED —
+  # do not act on it either way without checking a build.
+  #
+  # WHAT IS ACTUALLY NEEDED: one image with BOTH sm_121 and Qwen4Exp. Nobody
+  # publishes one today. Check any candidate with two commands before believing
+  # anything else about this model:
+  #
+  #   docker run --rm --entrypoint python3 <IMG> -c \
+  #     "from vllm.model_executor.models.registry import ModelRegistry as R; \
+  #      print(sorted(a for a in R.get_supported_archs() if 'Qwen' in a))"
+  #   docker run --rm --gpus all --entrypoint python3 <IMG> -c \
+  #     "import torch; print(torch.cuda.get_arch_list())"
+  #
+  # Both must pass. Either alone is not runnable on this box.
+  #
   # CORRECTION (2026-08-27): the previous note here said vLLM upstream does not
   # support this architecture and that Unsloth could not quantize until it did.
   # BOTH WRONG. vLLM has an official recipe page for Qwen3.8-Flash-Next, and
