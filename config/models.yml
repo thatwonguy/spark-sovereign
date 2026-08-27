@@ -159,6 +159,33 @@ brain:
   #
   #   bash scripts/benchmark.sh --only attn-triton-cli
   extra_args:
+  # Drafter checkpoint for EAGLE-style speculative decoding. BLANK = the
+  # spec-eagle3 matrix rows record BLOCKED, which is honest: not measured,
+  # rather than measured-and-bad.
+  #
+  # WHY IT IS THE MOST PROMISING LEVER LEFT. Decode here is bandwidth-bound at
+  # 12.04 tok/s per forward pass — measured, and no config beats it. The only
+  # ways past are fewer bytes per pass (lower-bit quant, a quality cost) or more
+  # TOKENS per pass. Speculation is the second, and tokens-per-pass is entirely
+  # a function of draft ACCEPTANCE.
+  #
+  # MTP heads ship in the checkpoint and give 0.38-0.90 acceptance depending on
+  # the sampled continuation, so 2.4-3.7 tokens per pass. A stronger drafter
+  # raises that number and nothing else changes — same weights, same output,
+  # same engine. This is also the mechanism behind the community SGLang claims:
+  # we measured SGLang's engine at 9.79 tok/s, 19% SLOWER than vLLM, so their
+  # reported speed is the drafter, not the engine.
+  #
+  # WHAT TO PIN: an EAGLE3 head trained against THIS checkpoint. A head trained
+  # for a different model will load and draft garbage — acceptance collapses and
+  # you get a slow, correct answer, since rejected drafts still cost their
+  # verification pass. Verify the pairing before trusting a number, and check
+  # the acceptance rate in docs/BENCHMARKS.md: below ~0.4 the drafter is
+  # hurting, not helping.
+  #
+  # Either an HF repo id or a local path under MODELS_DIR. Then:
+  #   bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
+  speculative_draft_model:
   #
   # --- SWAP EXAMPLES ---
   # ROLLBACK — tag v4.2.1 is the last release verified on this hardware
