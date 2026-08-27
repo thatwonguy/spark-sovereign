@@ -238,6 +238,52 @@ download_model "Brain" brain
 download_model "ASR (Nemotron Speech)"           asr
 download_model "TTS (Magpie TTS)"                tts
 
+# -----------------------------------------------------------------------------
+# Speculative decoding drafter — separate checkpoint, not part of Brain.
+# -----------------------------------------------------------------------------
+# Brain's own MTP heads ship inside its checkpoint and need nothing here. This
+# is the external drafter that replaced them: measured 23.85 tok/s against MTP's
+# 19.66 on the same prompt, output unchanged (docs/LESSONS.md #20).
+#
+# THE RENAME BELOW IS REQUIRED, NOT COSMETIC. The upload declares architecture
+# "DSparkDraftModel", a generic name vLLM dispatches to its DeepSeek-V4
+# implementation, which then dies reading a DeepSeek-only config field:
+#
+#   AttributeError: 'Qwen3Config' object has no attribute 'hc_mult'
+#
+# "Qwen3DSparkModel" is registered in the image and is the Qwen3 path. Renaming
+# it here means a fresh install works; leaving it to a manual step means Brain
+# fails to start with an error that names DeepSeek and points nowhere useful.
+#
+# This lives in the model directory rather than the repo, so it cannot be
+# committed — which is exactly why it belongs in the script that creates that
+# directory. It was found the hard way, after four failed launches.
+DRAFT_PATH=$(get_model_field brain speculative_draft_model)
+DRAFT_REPO=$(get_model_field brain speculative_draft_repo)
+if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
+    echo ""
+    if [ -d "${DRAFT_PATH}" ] && [ "$(ls -A "${DRAFT_PATH}" 2>/dev/null)" ]; then
+        echo "  SKIP Drafter: already exists at ${DRAFT_PATH}"
+    else
+        echo "  Downloading Drafter → ${DRAFT_PATH}"
+        echo "    HF repo: ${DRAFT_REPO}"
+        mkdir -p "${DRAFT_PATH}"
+        hf download "${DRAFT_REPO}" --local-dir "${DRAFT_PATH}"
+    fi
+
+    if [ -f "${DRAFT_PATH}/config.json" ]; then
+        if grep -q '"DSparkDraftModel"' "${DRAFT_PATH}/config.json"; then
+            sed -i 's/"DSparkDraftModel"/"Qwen3DSparkModel"/' "${DRAFT_PATH}/config.json"
+            echo "    Renamed architecture DSparkDraftModel -> Qwen3DSparkModel (required)"
+        fi
+        if ! grep -q '"Qwen3DSparkModel"' "${DRAFT_PATH}/config.json"; then
+            echo "    WARNING: drafter declares an unexpected architecture:"
+            grep -A2 '"architectures"' "${DRAFT_PATH}/config.json" | sed 's/^/      /'
+            echo "    Brain will fail to start with speculative_config set to dspark."
+        fi
+    fi
+fi
+
 echo ""
 echo "All models downloaded."
 
