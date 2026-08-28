@@ -17,19 +17,16 @@
 #   Non-interactive callers (boot_sequence.sh, watchdog.sh, systemd) get the
 #   old behavior — delete without prompting — so nothing changes on boot.
 #
-# Restore-from-archive (the other half of the above):
-#   Archiving was one-way until 2026-08-27, so a rollback still re-downloaded
-#   everything the archive was holding — the feature only half-worked. Before
-#   downloading anything, this now checks ${ARCHIVE_DIR}/<name> and offers to
-#   move it back instead. Same filesystem, so it is a rename, not a copy.
-#   The prompt prints the archived copy's DOWNLOADED_REVISION.txt, because
-#   "restore" and "re-download" are not equivalent: upstream may have moved
-#   since it was archived, and only one of those two answers reproduces the
-#   weights your benchmarks were measured against.
+# Restore-from-archive:
+#   Checks ${ARCHIVE_DIR}/<name> before downloading and offers to move it back.
 #     RESTORE_ARCHIVED_MODEL=ask|yes|no   default: ask if interactive, yes otherwise
-#   Non-interactive default is `yes` — unlike archive-on-prune, which defaults
-#   to the destructive answer to preserve boot behavior. Nothing on the boot
-#   path runs this script, and silently re-pulling ~25GB is the worse surprise.
+#   Non-interactive defaults to yes (opposite of archive-on-prune) — nothing on
+#   the boot path runs this script, and a silent 25GB re-pull is worse.
+#
+# Revision drift:
+#   A model already on disk is compared against the SHA models.yml asks for,
+#   and you are offered the swap. Detects different, never better.
+#     CHECK_REVISION=ask|yes|no           default: ask if interactive, no otherwise
 # =============================================================================
 
 set -euo pipefail
@@ -40,18 +37,14 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 ARCHIVE_OLD_MODEL="${ARCHIVE_OLD_MODEL:-}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
 RESTORE_ARCHIVED_MODEL="${RESTORE_ARCHIVED_MODEL:-}"
+CHECK_REVISION="${CHECK_REVISION:-}"
 
 # Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
 # huggingface-cli was removed in huggingface_hub v1.0; `hf` replaces it.
-#
-# Checked where it is used, not at startup. This was a hard exit on line 1 of
-# the script until 2026-08-28, which meant a run that only prunes, only skips
-# already-present models, or only restores from the archive still died on a
-# missing downloader it was never going to call. That made restore-from-archive
-# unreachable in precisely the case it exists for: rolling back on a box whose
-# Python tooling has drifted since the models were pulled. Observed live.
+# Checked at point of use, not startup: pruning, skipping and restoring need no
+# downloader, and an early exit made restore-from-archive unreachable.
 require_hf() {
     command -v hf >/dev/null 2>&1 && return 0
     echo ""
@@ -166,13 +159,9 @@ archive_or_remove() {
     sudo mv "${dir}" "${dest}"
 }
 
-# The inverse of archive_or_remove: bring a model back instead of re-pulling it.
-# Returns 0 if ${dest} now holds the model (caller should skip downloading),
-# 1 if there was nothing archived or the operator asked for a fresh download.
-#
-# Declining does NOT discard the archived copy — you can always take it later,
-# and having both a fresh download and a known-good archive is the state you
-# want when a new upstream push turns out to be broken.
+# Inverse of archive_or_remove. Returns 0 if ${dest} now holds the model,
+# 1 if nothing was archived or a fresh download was requested.
+# Declining keeps the archived copy — it is the rollback if the new pull is bad.
 restore_from_archive() {
     local dest="$1"
     local label="$2"
@@ -217,8 +206,7 @@ restore_from_archive() {
         return 1
     fi
 
-    # Same cross-device guard as archive_or_remove — a silent 25GB copy wearing
-    # a rename's clothes is worth failing fast on.
+    # Cross-device guard: a rename that is secretly a 25GB copy fails fast.
     local src_dev dst_dev
     src_dev="$(stat -c %d "${src}" 2>/dev/null || echo x)"
     dst_dev="$(stat -c %d "$(dirname "${dest}")" 2>/dev/null || echo y)"
@@ -235,13 +223,90 @@ restore_from_archive() {
     return 0
 }
 
+# Prints empty on any failure (offline, rate-limited, gated). Callers must treat
+# empty as "unknown", never "changed" — otherwise a dropped network proposes
+# replacing good weights.
+resolve_upstream_sha() {
+    python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo ""
+import json, sys, urllib.request
+repo, rev = sys.argv[1], (sys.argv[2] or "main")
+try:
+    with urllib.request.urlopen(
+            f"https://huggingface.co/api/models/{repo}/revision/{rev}", timeout=15) as r:
+        print(json.load(r).get("sha", ""))
+except Exception:
+    print("")
+PYEOF
+}
+
+# Returns 0 to keep what is on disk, 1 to fall through and download.
+# Detects that hashes differ, not that the new one is better — upstream
+# re-uploads have shipped broken — so it always asks and always archives first.
+check_revision_drift() {
+    local local_path="$1" hf_repo="$2" hf_revision="$3" label="$4"
+
+    case "${CHECK_REVISION}" in
+        no|n|0|false|FALSE|False) return 0 ;;
+        yes|y|1|true|TRUE|True)   ;;
+        *) [ -t 0 ] && [ -t 1 ] || return 0 ;;   # never prompt non-interactively
+    esac
+
+    local resident=""
+    if [ -f "${local_path}/DOWNLOADED_REVISION.txt" ]; then
+        resident=$(sed -n 's/^resolved_sha=//p' "${local_path}/DOWNLOADED_REVISION.txt" | head -1)
+    fi
+    if [ -z "${resident}" ]; then
+        echo "    (no recorded SHA for ${label} — cannot compare revisions)"
+        return 0
+    fi
+
+    # A 40-hex hf_revision is already the answer; anything else is a ref name.
+    local target=""
+    if printf '%s' "${hf_revision}" | grep -qE '^[0-9a-f]{40}$'; then
+        target="${hf_revision}"
+    else
+        target=$(resolve_upstream_sha "${hf_repo}" "${hf_revision}")
+    fi
+
+    [ -z "${target}" ] && return 0                 # unknown: leave it alone
+    [ "${target}" = "${resident}" ] && return 0    # match: nothing to do
+
+    echo ""
+    echo "  ${label} on disk is a different revision than models.yml asks for:"
+    echo "    on disk:     ${resident}"
+    if [ "${hf_revision}" = "${target}" ]; then
+        echo "    configured:  ${target}"
+    else
+        echo "    configured:  ${target}  (${hf_revision:-latest on main})"
+    fi
+    echo "  Different is not the same as better — upstream re-uploads have shipped"
+    echo "  broken. Replacing archives the current copy first, so it stays available."
+    local ans
+    read -r -p "  Replace with the configured revision? [y/N] " ans
+    case "${ans}" in
+        y|Y|yes|Yes|YES) ;;
+        *) echo "  Keeping the copy on disk."; return 0 ;;
+    esac
+
+    # Before archiving, not after: failing here otherwise strands the working
+    # copy in the archive with /opt/models empty.
+    require_hf
+    ARCHIVE_OLD_MODEL=yes archive_or_remove "${local_path}"
+    return 1
+}
+
 download_model() {
     local label="$1"
     local top_key="$2"
 
-    local hf_repo local_path
+    local hf_repo local_path hf_revision
     hf_repo=$(get_model_field "${top_key}" hf_repo)
     local_path=$(get_model_field "${top_key}" local_path)
+
+    # Optional pin. Blank (the normal case) means "latest on main at pull time",
+    # which is what you want on a fresh drop. Set hf_revision only to reproduce
+    # a known-good state or to dodge a bad upstream push.
+    hf_revision=$(get_model_field "${top_key}" hf_revision)
 
     if [ -z "${hf_repo}" ] || [ -z "${local_path}" ]; then
         echo "  SKIP ${label}: not configured in models.yml"
@@ -249,23 +314,17 @@ download_model() {
     fi
 
     if [ -d "${local_path}" ] && [ "$(ls -A "${local_path}" 2>/dev/null)" ]; then
-        echo "  SKIP ${label}: already exists at ${local_path}"
-        return
+        if check_revision_drift "${local_path}" "${hf_repo}" "${hf_revision}" "${label}"; then
+            echo "  SKIP ${label}: already exists at ${local_path}"
+            return
+        fi
+        # Drift accepted: the old copy is archived, fall through and download.
     fi
 
-    # Absent from /opt/models is not the same as absent from the box: an earlier
-    # prune may have parked it in the archive, where a rename beats a re-pull.
+    # An earlier prune may have parked it in the archive; a rename beats a re-pull.
     if restore_from_archive "${local_path}" "${label}"; then
         return
     fi
-
-    # Optional pin. Blank (the normal case) means "latest on main at pull
-    # time", which is what you want on a fresh drop: first uploads of new
-    # models have shipped broken — see the tokenizer truncation check at the
-    # bottom of this script. Set hf_revision only to reproduce a known-good
-    # state or to dodge a bad upstream push.
-    local hf_revision
-    hf_revision=$(get_model_field "${top_key}" hf_revision)
 
     require_hf
     echo "  Downloading ${label} → ${local_path}"
@@ -285,17 +344,7 @@ download_model() {
         sha=$(head -1 "${local_path}/.cache/huggingface/.gitattributes.metadata" 2>/dev/null || echo "")
     fi
     if [ -z "${sha}" ]; then
-        sha=$(python3 - "${hf_repo}" "${hf_revision}" <<'PYEOF' 2>/dev/null || echo ""
-import json, sys, urllib.request
-repo, rev = sys.argv[1], (sys.argv[2] or "main")
-try:
-    with urllib.request.urlopen(
-            f"https://huggingface.co/api/models/{repo}/revision/{rev}", timeout=15) as r:
-        print(json.load(r).get("sha", ""))
-except Exception:
-    print("")
-PYEOF
-)
+        sha=$(resolve_upstream_sha "${hf_repo}" "${hf_revision}")
     fi
 
     if [ -n "${sha}" ]; then
@@ -321,17 +370,10 @@ echo ""
 
 # ── Prune model directories no longer in models.yml ──────────────────────────
 echo ">>> Checking for unused model directories in /opt/models..."
-# Every field that can name a resident model directory, scanned across every
-# top-level section — not a hardcoded section list reading one field.
-#
-# This read only 'local_path' of brain/subagent/asr/tts until 2026-08-28. The
-# drafter is configured as brain.speculative_draft_model, so it matched nothing
-# here and was classified unused on EVERY run: the prune pass archived, or
-# offered to delete, the one directory Brain cannot start without. That is how
-# it came to be sitting in /opt/model-archive. Observed live.
-#
-# Erring toward keeping is the right failure mode. An unlisted stale directory
-# costs disk; a pruned live one costs a re-download and a dead server.
+# Every field that can name a resident model dir, across all sections. Reading
+# only local_path of a fixed key list meant brain.speculative_draft_model was
+# never seen, so the drafter was pruned on every run. Err toward keeping: a
+# stale dir costs disk, a pruned live one costs a re-download and a dead server.
 ACTIVE_PATHS=$(python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
@@ -387,8 +429,6 @@ if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
     if [ -d "${DRAFT_PATH}" ] && [ "$(ls -A "${DRAFT_PATH}" 2>/dev/null)" ]; then
         echo "  SKIP Drafter: already exists at ${DRAFT_PATH}"
     elif restore_from_archive "${DRAFT_PATH}" "Drafter"; then
-        # Restored — fall through to the architecture-rename check below, which
-        # an archived copy still needs if it was archived before that fix.
         :
     else
         require_hf
