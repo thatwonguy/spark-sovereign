@@ -321,15 +321,29 @@ echo ""
 
 # ── Prune model directories no longer in models.yml ──────────────────────────
 echo ">>> Checking for unused model directories in /opt/models..."
+# Every field that can name a resident model directory, scanned across every
+# top-level section — not a hardcoded section list reading one field.
+#
+# This read only 'local_path' of brain/subagent/asr/tts until 2026-08-28. The
+# drafter is configured as brain.speculative_draft_model, so it matched nothing
+# here and was classified unused on EVERY run: the prune pass archived, or
+# offered to delete, the one directory Brain cannot start without. That is how
+# it came to be sitting in /opt/model-archive. Observed live.
+#
+# Erring toward keeping is the right failure mode. An unlisted stale directory
+# costs disk; a pruned live one costs a re-download and a dead server.
 ACTIVE_PATHS=$(python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
     cfg = yaml.safe_load(f)
-keys = ['brain', 'subagent', 'asr', 'tts']
-for k in keys:
-    p = cfg.get(k, {}).get('local_path', '')
-    if p:
-        print(p)
+FIELDS = ('local_path', 'speculative_draft_model', 'speculative_draft_model_path')
+for section in cfg.values():
+    if not isinstance(section, dict):
+        continue
+    for field in FIELDS:
+        p = section.get(field)
+        if p:
+            print(p)
 ")
 
 if [ -d /opt/models ]; then
