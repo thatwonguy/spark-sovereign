@@ -22,6 +22,28 @@
 # bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
 # configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
 # restores the v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
+#
+# FOUR THINGS THE STARTUP LOG SAYS THAT NOTHING HERE HAS MEASURED (2026-08-27).
+# All four are observations from one clean boot, not verdicts. Recorded so the
+# next person reads them before re-deriving them; `bash scripts/benchmark.sh`
+# is what turns any of them into a number.
+#   1. The drafter is BLIND ON IMAGES. "Draft model Qwen3DSparkForCausalLM does
+#      not support external multimodal embeddings ... using text-only draft
+#      inputs instead." Output is unaffected (every draft is verified), but
+#      acceptance on image turns should fall, and 23.85 tok/s was measured on a
+#      text prompt. Vision turns are an unmeasured third workload alongside the
+#      code/prose split noted below.
+#   2. max_num_batched_tokens FIGHTS THE DRAFTER. vLLM warns at every boot that
+#      8192 minus 7 draft-token slots leaves max_num_scheduled_tokens=8096 and
+#      calls it "suboptimal". Cost unquantified; raising the budget is untested.
+#   3. ~59 GiB SITS IDLE at 0.45 util — vLLM offers --kv-cache-memory=84.18 GiB
+#      against the 26.21 GiB in use. Do NOT take it for speed: the util-080 row
+#      measured 15.07 vs 15.18 tok/s, and the cache already holds ~745K tokens
+#      against a 262144 max_model_len. It buys concurrency, nothing else.
+#   4. SAMPLING DEFAULTS COME FROM THE CHECKPOINT, not from this file:
+#      generation_config.json sets temperature 1.0, top_k 20, top_p 0.95. A
+#      client that sends no temperature generates at 1.0 — hot for agentic tool
+#      calling. Check what the client sends before blaming the model.
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-27b-nvfp4
