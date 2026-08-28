@@ -498,10 +498,11 @@ fi
 
 echo ""
 echo "Disk usage summary:"
-for key in brain asr tts; do
-    path=$(get_model_field "${key}" local_path)
+# Reuses the prune keep-list rather than its own key list, so the summary cannot
+# disagree with it — a hardcoded list here silently omitted the drafter.
+while IFS= read -r path; do
     [ -n "${path}" ] && [ -d "${path}" ] && du -sh "${path}" 2>/dev/null || true
-done
+done <<< "${ACTIVE_PATHS}"
 
 if [ -d "${ARCHIVE_DIR}" ] && [ -n "$(ls -A "${ARCHIVE_DIR}" 2>/dev/null || true)" ]; then
     echo ""
