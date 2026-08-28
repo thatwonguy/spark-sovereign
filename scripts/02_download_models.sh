@@ -44,14 +44,22 @@ RESTORE_ARCHIVED_MODEL="${RESTORE_ARCHIVED_MODEL:-}"
 # Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
-# Optional early check so failures are obvious
 # huggingface-cli was removed in huggingface_hub v1.0; `hf` replaces it.
-if ! command -v hf >/dev/null 2>&1; then
-    echo "ERROR: hf CLI not found in PATH"
-    echo "PATH=${PATH}"
-    echo "Try: python3 -m pip install --user -U huggingface_hub"
+#
+# Checked where it is used, not at startup. This was a hard exit on line 1 of
+# the script until 2026-08-28, which meant a run that only prunes, only skips
+# already-present models, or only restores from the archive still died on a
+# missing downloader it was never going to call. That made restore-from-archive
+# unreachable in precisely the case it exists for: rolling back on a box whose
+# Python tooling has drifted since the models were pulled. Observed live.
+require_hf() {
+    command -v hf >/dev/null 2>&1 && return 0
+    echo ""
+    echo "  ERROR: hf CLI not found in PATH, and this step needs to download."
+    echo "  PATH=${PATH}"
+    echo "  Try: python3 -m pip install --user -U huggingface_hub"
     exit 1
-fi
+}
 
 # hf_transfer was removed in v1.0; HF_HUB_ENABLE_HF_TRANSFER is now a silent no-op.
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
@@ -250,6 +258,7 @@ download_model() {
     local hf_revision
     hf_revision=$(get_model_field "${top_key}" hf_revision)
 
+    require_hf
     echo "  Downloading ${label} → ${local_path}"
     echo "    HF repo: ${hf_repo}"
     echo "    Revision: ${hf_revision:-<latest on main>}"
@@ -359,6 +368,7 @@ if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
         # an archived copy still needs if it was archived before that fix.
         :
     else
+        require_hf
         echo "  Downloading Drafter → ${DRAFT_PATH}"
         echo "    HF repo: ${DRAFT_REPO}"
         mkdir -p "${DRAFT_PATH}"
