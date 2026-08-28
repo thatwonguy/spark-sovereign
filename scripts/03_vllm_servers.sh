@@ -254,9 +254,149 @@ echo "  URL   : http://localhost:${BRAIN_PORT}/v1"
 echo "  Memory: util=${BRAIN_UTIL} → ~$(python3 -c "print(round(121.69 * ${BRAIN_UTIL}))")GB reserved by vLLM (weights + KV cache)"
 echo "========================================================"
 echo ""
+# ── Hand the key to OpenClaw ──────────────────────────────────────────────────
+# The Brain is authenticated, so whatever talks to it needs the same key.
+# OpenClaw keeps its own config store (~/.openclaw/openclaw.json) and does NOT
+# read this repo's .env, so a freshly minted key silently orphans it. The
+# failure mode is nastier than it sounds: every /v1 probe returns 401, the
+# provider therefore registers ZERO models, and the breakage surfaces
+# downstream as "Unknown model: <provider>/<id>" — an error that names the
+# model while the actual cause is auth.
+#
+# That misdirection cost an entire evening on 2026-08-27: Telegram answered
+# "Something went wrong" to every message, /new included, failover walked out
+# to a cloud provider, and check_stack.sh printed all green throughout.
+#
+# Deliberately conservative: only providers whose baseUrl ALREADY points at
+# this Brain get touched. This never creates a provider, never renames one, and
+# never guesses which of several is "the right" one. Configure the provider
+# once (openclaw onboard); after that the key stays in sync on its own.
+OPENCLAW_SYNCED=""
+OPENCLAW_STALE=""
+
+if [ -z "${BRAIN_API_KEY}" ]; then
+    :   # Brain is unauthenticated — nothing to propagate.
+elif ! command -v openclaw >/dev/null 2>&1; then
+    :   # A different agentic layer, or none yet. Manual values print below.
+else
+    echo "Syncing the key into OpenClaw..."
+    # `openclaw config get` prints a banner line before its JSON, so start the
+    # parse at the first brace instead of feeding it the whole stream.
+    OPENCLAW_TARGETS=$(openclaw config get models.providers 2>/dev/null \
+        | sed -n '/^{/,$p' \
+        | python3 -c '
+import json, sys
+from urllib.parse import urlparse
+
+LOCAL = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+port, served = int(sys.argv[1]), sys.argv[2]
+
+try:
+    providers = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(providers, dict):
+    sys.exit(0)
+
+for name, cfg in providers.items():
+    if not isinstance(cfg, dict):
+        continue
+    url = urlparse(str(cfg.get("baseUrl", "")))
+    if url.hostname not in LOCAL or (url.port or 0) != port:
+        continue
+    ids = [m.get("id") for m in (cfg.get("models") or []) if isinstance(m, dict)]
+    # "stale" = points at our Brain but lists a model id the Brain no longer
+    # serves, which is what a served_name change leaves behind.
+    print("%s\t%s" % (name, "ok" if served in ids else "stale"))
+' "${BRAIN_PORT}" "${BRAIN_NAME}" 2>/dev/null || true)
+
+    while IFS=$'\t' read -r _prov _state; do
+        [ -n "${_prov}" ] || continue
+        # The key is an argument here, so it is visible to `ps` for the instant
+        # this runs — the same exposure the onboard wizard has. Accepted: the
+        # alternative is leaving OpenClaw broken after every key rotation.
+        if openclaw config set "models.providers.${_prov}.apiKey" "${BRAIN_API_KEY}" >/dev/null 2>&1; then
+            OPENCLAW_SYNCED="${OPENCLAW_SYNCED} ${_prov}"
+            # Spelled out rather than `[ ... ] && VAR=...`: this runs under
+            # `set -e`, where a trailing false test as the last statement of a
+            # branch is a known way to kill the script.
+            if [ "${_state}" = "stale" ]; then
+                OPENCLAW_STALE="${OPENCLAW_STALE} ${_prov}"
+            fi
+        else
+            echo "  WARN: could not write apiKey for provider '${_prov}'."
+        fi
+    done <<< "${OPENCLAW_TARGETS}"
+
+    if [ -n "${OPENCLAW_SYNCED}" ]; then
+        echo "  OK: key written to provider(s):${OPENCLAW_SYNCED}"
+        # Config changes need a gateway restart; OpenClaw says so itself on
+        # every `config set`. Only restart what is already running.
+        if systemctl --user is-active openclaw-gateway >/dev/null 2>&1; then
+            if systemctl --user restart openclaw-gateway >/dev/null 2>&1; then
+                echo "  OK: openclaw-gateway restarted to apply it."
+            else
+                echo "  WARN: restart failed. Apply with: openclaw gateway restart"
+            fi
+        else
+            echo "  NOTE: gateway not running — it will pick this up on next start."
+        fi
+    else
+        echo "  WARN: no OpenClaw provider points at port ${BRAIN_PORT} on this host."
+        echo "        Nothing was synced. Configure one with 'openclaw onboard'"
+        echo "        (first time) or 'openclaw configure', using the values below."
+    fi
+
+    if [ -n "${OPENCLAW_STALE}" ]; then
+        echo ""
+        echo "  WARN: provider(s)${OPENCLAW_STALE} do not list model id '${BRAIN_NAME}'."
+        echo "        The key is now correct but the model id is stale — every"
+        echo "        request will fail with 'Unknown model'. Fix the id with:"
+        echo "          openclaw configure"
+    fi
+
+    # Key and model id can both be right while the agent is still aimed at a
+    # provider that does not exist. That is exactly what broke on 2026-08-27,
+    # so check it rather than assume it.
+    # `|| true` is load-bearing: with `pipefail` set, an unset config path makes
+    # grep return 1, which would take the whole script down on the assignment.
+    OPENCLAW_AGENT=$(openclaw config get agents.defaults.model 2>/dev/null \
+        | grep -v '^[[:space:]]*$' | tail -1 | tr -d '"' | tr -d '[:space:]' || true)
+    case "${OPENCLAW_AGENT}" in
+        */*)
+            _agent_prov="${OPENCLAW_AGENT%%/*}"
+            case " ${OPENCLAW_SYNCED} " in
+                *" ${_agent_prov} "*) ;;
+                *)
+                    echo ""
+                    echo "  WARN: agents.defaults.model is '${OPENCLAW_AGENT}', whose provider"
+                    echo "        '${_agent_prov}' is not pointed at this Brain. Requests will"
+                    echo "        fail with 'Unknown model' no matter how correct the key is."
+                    echo "        Point it at a synced provider, e.g.:"
+                    echo "          openclaw config set agents.defaults.model <provider>/${BRAIN_NAME}"
+                    ;;
+            esac
+            ;;
+    esac
+    echo ""
+fi
+
+echo "========================================================"
+if [ -n "${OPENCLAW_SYNCED}" ]; then
+echo " NEXT STEP — OpenClaw already holds the current key; nothing to paste."
+echo " Verify the whole stack with:"
+echo "   bash scripts/check_stack.sh"
+echo ""
+echo " Running 'openclaw configure' is still safe and still the right way to"
+echo " change the model id, context window, or anything else on OpenClaw's"
+echo " side. The values below are printed for exactly that. This script only"
+echo " ever writes one field — a provider's apiKey — so whatever the wizard"
+echo " sets up stays set up."
+else
 echo " NEXT STEP — the Brain is serving, but nothing is talking to it yet."
-echo " Connect your agentic layer. This is a MANUAL step: the framework keeps"
-echo " its own config and does not read this repo's .env."
+echo " Connect your agentic layer. First-time setup is manual; the API key is"
+echo " not — once a provider points at this Brain, script 03 keeps its key in"
+echo " sync on every run."
 echo ""
 echo "   OpenClaw, first time   :  openclaw onboard"
 echo "   OpenClaw, already set  :  openclaw configure"
@@ -265,6 +405,7 @@ echo "                               re-runs the entire wizard."
 echo "   Any other  :  point it at the Base URL below as an OpenAI-compatible"
 echo "                 provider (Hermes, LibreChat, Open WebUI, n8n, aider,"
 echo "                 Continue, raw curl — all take the same four values)."
+fi
 echo ""
 echo " Enter these values wherever your framework asks for them:"
 echo ""
@@ -274,8 +415,8 @@ echo "  Model ID        : ${BRAIN_NAME}"
 if [ -n "${BRAIN_API_KEY}" ]; then
 echo "  API key         : ${BRAIN_API_KEY}"
 echo "                    ^ REQUIRED — /v1 returns 401 without it. Paste this"
-echo "                      into OpenClaw's wizard. It is stored in .env, so"
-echo "                      re-read it any time with:  grep BRAIN_API_KEY .env"
+echo "                      into the wizard when it asks. It is stored in .env,"
+echo "                      so re-read it any time with: grep BRAIN_API_KEY .env"
 else
 echo "  API key         : unused  (any string works — no key configured)"
 fi
