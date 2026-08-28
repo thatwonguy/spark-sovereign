@@ -12,10 +12,13 @@
 #   ~35GB from HuggingFace. Archive is single-slot: only ONE saved model at a
 #   time. If a different model already occupies the slot, you are asked
 #   whether to replace it. Env vars:
-#     ARCHIVE_OLD_MODEL=ask|yes|no   default: ask if interactive, no otherwise
+#     ARCHIVE_OLD_MODEL=ask|yes|no   default: ask if interactive, archive otherwise
 #     ARCHIVE_DIR=<path>             default: /opt/model-archive
-#   Non-interactive callers (boot_sequence.sh, watchdog.sh, systemd) get the
-#   old behavior — delete without prompting — so nothing changes on boot.
+#   Deleting only ever happens on an explicit no — from the prompt or from
+#   ARCHIVE_OLD_MODEL. With no terminal it archives rather than deletes, and any
+#   delete that skipped the prompt prints the reason it was not asked.
+#   NOTE: .env is sourced before these defaults, so ARCHIVE_OLD_MODEL=no there
+#   silently arms deletion for every run.
 #
 # Restore-from-archive:
 #   Checks ${ARCHIVE_DIR}/<name> before downloading and offers to move it back.
@@ -101,11 +104,14 @@ ask() {
 archive_or_remove() {
     local dir="$1"
     local name; name="$(basename "${dir}")"
-    local decision
+    local decision unasked=""
 
     case "${ARCHIVE_OLD_MODEL}" in
         yes|y|1|true|TRUE|True)  decision=archive ;;
-        no|n|0|false|FALSE|False) decision=delete ;;
+        no|n|0|false|FALSE|False)
+            decision=delete
+            unasked="ARCHIVE_OLD_MODEL=${ARCHIVE_OLD_MODEL} (set in the environment or .env)"
+            ;;
         *)
             if [ -t 0 ] && [ -t 1 ]; then
                 local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
@@ -121,13 +127,19 @@ archive_or_remove() {
                     *)            decision=archive ;;
                 esac
             else
-                decision=delete
+                # No terminal to ask, so do not destroy. Nothing on the boot
+                # path runs this script, so there is no unattended caller whose
+                # behaviour this protects — only disk, which is the cheap side.
+                decision=archive
+                echo "  No terminal to prompt — archiving ${name} rather than deleting."
             fi
             ;;
     esac
 
     if [ "${decision}" = "delete" ]; then
-        echo "  REMOVE unused model: ${dir}"
+        local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
+        echo "  REMOVE unused model: ${dir}  (${size})"
+        [ -n "${unasked}" ] && echo "    deleted without asking, because ${unasked}"
         sudo rm -rf "${dir}"
         return
     fi
