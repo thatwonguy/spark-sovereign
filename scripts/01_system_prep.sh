@@ -52,7 +52,7 @@ echo "    Conflicts resolved."
 # 4. Install Python tools
 echo ">>> Installing Python tools..."
 pip install \
-    huggingface_hub \
+    "huggingface_hub>=1.0" \
     hf_transfer \
     psycopg2-binary \
     sentence-transformers \
@@ -60,6 +60,19 @@ pip install \
     pyyaml \
     --break-system-packages --quiet
 echo "    Python tools installed."
+
+# 02_download_models.sh calls `hf`, which only exists in huggingface_hub >= 1.0.
+# Earlier versions ship huggingface-cli instead, so a box prepped before that
+# rename has the library and not the command — an unpinned install here left
+# downloads broken with the package looking correctly installed.
+if command -v hf >/dev/null 2>&1; then
+    echo "    hf CLI: $(command -v hf)"
+else
+    echo "    WARNING: huggingface_hub is installed but 'hf' is not on PATH."
+    echo "             version: $(python3 -c 'import huggingface_hub as h; print(h.__version__)' 2>/dev/null || echo unknown)"
+    echo "             02_download_models.sh cannot download until this resolves."
+    echo "             Try: pip install -U 'huggingface_hub>=1.0' --break-system-packages"
+fi
 
 # 5. Drop page cache (mandatory before loading large models on Spark)
 echo ">>> Dropping page cache..."
