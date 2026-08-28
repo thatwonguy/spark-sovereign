@@ -90,7 +90,8 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v5.2 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.3. MTP draft length 5 → 3, measured across 15 configs. Output-preserving |
 | v5.3 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.3.1 — same stack. DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20 |
 | v5.3.1 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.4 — identical stack to v5.3; benchmark log paths made repo-relative |
-| **v5.4** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — no model change. Swaps and rollbacks restore from `/opt/model-archive` instead of re-downloading; the drafter is no longer pruned. Deploy this tag** |
+| v5.4 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.4.1 — do not deploy: its prune prompt could be answered by pasted input and delete weights |
+| **v5.4.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — no model change. Swaps and rollbacks restore from `/opt/model-archive` instead of re-downloading; the drafter is no longer pruned; destructive prompts read from the terminal. Verified end-to-end on hardware. Deploy this tag** |
 
 **v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. (v5.2 later recovered part of that with speculative-decoding tuning, to ~17 tok/s; the non-speculative floor is a measured 12 tok/s.) We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
@@ -293,7 +294,7 @@ sudo usermod -aG docker $USER && newgrp docker
 # Clone and configure
 git clone https://github.com/thatwonguy/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
-git checkout v5.4   # latest release tag — pins the model and every serving parameter
+git checkout v5.4.1   # latest release tag — pins the model and every serving parameter
 cp .env.example .env
 nano .env   # set HF_TOKEN at minimum
 
