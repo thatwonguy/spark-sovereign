@@ -122,12 +122,19 @@ archive_or_remove() {
             if [ -t 0 ] && [ -t 1 ]; then
                 local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
                 echo ""
-                echo "  About to prune: ${dir}  (${size})"
-                echo "  Archive to ${ARCHIVE_DIR}/${name} so you can roll back without re-downloading?"
+                echo "  FOUND: ${dir}  (${size})"
+                echo "  This model is no longer listed in config/models.yml, so it is"
+                echo "  not being used. What should happen to it?"
+                echo ""
+                echo "    y  = KEEP IT, moved to ${ARCHIVE_DIR}/${name}"
+                echo "         Still uses ${size} of disk. You can put it back later."
+                echo "    n  = DELETE IT PERMANENTLY, freeing ${size}"
+                echo "         Getting it back would mean downloading it again."
+                echo ""
                 # Only an explicit no deletes. Anything unrecognised takes the
-                # capital-Y default, because the other branch is unrecoverable.
+                # keep default, because the other branch is unrecoverable.
                 local ans=""
-                ask "  Archive? [Y/n] " ans || ans=""
+                ask "  Type y or n and press Enter (or just press Enter to keep it): " ans || ans=""
                 case "${ans}" in
                     n|N|no|No|NO) decision=delete ;;
                     *)            decision=archive ;;
@@ -157,10 +164,17 @@ archive_or_remove() {
         # Single-slot archive: something is already saved. Ask before overwriting.
         if [ -t 0 ] && [ -t 1 ]; then
             local existing_size; existing_size="$(du -sh "${dest}" 2>/dev/null | awk '{print $1}')"
-            echo "  Archive slot already contains: ${dest}  (${existing_size})"
-            echo "  Only one archived model is kept at a time."
+            echo "  There is already a saved copy under that name:"
+            echo "    ${dest}  (${existing_size})"
+            echo "  Only one saved copy per name is kept, so they cannot both stay."
+            echo ""
+            echo "    y  = REPLACE the saved copy with this one"
+            echo "         The older saved copy is deleted permanently."
+            echo "    n  = KEEP the saved copy as it is"
+            echo "         ${dir} stays where it is and nothing is deleted."
+            echo ""
             local ans=""
-            ask "  Replace it? [y/N] " ans || ans=""
+            ask "  Type y or n and press Enter (or just press Enter to change nothing): " ans || ans=""
             case "${ans}" in
                 y|Y|yes|Yes|YES)
                     sudo rm -rf "${dest}"
@@ -215,17 +229,23 @@ restore_from_archive() {
             if [ -t 0 ] && [ -t 1 ]; then
                 local size; size="$(du -sh "${src}" 2>/dev/null | awk '{print $1}')"
                 echo ""
-                echo "  ${label} is not in /opt/models, but an archived copy exists:"
+                echo "  ${label} is missing from /opt/models, but a saved copy is"
+                echo "  already on this machine — no download needed:"
                 echo "    ${src}  (${size})"
                 if [ -f "${src}/DOWNLOADED_REVISION.txt" ]; then
+                    echo "  That copy came from:"
                     sed 's/^/      /' "${src}/DOWNLOADED_REVISION.txt"
                 else
-                    echo "      (no DOWNLOADED_REVISION.txt — provenance unrecorded)"
+                    echo "  (There is no record of which version this copy is.)"
                 fi
-                echo "  Restoring is an instant rename. Re-downloading fetches whatever is"
-                echo "  upstream now, which may not be what the archived copy holds."
+                echo ""
+                echo "    y  = USE THE SAVED COPY. Takes a second, downloads nothing."
+                echo "    n  = DOWNLOAD A FRESH COPY from HuggingFace instead."
+                echo "         Slower, and it may not match the saved copy if the"
+                echo "         model was re-uploaded since. The saved copy is kept."
+                echo ""
                 local ans=""
-                ask "  Use the archived copy? [Y/n] " ans || ans=""
+                ask "  Type y or n and press Enter (or just press Enter to use the saved copy): " ans || ans=""
                 case "${ans}" in
                     n|N|no|No|NO) decision=download ;;
                     *)            decision=restore ;;
@@ -314,10 +334,14 @@ check_revision_drift() {
     else
         echo "    configured:  ${target}  (${hf_revision:-latest on main})"
     fi
-    echo "  Different is not the same as better — upstream re-uploads have shipped"
-    echo "  broken. Replacing archives the current copy first, so it stays available."
+    echo "  Different does not mean better — re-uploads have shipped broken before."
+    echo ""
+    echo "    y  = SWITCH to the configured version and download it."
+    echo "         The copy you have now is saved first, so you can go back."
+    echo "    n  = KEEP what you have. Nothing is downloaded or changed."
+    echo ""
     local ans=""
-    ask "  Replace with the configured revision? [y/N] " ans || ans=""
+    ask "  Type y or n and press Enter (or just press Enter to keep what you have): " ans || ans=""
     case "${ans}" in
         y|Y|yes|Yes|YES) ;;
         *) echo "  Keeping the copy on disk."; return 0 ;;
