@@ -57,7 +57,16 @@ require_hf() {
     echo ""
     echo "  ERROR: hf CLI not found in PATH, and this step needs to download."
     echo "  PATH=${PATH}"
-    echo "  Try: python3 -m pip install --user -U huggingface_hub"
+    echo ""
+    echo "  This box is PEP 668 externally-managed, so --user fails outright."
+    echo "  01_system_prep.sh installs huggingface_hub with --break-system-packages;"
+    echo "  match it:"
+    echo "    pip install -U huggingface_hub --break-system-packages"
+    echo ""
+    echo "  If huggingface_hub is already installed, it is likely <1.0, which ships"
+    echo "  huggingface-cli and not hf. Check with:"
+    echo "    python3 -c 'import huggingface_hub as h; print(h.__version__)'"
+    echo "  The upgrade above is the fix either way."
     exit 1
 }
 
