@@ -81,6 +81,20 @@ print(val if val is not None else '')
 "
 }
 
+# Read an answer from the terminal rather than stdin, and discard anything
+# already buffered. A pasted multi-line command block leaves its remaining lines
+# in the input queue, and a plain `read` consumes the next one as the answer —
+# which silently answered destructive prompts with the following command.
+# Returns 1 when there is no terminal to ask.
+ask() {
+    local __var="$2" reply=""
+    while read -r -t 0 2>/dev/null; do read -r _ 2>/dev/null || break; done
+    # -r /dev/tty can pass on a node that still fails to open, so the open is
+    # the real test; the group swallows the redirection error when there is none.
+    { read -r -p "$1" reply < /dev/tty; } 2>/dev/null || return 1
+    printf -v "${__var}" '%s' "${reply}"
+}
+
 # Move a pruned model dir to the single-slot archive, or delete it.
 # Interactive terminals get a Y/n prompt; non-interactive callers delete
 # (preserving the pre-archive behavior for boot / watchdog / systemd).
@@ -98,11 +112,13 @@ archive_or_remove() {
                 echo ""
                 echo "  About to prune: ${dir}  (${size})"
                 echo "  Archive to ${ARCHIVE_DIR}/${name} so you can roll back without re-downloading?"
-                local ans
-                read -r -p "  Archive? [Y/n] " ans
+                # Only an explicit no deletes. Anything unrecognised takes the
+                # capital-Y default, because the other branch is unrecoverable.
+                local ans=""
+                ask "  Archive? [Y/n] " ans || ans=""
                 case "${ans}" in
-                    ""|y|Y|yes|Yes|YES) decision=archive ;;
-                    *)                  decision=delete ;;
+                    n|N|no|No|NO) decision=delete ;;
+                    *)            decision=archive ;;
                 esac
             else
                 decision=delete
@@ -125,15 +141,16 @@ archive_or_remove() {
             local existing_size; existing_size="$(du -sh "${dest}" 2>/dev/null | awk '{print $1}')"
             echo "  Archive slot already contains: ${dest}  (${existing_size})"
             echo "  Only one archived model is kept at a time."
-            local ans
-            read -r -p "  Replace it? [y/N] " ans
+            local ans=""
+            ask "  Replace it? [y/N] " ans || ans=""
             case "${ans}" in
                 y|Y|yes|Yes|YES)
                     sudo rm -rf "${dest}"
                     ;;
                 *)
-                    echo "  Keeping existing archive; deleting pruned model instead: ${dir}"
-                    sudo rm -rf "${dir}"
+                    # Neither copy gets destroyed on an unclear answer: leave the
+                    # pruned dir in /opt/models and re-offer it next run.
+                    echo "  Archive slot occupied — leaving ${dir} in place."
                     return
                     ;;
             esac
@@ -189,11 +206,11 @@ restore_from_archive() {
                 fi
                 echo "  Restoring is an instant rename. Re-downloading fetches whatever is"
                 echo "  upstream now, which may not be what the archived copy holds."
-                local ans
-                read -r -p "  Use the archived copy? [Y/n] " ans
+                local ans=""
+                ask "  Use the archived copy? [Y/n] " ans || ans=""
                 case "${ans}" in
-                    ""|y|Y|yes|Yes|YES) decision=restore ;;
-                    *)                  decision=download ;;
+                    n|N|no|No|NO) decision=download ;;
+                    *)            decision=restore ;;
                 esac
             else
                 decision=restore
@@ -281,8 +298,8 @@ check_revision_drift() {
     fi
     echo "  Different is not the same as better — upstream re-uploads have shipped"
     echo "  broken. Replacing archives the current copy first, so it stays available."
-    local ans
-    read -r -p "  Replace with the configured revision? [y/N] " ans
+    local ans=""
+    ask "  Replace with the configured revision? [y/N] " ans || ans=""
     case "${ans}" in
         y|Y|yes|Yes|YES) ;;
         *) echo "  Keeping the copy on disk."; return 0 ;;
