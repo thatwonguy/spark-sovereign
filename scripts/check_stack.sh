@@ -188,6 +188,104 @@ else
 fi
 echo ""
 
+
+# ── OpenClaw routing ──────────────────────────────────────────────────────────
+# Everything above this point can be green while the agent is completely dead.
+# On 2026-08-27 the Brain was healthy, the gateway was running and Telegram was
+# connected — and every message failed, because agents.defaults.model pointed at
+# a provider namespace that did not exist. This section is the check that was
+# missing: it asks what OpenClaw would ACTUALLY route to, rather than whether
+# the parts are individually up.
+#
+# It also enforces the project's one non-negotiable: nothing off-box. A cloud
+# entry in the failover list is not a health issue, it is a data-egress issue,
+# and it comes back every time a config wizard writes a default list.
+echo "── OpenClaw Routing ────────────────────────────────────────"
+if ! command -v openclaw &>/dev/null; then
+    echo "  (openclaw not on PATH — skipping)"
+else
+    # `openclaw config get` prefixes its JSON with a banner line, so every parse
+    # starts at the first brace rather than consuming the whole stream.
+    OC_PROVIDERS=$(openclaw config get models.providers 2>/dev/null | sed -n '/^{/,$p' || true)
+    OC_FALLBACKS=$(openclaw config get agents.defaults.models 2>/dev/null | sed -n '/^{/,$p' || true)
+    OC_AGENT=$(openclaw config get agents.defaults.model 2>/dev/null \
+        | grep -v '^[[:space:]]*$' | tail -1 | tr -d '"' | tr -d '[:space:]' || true)
+
+    if [ -z "${OC_PROVIDERS}" ]; then
+        echo "  ⚠️  could not read models.providers (openclaw config get failed)"
+    else
+        # One parse for all three questions, so "local" is defined exactly once:
+        # a provider whose baseUrl resolves to this host on the Brain's port.
+        # Never a name pattern — providers can be called anything.
+        printf '%s' "${OC_PROVIDERS}" | python3 -c "
+import json, sys
+from urllib.parse import urlparse
+
+LOCAL = {'localhost', '127.0.0.1', '0.0.0.0', '::1'}
+port, served, agent, fallbacks_raw = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+
+try:
+    providers = json.load(sys.stdin)
+except Exception:
+    print('  ⚠️  models.providers did not parse as JSON')
+    sys.exit(0)
+
+local_names, offbox = [], []
+for name, cfg in sorted(providers.items()):
+    if not isinstance(cfg, dict):
+        continue
+    raw = str(cfg.get('baseUrl', ''))
+    url = urlparse(raw)
+    ids = [m.get('id') for m in (cfg.get('models') or []) if isinstance(m, dict)]
+    if url.hostname in LOCAL and (url.port or 0) == port:
+        local_names.append(name)
+        ok = served in ids
+        print('  %s provider %-10s -> %s%s'
+              % ('✅' if ok else '⚠️ ', name, raw,
+                 '' if ok else '   <- does not list \'%s\'' % served))
+    elif url.hostname not in LOCAL:
+        offbox.append(name)
+        print('  ❌ provider %-10s -> %s   <- OFF-BOX' % (name, raw))
+
+# The check tonight turned on: is the agent aimed at anything that exists?
+prov = agent.split('/')[0] if '/' in agent else ''
+if not agent:
+    print('  ⚠️  agents.defaults.model is unset')
+elif prov in local_names:
+    print('  ✅ agent model  : %s' % agent)
+else:
+    print('  ❌ agent model  : %s' % agent)
+    print('     Provider \'%s\' is not a local provider. Every request fails with' % prov)
+    print('     \"Unknown model\" regardless of how correct the API key is.')
+    print('     Fix: openclaw config set agents.defaults.model <provider>/%s' % served)
+
+# Failover list. OpenRouter is BUILT IN to OpenClaw — there is no
+# models.providers.openrouter to delete — so an entry here is the only thing
+# that makes it selectable, and a wizard run can put it back at any time.
+try:
+    entries = list(json.loads(fallbacks_raw).keys()) if fallbacks_raw.strip() else []
+except Exception:
+    entries = []
+bad = [e for e in entries if e.split('/')[0] not in local_names]
+if bad:
+    print('')
+    print('  ❌ agents.defaults.models lists %d entr%s not served by this box:'
+          % (len(bad), 'y' if len(bad) == 1 else 'ies'))
+    for e in bad:
+        print('       %s' % e)
+    print('     Failover walks this list in order, so these are reached whenever')
+    print('     the local model is unavailable. With one brain on this box there')
+    print('     is nowhere legitimate to fall back to — trim to the local model.')
+
+if offbox:
+    print('')
+    print('  ❌ %d off-box provider(s): %s' % (len(offbox), ', '.join(offbox)))
+    print('     This project is local-first. Remove them.')
+" "${BRAIN_PORT}" "${BRAIN_NAME}" "${OC_AGENT}" "${OC_FALLBACKS}" 2>/dev/null \
+            || echo "  ⚠️  routing check failed (is python3 present?)"
+    fi
+fi
+echo ""
 # ── Whisper STT ───────────────────────────────────────────────────────────────
 echo "── Whisper STT ─────────────────────────────────────────────"
 WHISPER_CACHE="${HOME}/.cache/whisper"
