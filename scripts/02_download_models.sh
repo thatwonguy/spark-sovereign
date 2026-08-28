@@ -16,6 +16,20 @@
 #     ARCHIVE_DIR=<path>             default: /opt/model-archive
 #   Non-interactive callers (boot_sequence.sh, watchdog.sh, systemd) get the
 #   old behavior — delete without prompting — so nothing changes on boot.
+#
+# Restore-from-archive (the other half of the above):
+#   Archiving was one-way until 2026-08-27, so a rollback still re-downloaded
+#   everything the archive was holding — the feature only half-worked. Before
+#   downloading anything, this now checks ${ARCHIVE_DIR}/<name> and offers to
+#   move it back instead. Same filesystem, so it is a rename, not a copy.
+#   The prompt prints the archived copy's DOWNLOADED_REVISION.txt, because
+#   "restore" and "re-download" are not equivalent: upstream may have moved
+#   since it was archived, and only one of those two answers reproduces the
+#   weights your benchmarks were measured against.
+#     RESTORE_ARCHIVED_MODEL=ask|yes|no   default: ask if interactive, yes otherwise
+#   Non-interactive default is `yes` — unlike archive-on-prune, which defaults
+#   to the destructive answer to preserve boot behavior. Nothing on the boot
+#   path runs this script, and silently re-pulling ~25GB is the worse surprise.
 # =============================================================================
 
 set -euo pipefail
@@ -25,6 +39,7 @@ source "${REPO_ROOT}/.env" 2>/dev/null || true
 
 ARCHIVE_OLD_MODEL="${ARCHIVE_OLD_MODEL:-}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
+RESTORE_ARCHIVED_MODEL="${RESTORE_ARCHIVED_MODEL:-}"
 
 # Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
@@ -134,6 +149,75 @@ archive_or_remove() {
     sudo mv "${dir}" "${dest}"
 }
 
+# The inverse of archive_or_remove: bring a model back instead of re-pulling it.
+# Returns 0 if ${dest} now holds the model (caller should skip downloading),
+# 1 if there was nothing archived or the operator asked for a fresh download.
+#
+# Declining does NOT discard the archived copy — you can always take it later,
+# and having both a fresh download and a known-good archive is the state you
+# want when a new upstream push turns out to be broken.
+restore_from_archive() {
+    local dest="$1"
+    local label="$2"
+    local name; name="$(basename "${dest}")"
+    local src="${ARCHIVE_DIR}/${name}"
+
+    if [ ! -d "${src}" ] || [ -z "$(ls -A "${src}" 2>/dev/null)" ]; then
+        return 1
+    fi
+
+    local decision
+    case "${RESTORE_ARCHIVED_MODEL}" in
+        yes|y|1|true|TRUE|True)   decision=restore ;;
+        no|n|0|false|FALSE|False) decision=download ;;
+        *)
+            if [ -t 0 ] && [ -t 1 ]; then
+                local size; size="$(du -sh "${src}" 2>/dev/null | awk '{print $1}')"
+                echo ""
+                echo "  ${label} is not in /opt/models, but an archived copy exists:"
+                echo "    ${src}  (${size})"
+                if [ -f "${src}/DOWNLOADED_REVISION.txt" ]; then
+                    sed 's/^/      /' "${src}/DOWNLOADED_REVISION.txt"
+                else
+                    echo "      (no DOWNLOADED_REVISION.txt — provenance unrecorded)"
+                fi
+                echo "  Restoring is an instant rename. Re-downloading fetches whatever is"
+                echo "  upstream now, which may not be what the archived copy holds."
+                local ans
+                read -r -p "  Use the archived copy? [Y/n] " ans
+                case "${ans}" in
+                    ""|y|Y|yes|Yes|YES) decision=restore ;;
+                    *)                  decision=download ;;
+                esac
+            else
+                decision=restore
+            fi
+            ;;
+    esac
+
+    if [ "${decision}" = "download" ]; then
+        echo "  Keeping the archived copy at ${src}; downloading fresh instead."
+        return 1
+    fi
+
+    # Same cross-device guard as archive_or_remove — a silent 25GB copy wearing
+    # a rename's clothes is worth failing fast on.
+    local src_dev dst_dev
+    src_dev="$(stat -c %d "${src}" 2>/dev/null || echo x)"
+    dst_dev="$(stat -c %d "$(dirname "${dest}")" 2>/dev/null || echo y)"
+    if [ "${src_dev}" != "${dst_dev}" ]; then
+        echo "  ERROR: ${src} and $(dirname "${dest}") are on different filesystems."
+        echo "  Point ARCHIVE_DIR at a location on the same disk as /opt/models."
+        exit 1
+    fi
+
+    sudo mkdir -p "$(dirname "${dest}")"
+    echo "  RESTORE: ${src} → ${dest}"
+    sudo mv "${src}" "${dest}"
+    echo "  OK ${label} (restored from archive — no download)"
+    return 0
+}
+
 download_model() {
     local label="$1"
     local top_key="$2"
@@ -149,6 +233,12 @@ download_model() {
 
     if [ -d "${local_path}" ] && [ "$(ls -A "${local_path}" 2>/dev/null)" ]; then
         echo "  SKIP ${label}: already exists at ${local_path}"
+        return
+    fi
+
+    # Absent from /opt/models is not the same as absent from the box: an earlier
+    # prune may have parked it in the archive, where a rename beats a re-pull.
+    if restore_from_archive "${local_path}" "${label}"; then
         return
     fi
 
@@ -264,6 +354,10 @@ if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
     echo ""
     if [ -d "${DRAFT_PATH}" ] && [ "$(ls -A "${DRAFT_PATH}" 2>/dev/null)" ]; then
         echo "  SKIP Drafter: already exists at ${DRAFT_PATH}"
+    elif restore_from_archive "${DRAFT_PATH}" "Drafter"; then
+        # Restored — fall through to the architecture-rename check below, which
+        # an archived copy still needs if it was archived before that fix.
+        :
     else
         echo "  Downloading Drafter → ${DRAFT_PATH}"
         echo "    HF repo: ${DRAFT_REPO}"
@@ -321,7 +415,8 @@ done
 
 if [ -d "${ARCHIVE_DIR}" ] && [ -n "$(ls -A "${ARCHIVE_DIR}" 2>/dev/null || true)" ]; then
     echo ""
-    echo "Archived (rollback available — 'sudo mv ${ARCHIVE_DIR}/<name> /opt/models/'):"
+    echo "Archived (re-run this script after switching models.yml and it offers"
+    echo "these back automatically; 'sudo mv ${ARCHIVE_DIR}/<name> /opt/models/' still works):"
     for a in "${ARCHIVE_DIR}"/*/; do
         [ -d "${a}" ] && du -sh "${a%/}" 2>/dev/null || true
     done
