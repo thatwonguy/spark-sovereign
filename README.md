@@ -17,6 +17,38 @@ Brain serves a standard **OpenAI-compatible API** — any agentic framework that
 
 ---
 
+## Install
+
+Get an SSH shell on your Spark ([how](#layer-2--nvidia-sync--ssh-on-your-laptop)), then paste this:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thatwonguy/spark-sovereign/main/install.sh | bash
+```
+
+A guided setup wizard starts. It checks the machine, asks two optional
+questions, and then does about 40 minutes of unattended work. You do not need
+to know what Docker, vLLM, or a model weight is to get to the end of it.
+
+Prefer to read before you run — always a reasonable instinct with a piped
+installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thatwonguy/spark-sovereign/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+The installer only fetches this repo at its latest release tag and hands over to
+[`scripts/wizard.sh`](scripts/wizard.sh). Everything it runs afterwards is a
+script in `scripts/` that you could equally run by hand — see
+[Setup](#setup--box-open-to-running) for the manual sequence.
+
+> Already have the repo cloned? `bash scripts/wizard.sh` is the same wizard.
+> Interrupted partway through? Run it again — every step is idempotent and it
+> resumes.
+
+---
+
 ## Why This Exists
 
 Proprietary frontier models come with strings attached — rate limiting, usage-based pricing, mass data collection, content moderation that blocks legitimate work, and terms of service that change without notice. You don't own anything. You're renting access to someone else's computer, on their terms.
@@ -286,6 +318,11 @@ After WiFi connects, Spark downloads updates (~10 min) and reboots.
 **Remote access:** NVIDIA Sync → Settings → Tailscale → Enable → Add a Device
 
 ### Layer 3 — Scripts (Run on the Spark via SSH)
+
+> **Most people should use the wizard instead** — see [Install](#install). It runs
+> exactly the sequence below, and handles the docker group, the API key, and the
+> `.env` file for you. What follows is the same thing done by hand, for when you
+> want to see or change each step.
 
 ```bash
 # One-time setup
