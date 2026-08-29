@@ -89,9 +89,9 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v5.1 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.2 — hardened stack: loopback bind, auto-provisioned API key, persisted compile cache |
 | v5.2 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.3. MTP draft length 5 → 3, measured across 15 configs. Output-preserving |
 | v5.3 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | **Last tagged release.** DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20 |
-| **`main`** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — this is what runs on our Spark. Same model and serving parameters as v5.3, plus the setup-script fixes below. Deploy this** |
+| **v5.5** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — this is what runs on our Spark. Same model and serving parameters as v5.3, plus the setup-script fixes below. Deploy this tag** |
 
-**There is no tag newer than v5.3, and that is deliberate.** Tags briefly existed above it and were withdrawn as not stable enough to hand anyone. Rather than mint another version number, `main` is the deploy target and is kept as the thing actually running on our Spark.
+**v5.5 is a snapshot of what is actually running, not a feature release.** The model, the drafter and every serving parameter are byte-for-byte what v5.3 shipped. The version jump skips v5.3.1, v5.4 and v5.4.1: those numbers were published and then withdrawn as not stable enough to hand anyone, and reusing a withdrawn tag would put different content under a name somebody may already have fetched.
 
 Nothing on top of v5.3 touches the model or how it is served — every commit is a fix to the scripts that install it. The ones that matter if you are deploying:
 
@@ -306,9 +306,7 @@ sudo usermod -aG docker $USER && newgrp docker
 # Clone and configure
 git clone https://github.com/thatwonguy/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
-# Stay on main — it is what runs on our Spark, and it pins the model and every
-# serving parameter in config/models.yml. v5.3 is the last tagged release and
-# predates the download-phase fixes; see Model Evolution above before pinning it.
+git checkout v5.5   # current release — pins the model and every serving parameter
 cp .env.example .env
 nano .env   # set HF_TOKEN at minimum
 
