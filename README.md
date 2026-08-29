@@ -38,10 +38,15 @@ less install.sh
 bash install.sh
 ```
 
-The installer only fetches this repo at its latest release tag and hands over to
+The installer only fetches this repo and hands over to
 [`scripts/wizard.sh`](scripts/wizard.sh). Everything it runs afterwards is a
 script in `scripts/` that you could equally run by hand — see
 [Setup](#setup--box-open-to-running) for the manual sequence.
+
+It installs `main`, which is what runs on our Spark, and not the newest release
+tag — see [Model Evolution](#model-evolution) for why those differ. To install
+something else, set `SPARK_REF` to any branch, tag or commit:
+`SPARK_REF=v5.3 bash install.sh`.
 
 > Already have the repo cloned? `bash scripts/wizard.sh` is the same wizard.
 > Interrupted partway through? Run it again — every step is idempotent and it

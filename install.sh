@@ -13,7 +13,7 @@
 #   curl -fsSL <url> -o install.sh && less install.sh && bash install.sh
 #
 # Environment overrides (all optional):
-#   SPARK_TAG=v5.4.1        pin a specific release instead of the latest
+#   SPARK_REF=v5.3          install a specific branch, tag or commit
 #   SPARK_DIR=~/somewhere   install somewhere other than ~/spark-sovereign
 #   HF_TOKEN=hf_xxx         skip the token question in the wizard
 # =============================================================================
@@ -23,9 +23,13 @@ set -uo pipefail
 OWNER_REPO="thatwonguy/spark-sovereign"
 REPO_URL="${SPARK_REPO_URL:-https://github.com/${OWNER_REPO}.git}"
 DIR="${SPARK_DIR:-${HOME}/spark-sovereign}"
-# Used only when the releases API is unreachable — offline-ish boxes and rate
-# limited IPs still get a known-good tag rather than a moving main.
-FALLBACK_TAG="v5.4.1"
+
+# main, not the newest release tag. There is no tag above v5.3 — the ones that
+# briefly existed were withdrawn — and v5.3 predates the fixes that stop phase 2
+# deleting model weights in response to pasted input. Chasing "latest release"
+# would quietly install that. main is what runs on the Spark this was built on;
+# see Model Evolution in the README.
+REF="${SPARK_REF:-main}"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; D=$'\033[2m'; N=$'\033[0m'
@@ -72,17 +76,7 @@ for cmd in git curl; do
         "Install it with:  sudo apt-get update && sudo apt-get install -y ${cmd}"
 done
 
-# ── Which release? ───────────────────────────────────────────────────────────
-resolve_tag() {
-    if [ -n "${SPARK_TAG:-}" ]; then printf '%s' "${SPARK_TAG}"; return; fi
-    local t
-    t=$(curl -fsSL --max-time 10 "https://api.github.com/repos/${OWNER_REPO}/releases/latest" 2>/dev/null \
-        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    printf '%s' "${t:-${FALLBACK_TAG}}"
-}
-TAG="$(resolve_tag)"
-
-echo "  ${D}version${N}  ${TAG}"
+echo "  ${D}version${N}  ${REF}"
 echo "  ${D}folder ${N}  ${DIR}"
 echo ""
 
@@ -101,21 +95,41 @@ if [ -d "${DIR}/.git" ]; then
             "Throw away:    cd ${DIR} && git checkout ." \
             "Then re-run this installer."
     fi
-    git -C "${DIR}" checkout --quiet "${TAG}" 2>/dev/null || die \
-        "Could not switch ${DIR} to ${TAG}."
+    git -C "${DIR}" checkout --quiet "${REF}" 2>/dev/null || die \
+        "Could not switch ${DIR} to '${REF}'." \
+        "Check that it is a branch, tag or commit that exists."
+    # A branch has to be moved forward to whatever origin holds; checkout alone
+    # leaves an existing clone sitting on last week's commit. A tag has no
+    # upstream, so its absence here is normal rather than a failure.
+    if git -C "${DIR}" rev-parse --verify --quiet "origin/${REF}" >/dev/null 2>&1; then
+        git -C "${DIR}" merge --ff-only --quiet "origin/${REF}" 2>/dev/null || die \
+            "Your local '${REF}' has commits that origin/${REF} does not, so it" \
+            "cannot be fast-forwarded." \
+            "" \
+            "Discard them:  cd ${DIR} && git reset --hard origin/${REF}" \
+            "Or install alongside:  SPARK_DIR=~/spark-sovereign-clean bash install.sh"
+        # A fast-forward succeeds when the local branch is merely ahead, so the
+        # line above is not enough to claim this is a clean ${REF}. Say so
+        # rather than reporting a version that is not what will run.
+        if [ "$(git -C "${DIR}" rev-parse HEAD)" != "$(git -C "${DIR}" rev-parse "origin/${REF}")" ]; then
+            echo "  ${Y}Note:${N} ${DIR} carries local commits not in origin/${REF}."
+            echo "        Installing those, not a clean ${REF}."
+        fi
+    fi
 else
     echo "  Downloading spark-sovereign..."
     git clone --quiet "${REPO_URL}" "${DIR}" 2>/dev/null || die \
         "Could not download the repo into ${DIR}." \
         "Check internet access, or that ${DIR} is writable and not already occupied."
-    git -C "${DIR}" checkout --quiet "${TAG}" 2>/dev/null || true
+    git -C "${DIR}" checkout --quiet "${REF}" 2>/dev/null || die \
+        "Downloaded the repo, but '${REF}' is not a branch, tag or commit in it."
 fi
 
 echo "  ${G}Ready.${N}"
 
 [ -f "${DIR}/scripts/wizard.sh" ] || die \
-    "This release (${TAG}) predates the setup wizard." \
-    "Re-run with a newer version:  SPARK_TAG=main bash install.sh"
+    "'${REF}' predates the setup wizard, so there is nothing to hand over to." \
+    "Re-run without SPARK_REF to install main:  SPARK_REF=main bash install.sh"
 
 # exec, not call: the wizard takes over the terminal from here, and may re-exec
 # itself into tmux or a docker-group shell. Nothing below it would ever run.
