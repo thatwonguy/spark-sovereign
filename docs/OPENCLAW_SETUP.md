@@ -164,5 +164,5 @@ bash scripts/check_stack.sh
 
 ## Version
 
-- Current model: Qwen3.8-27B-NVFP4 (v5.4.1) — multimodal, accepts up to 10 images per prompt
+- Current model: Qwen3.8-27B-NVFP4 (`main`; v5.3 is the last tagged release) — multimodal, accepts up to 10 images per prompt
 - Last updated: August 2026
