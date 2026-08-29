@@ -88,14 +88,26 @@ We tested multiple models to find the best intelligence-to-speed ratio on Spark 
 | v5.0 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Traded speed for vision + higher intelligence per token |
 | v5.1 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.2 — hardened stack: loopback bind, auto-provisioned API key, persisted compile cache |
 | v5.2 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~17 | Yes | Superseded by v5.3. MTP draft length 5 → 3, measured across 15 configs. Output-preserving |
-| v5.3 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.3.1 — same stack. DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20 |
-| v5.3.1 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.4 — identical stack to v5.3; benchmark log paths made repo-relative |
-| v5.4 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | Superseded by v5.4.1 — do not deploy: its prune prompt could be answered by pasted input and delete weights |
-| **v5.4.1** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — no model change. Swaps and rollbacks restore from `/opt/model-archive` instead of re-downloading; the drafter is no longer pruned; destructive prompts read from the terminal. Verified end-to-end on hardware. Deploy this tag** |
+| v5.3 | Qwen3.8-27B-NVFP4 | Dense multimodal | 27B | ~24 agentic / ~17 prose | Yes | **Last tagged release.** DSpark drafter replaces MTP heads: +21.6% on agentic work, output unchanged. See #20 |
+| **`main`** | **Qwen3.8-27B-NVFP4** | **Dense multimodal** | **27B** | **~24 agentic / ~17 prose** | **Yes** | **Current — this is what runs on our Spark. Same model and serving parameters as v5.3, plus the setup-script fixes below. Deploy this** |
+
+**There is no tag newer than v5.3, and that is deliberate.** Tags briefly existed above it and were withdrawn as not stable enough to hand anyone. Rather than mint another version number, `main` is the deploy target and is kept as the thing actually running on our Spark.
+
+Nothing on top of v5.3 touches the model or how it is served — every commit is a fix to the scripts that install it. The ones that matter if you are deploying:
+
+- `02_download_models.sh` could have its destructive prompts answered by the remaining lines of a pasted command block, and delete model weights. It now reads from the terminal, never prompts when it cannot ask, and says why when it deletes without asking. It also offers an archived copy before re-downloading ~22 GB, and no longer prunes the drafter it was still using.
+- `01_system_prep.sh` pins `huggingface_hub >= 1.0`, without which the `hf` CLI that phase 2 depends on does not exist.
+- `03_vllm_servers.sh` hands the generated API key to OpenClaw directly instead of printing it and hoping it gets pasted.
+
+v5.3 predates all of it. If you need a pinned tag for reproducibility it still works, but expect the download phase to behave as described above.
 
 **v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. (v5.2 later recovered part of that with speculative-decoding tuning, to ~17 tok/s; the non-speculative floor is a measured 12 tok/s.) We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
 The current model (Qwen3.8-27B) is a dense NVFP4 build quantized by Unsloth specifically for Blackwell (SM12.1) hardware. Native 262K context, integrated vision encoder, `qwen3_coder` tool-call parser, `qwen3` reasoning parser, and MTP (Multi-Token Prediction) speculative-decoding heads shipped with the checkpoint.
+
+**The 27B is staying for now.** The obvious next step was Qwen3.8-Flash-Next, and we spent three attempts on it. It is not a configuration problem: the 125B MoE is NVFP4 and fits, but the 51B n-gram embedding table ships unquantized, and `VLLM_PLE_CPU_OFFLOAD` does nothing on a Spark because the 128 GB is unified — "offload to host" moves bytes within the same pool. The third attempt does run, by memory-mapping that table from NVMe instead of trying to shrink it. It is not something we are willing to put in front of anyone yet, so the 27B remains the deployed model until there is a build worth shipping.
+
+That work is kept on the `brain-flash-next-eval` branch rather than merged, along with its write-up as Lesson #21 — including the fit check that returned CLEAR and cost a 170 GiB download. Nothing about it is deployed, and nothing here depends on it.
 
 For the full build journey and every decision made, see [docs/LESSONS.md](docs/LESSONS.md) — Lesson #16 covers the v4.2.1 → v5.0 trade in detail, and Lesson #17 covers the v5.1 hardening pass.
 
@@ -294,7 +306,9 @@ sudo usermod -aG docker $USER && newgrp docker
 # Clone and configure
 git clone https://github.com/thatwonguy/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
-git checkout v5.4.1   # latest release tag — pins the model and every serving parameter
+# Stay on main — it is what runs on our Spark, and it pins the model and every
+# serving parameter in config/models.yml. v5.3 is the last tagged release and
+# predates the download-phase fixes; see Model Evolution above before pinning it.
 cp .env.example .env
 nano .env   # set HF_TOKEN at minimum
 
