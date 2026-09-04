@@ -205,7 +205,6 @@ brain:
   # roofline ratio until this is set, rather than printing a wrong verdict.
   active_weight_gb:
 
-  # --- SWAP EXAMPLES ---
   # ⚠️  ANY SWAP THAT CHANGES served_name REQUIRES A MANUAL OPENCLAW RECONFIG on
   # the Spark afterwards. Until you do it, OpenClaw is aimed at a model ID that
   # no longer exists and fails to connect even though the brain is healthy. To
