@@ -84,25 +84,9 @@ print(val if val is not None else '')
 "
 }
 
-# Read an answer from the terminal rather than stdin, and discard anything
-# already buffered. A pasted multi-line command block leaves its remaining lines
-# in the input queue, and a plain `read` consumes the next one as the answer —
-# which silently answered destructive prompts with the following command.
-# Returns 1 when there is no terminal to ask.
-ask() {
-    local __var="$2" reply=""
-    # -r /dev/tty can pass on a node that still fails to open, so opening it is
-    # the real test. It happens in a subshell: redirecting stderr around the
-    # actual read would swallow the prompt, since read -p writes to stderr.
-    ( : < /dev/tty ) 2>/dev/null || return 1
-    while read -r -t 0 2>/dev/null; do read -r _ 2>/dev/null || break; done
-    # Prompt to the terminal, not stdout: piping the script would otherwise
-    # buffer the question into the pipe while read blocks on the tty, leaving
-    # it waiting on a prompt nobody can see.
-    printf '%s' "$1" > /dev/tty
-    read -r reply < /dev/tty || return 1
-    printf -v "${__var}" '%s' "${reply}"
-}
+# ask() / have_tty() — reading an answer from the terminal rather than stdin is
+# subtle enough, and dangerous enough when wrong, to live in exactly one file.
+source "${REPO_ROOT}/scripts/lib/ask.sh"
 
 # Move a pruned model dir to the single-slot archive, or delete it.
 # Interactive terminals get a Y/n prompt; non-interactive callers delete

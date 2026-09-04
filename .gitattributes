@@ -1,0 +1,11 @@
+# Shell scripts must keep LF endings no matter who commits them or on what OS.
+# A .sh checked out with CRLF fails on the Spark with a confusing
+# "bad interpreter: /usr/bin/env bash^M", and install.sh is fetched and run by
+# people who have no way to diagnose that.
+*.sh text eol=lf
+
+# Same reasoning: these are read by the scripts at runtime on Linux.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+.env.example text eol=lf
