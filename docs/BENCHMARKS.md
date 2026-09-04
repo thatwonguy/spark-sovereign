@@ -41,6 +41,7 @@ its effect, and treat a threshold as a claim about a specific architecture.
 
 | Config | Engine | Validity | Decode | TTFT | Aggregate | Prefix hit | Prefix TTFT | Drafted | Accepted | KV cache |
 |---|---|---|---|---|---|---|---|---|---|---|
+| `spec-dspark7 #1` | vllm | VALID | 23.9 tok/s | 398 ms | 80.2 tok/s | 38.1% | 5.29x | 420 | 16.4% | 470,091 tok |
 | `spec-dspark5` | vllm | VALID | 22.7 tok/s | 397 ms | 78.3 tok/s | 37.4% | 4.90x | 275 | 27.6% | 482,818 tok |
 | `spec-dspark3` | vllm | VALID | 20.1 tok/s | 393 ms | 89.6 tok/s | 37.0% | 4.89x | 150 | 52.0% | 489,335 tok |
 | `spec-mtp3` | vllm | VALID | 19.7 tok/s | 254 ms | 108.9 tok/s | 37.0% | 4.51x | 132 | 64.4% | 768,858 tok |
@@ -63,12 +64,18 @@ its effect, and treat a threshold as a claim about a specific architecture.
 | `prefix-off` | vllm | PARTIAL | 15.2 tok/s | 266 ms | 78.8 tok/s | 37.4% | 4.71x | 155 | 63.9% | 736,567 tok |
 | `attn-triton` | vllm | PARTIAL | 15.1 tok/s | 267 ms | 78.2 tok/s | 37.4% | 4.56x | 180 | 50.6% | 743,691 tok |
 | `INTERACTION-triton-util080` | vllm | PARTIAL | 14.8 tok/s | 270 ms | 92.0 tok/s | 37.4% | 4.71x | 195 | 47.2% | 1,891,995 tok |
-| `spec-dflash7` | vllm | FAILED | — | — | — | — | — | — | — | — |
-| `spec-dflash3` | vllm | FAILED | — | — | — | — | — | — | — | — |
-| `spec-dspark7` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash7 #1` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash3 #1` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash7 #2` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dflash3 #2` | vllm | FAILED | — | — | — | — | — | — | — | — |
+| `spec-dspark7 #2` | vllm | FAILED | — | — | — | — | — | — | — | — |
 | `sglang-radix-off` | sglang | BLOCKED | — | — | — | — | — | — | — | — |
 | `spec-eagle3` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
 | `spec-eagle3-5` | vllm | BLOCKED | — | — | — | 37.0% | 4.44x | 132 | 64.4% | 771,787 tok |
+
+**A `#n` suffix marks one config name run with different overrides** — separate 
+configurations sharing a label, numbered oldest first. The Detail section below 
+prints the overrides each one actually used.
 
 **Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. 
 *Aggregate* is total tok/s at the highest concurrency tested — what the box can do in 
@@ -90,16 +97,17 @@ be reached.
 
 ## Recommendation
 
-**Fastest VALID single-stream configuration: `spec-dspark5` (vllm) at 22.7 tok/s.**
+**Fastest VALID single-stream configuration: `spec-dspark7 #1` (vllm) at 23.9 tok/s.**
 
 Apply it by setting these in `config/models.yml`, then 
 `bash scripts/03_vllm_servers.sh`:
 
 ```yaml
-speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":5}
+speculative_config: {"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}
 ```
 
-Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%). 
+Runner-up `spec-dspark5` at 22.7 tok/s (+1.1 tok/s, +5.0%). 
+That gap is within run-to-run noise — treat these two as equivalent and prefer whichever is simpler to operate.
 
 ## Configurations whose numbers must not be cited
 
@@ -180,14 +188,28 @@ Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%).
 - **Validity:** BLOCKED — no SGLang image pinned in config/models.yml (sglang.docker_image)
 - **Measured:** 2026-08-26T14:56:05-07:00 (3 runs x 256 tokens)
 
-### `spec-dflash3`
+### `spec-dflash3 #1`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/opt/models/qwen38-27b-dflash2","num_speculative_tokens":3}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1)  [type=value_error, input_value=ArgsKwargs((), {'model': ...config_format': 'auto'}), input_type=ArgsKwargs] (APIServer pid=1)     For further information visit https://errors.pydantic.dev/2.13/v/value_error
+- **Measured:** 2026-08-26T19:20:41-07:00 (3 runs x 256 tokens)
+
+### `spec-dflash3 #2`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":3}`
 - **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for SpeculativeConfig  [full log: docs/failed-spec-dflash3.log]
 - **Measured:** 2026-08-26T19:24:18-07:00 (3 runs x 256 tokens)
 
-### `spec-dflash7`
+### `spec-dflash7 #1`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/opt/models/qwen38-27b-dflash2","num_speculative_tokens":7}`
+- **Validity:** FAILED — container exited during load: (APIServer pid=1) [ERROR] `min_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) [ERROR] `max_frames` is part of Qwen3VLVideoProcessorInitKwargs, but not documented. Make sure to add it to the docstring of the function in /usr/local/lib/python3.12/dist-packages/transformers/models/qwen3_vl/video_processing_qwen3_vl.py. (APIServer pid=1) ERROR 08-27 02:22:57 [repo_utils.py:106] Error retrieving file list: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/opt/models/qwen38-27b-dflash2'. Use `repo_type` argument if needed., retrying 1 of 2  [full log: docs/failed-spec-dflash7.log]
+- **Measured:** 2026-08-26T19:23:10-07:00 (3 runs x 256 tokens)
+
+### `spec-dflash7 #2`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dflash","model":"/models/qwen38-27b-dflash2","num_speculative_tokens":7}`
@@ -222,7 +244,14 @@ Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%).
 - **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
 - **Measured:** 2026-08-26T20:41:46-07:00 (3 runs x 256 tokens)
 
-### `spec-dspark7`
+### `spec-dspark7 #1`
+
+- **Engine:** vllm
+- **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}`
+- **Validity:** VALID — all 1 requested parameter(s) confirmed in effect
+- **Measured:** 2026-08-26T19:54:12-07:00 (3 runs x 256 tokens)
+
+### `spec-dspark7 #2`
 
 - **Engine:** vllm
 - **Overrides:** `OVERRIDE_speculative_config={"method":"dspark","model":"/models/qwen38-27b-dspark-nvfp4","num_speculative_tokens":7}`
@@ -308,4 +337,4 @@ Runner-up `spec-dspark3` at 20.1 tok/s (+2.6 tok/s, +12.9%).
 
 ---
 
-*Generated 2026-08-26T21:14:38-07:00 from 28 ledger entries by `scripts/benchmark.sh render`.*
+*Generated 2026-09-04T12:08:33-07:00 from 31 ledger entries by `scripts/benchmark.sh render`.*
