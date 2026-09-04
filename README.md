@@ -101,7 +101,7 @@ Nothing on top of v5.3 touches the model or how it is served — every commit is
 
 v5.3 predates all of it. If you need a pinned tag for reproducibility it still works, but expect the download phase to behave as described above.
 
-**v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. (v5.2 later recovered part of that with speculative-decoding tuning, to ~17 tok/s; the non-speculative floor is a measured 12 tok/s.) We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
+**v5.0 is a deliberate speed-for-capability trade.** The dense Qwen3.8-27B moves every one of its 27B parameters through the Spark's ~273 GB/s memory bus on every token, versus v4.2.1's MoE that only touched 3B active. NVFP4 4-bit weights help but don't close a ~9× active-compute gap — we measured ~17 tok/s clean-idle vs ~53 tok/s for the MoE. (v5.2 recovered part of it by fixing a mistuned draft length — 15.18 to 19.66 tok/s on the sweep — and v5.3 reached 23.85 with the DSpark drafter; expect ~17 day to day on a working box, against a non-speculative floor of a measured 12.04 tok/s.) We kept v5.0 because it adds native image input (up to 10 per prompt), the dense architecture gives more coherent per-token reasoning, and 262K context is preserved. For workloads where sustained throughput matters more than vision, `git checkout v4.2.1` restores the faster MoE stack unchanged.
 
 The current model (Qwen3.8-27B) is a dense NVFP4 build quantized by Unsloth specifically for Blackwell (SM12.1) hardware. Native 262K context, integrated vision encoder, `qwen3_coder` tool-call parser, `qwen3` reasoning parser, and MTP (Multi-Token Prediction) speculative-decoding heads shipped with the checkpoint.
 
@@ -143,7 +143,7 @@ We test and document with **OpenClaw** (open source, fully local, no API key). B
 - NVFP4 4-bit weights + FP8 KV cache
 - `gpu_memory_utilization: 0.45` (~55 GB reserved by vLLM — ~22 GB weights + ~33 GB KV cache, ~55 GB free for OS / Docker / other workloads)
 - 262K native context
-- MTP speculative decoding at `num_speculative_tokens: 3` (ships in checkpoint, no draft model needed) — **verified live, 64.4% acceptance; 5 was measurably worse, see below**
+- Speculative decoding with the **DSpark drafter** at `num_speculative_tokens: 7` (`RadixArk/Qwen3.8-27B-DSpark`, downloaded separately) — **verified live at 23.85 tok/s on agentic work.** The checkpoint's own MTP heads at `3` are the fallback that needs no extra download (19.66 tok/s, 64.4% acceptance) — see below
 - Prefix caching enabled — fast repeated prompts
 
 Benchmark it yourself: `bash scripts/benchmark.sh quick` (single-stream TTFT + decode tok/s from the running Brain).
@@ -159,8 +159,14 @@ of the three settings tested:
 |---|---|---|
 | off | 12.04 tok/s | — |
 | 2 | 18.47 tok/s | 60.3% |
-| **3** *(current)* | **19.66 tok/s** | **64.4%** |
+| **3** *(v5.2; now the fallback)* | **19.66 tok/s** | **64.4%** |
 | 5 *(v5.0–v5.1)* | 15.18 tok/s | 39.5% |
+
+**v5.3 then replaced MTP entirely.** The external DSpark drafter at 7 draft
+tokens measures **23.85 tok/s** on agentic coding — that, not MTP-3, is what
+`config/models.yml` runs today. MTP-3 remains the fallback because it needs no
+external checkpoint. Width peaks at 7 because the drafter's own `block_size` is
+7; 12 and 20 measured 19.13 and 17.16. See `docs/LESSONS.md` #20.
 
 Acceptance falls off with draft position and rejected tokens still cost their
 verification pass — so longer is not better. Output is unchanged: speculative
