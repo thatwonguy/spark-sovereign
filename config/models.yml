@@ -207,11 +207,11 @@ brain:
 
   # --- SWAP EXAMPLES ---
   # Refusal-ablated builds of this same base checkpoint are surveyed and ranked
-  # in docs/ABLITERATED_CANDIDATES.md, with machine-readable detail in
-  # config/brain_candidates.yml. Ten servable candidates, ready-to-paste brain
-  # blocks for the top four, and the ~20 repos that CANNOT load here (GGUF, MLX,
-  # EXL3) so nobody re-surveys HuggingFace and re-finds them. Nothing in either
-  # file has been measured on this machine.
+  # in docs/ABLITERATED_CANDIDATES.md -- ten candidates with build provenance,
+  # ready-to-paste brain blocks for the top four, and the ~27 repos that CANNOT
+  # load here (GGUF, MLX, EXL3) so nobody re-surveys HuggingFace and re-finds
+  # them. That file is the only copy on purpose: nothing reads it, so a second
+  # machine-readable one would just drift. Nothing in it has been measured here.
   #
   # ⚠️  ANY SWAP THAT CHANGES served_name REQUIRES A MANUAL OPENCLAW RECONFIG on
   # the Spark afterwards. Until you do it, OpenClaw is aimed at a model ID that

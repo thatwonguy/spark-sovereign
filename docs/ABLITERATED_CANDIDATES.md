@@ -1,6 +1,9 @@
 # Abliterated Brain Candidates — Qwen3.8-27B
 
-Survey date: **2026-09-04**. Machine-readable source: [`config/brain_candidates.yml`](../config/brain_candidates.yml).
+Survey date: **2026-09-04**. This file is the only source — there is deliberately
+no parallel machine-readable copy. Nothing in the repo reads this survey, so a
+second file would carry the same vendor claims in a second spelling and the two
+would drift, which is the failure mode this repo keeps finding in its own docs.
 
 ## What this file is
 
@@ -119,6 +122,83 @@ A/B.
 
 ---
 
+## Build provenance
+
+How each build was made. Same standing as the ranking table: vendor claims, not
+measurements.
+
+| # | Technique | Quantizer / parameters | MTP head | Vision tower | Published |
+|---|---|---|---|---|---|
+| 1 | Heretic v1.2.0+custom, Arbitrary-Rank Ablation | nvidia-modelopt → `ModelOptNvfp4Converter`; calibration 20 × 8192 tok, CNN/DailyMail 3.0.0 | bf16-preserved, 15 tensors | bf16-preserved, 333 tensors | — |
+| 2 | Directional orthogonalization, layers 18–51 only | llm-compressor | bf16-preserved | bf16-preserved | requantized 2026-08-24 |
+| 3 | Heretic v1.2.0+custom, ARA | `start_layer` 26, `end_layer` 56, preserve-good 0.9432, steer-bad 0.0009 | preserved | preserved | — |
+| 4 | Heretic, 200 optimization trials (inherited) | llm-compressor 0.13.0 | preserved | bf16-preserved | 2026-08-15 |
+| 5 | Rank-1 LoRA, difference-of-means over 32+32 harmful/benign prompts | pinned to base revision `1d4bf0f2ff60` | n/a | n/a | updated 2026-09-03 |
+| 6 | Heretic, 200 trials; 128 attn+MLP projection modules, no fine-tuning | — | preserved and verified — all 15 MTP tensors restored from base | preserved | — |
+| 7 | Abliterix — 10 rounds iterative rank-32 LoRA self-distillation, KL-anchored | — | *not stated* | *not stated* | 2026-08-15, updated 2026-08-20 |
+| 8 | Directional orthogonalization, layers 18–51 | — | unmodified | unmodified | 2026-08-18 |
+| 9 | Training-free orthogonalization, `W ← W − λ·r(rᵀW)`, λ=1.2 | 131 tensors edited: 64 MLP down-proj, 48 linear-attn out, 16 full-attn proj | — | byte-for-byte untouched | updated 2026-08-16 |
+| 10 | Inherited from rank 8 | — | preserved | preserved | — |
+
+**Upstreams.** Rank 1 quantizes `heretic-org/Qwen3.8-27B-heretic-ara`, while
+rank 3 is `trohrbaugh/Qwen3.8-27B-heretic-ara` — the same model name under a
+different org, and the cards do not say how the two relate. Rank 2 quantizes
+rank 8, rank 4 quantizes rank 6, rank 10 quantizes rank 8.
+
+**Rank 2 is the only entry with usage evidence: 60,541 downloads last month** (as
+of 2026-09-04). Its current revision also fixes an `xhigh` thinking-runaway bug
+present in the prior one. Rank 1 has no download figure at all.
+
+**Rank 4 is the only build whose upstream publishes a capability delta:** mean
+−0.5 pts across MMLU / ARC / HellaSwag / Winogrande. **Rank 5 publishes 81.2%
+delivery vs 3.1% for unmodified base, with no measured over-refusal** on held-out
+harmless prompts.
+
+### Paths and served names
+
+Only ranks 1, 2, 4 and 5 are serving targets. The rest are quantization sources —
+`serve_directly: false` — for the BF16 reason above.
+
+| # | `local_path` | `served_name` | Serve directly? |
+|---|---|---|---|
+| 1 | `/opt/models/qwen38-27b-heretic-ara-nvfp4` | `qwen38-27b-heretic` | yes |
+| 2 | `/opt/models/qwen38-27b-huihui-nvfp4` | `qwen38-27b-huihui` | yes |
+| 3 | `/opt/models/qwen38-27b-heretic-ara-bf16` | — | **no** — quantize it instead |
+| 4 | `/opt/models/qwen38-27b-jc-awq` | `qwen38-27b-jc-awq` | yes |
+| 5 | `/opt/models/qwen38-27b-cyber-lora` | *adapter, loads over the current brain* | n/a |
+| 6–9 | — | — | **no** |
+
+### Per-candidate caveats
+
+Everything below is unverified on this box. These are the specific reasons a
+given candidate might not survive contact with sm_121a.
+
+**Rank 1** — never run on sm_121a; SM120 only. W4A4 activation quant interacts
+with our fp8 KV cache in ways nobody has measured. Acceptance rate against the
+DSpark drafter is unknown.
+
+**Rank 2** — tested on SM120 / RTX PRO 2000 with TP=4 and 32k context; we are
+sm_121a, single device, 262k. Its card states W4A16 does *not* serve on this arch
+under vLLM 0.22 — W4A4 only.
+
+**Rank 4** — benched on 2× RTX 3090 TP=2 (~84 tok/s median). Ampere, not
+Blackwell; the number does not transfer. Needs a vLLM carrying
+`Qwen3_5ForConditionalGeneration` + `Qwen3_5MTP` proposer (validated on
+v0.20.2rc1) — our image is newer, so check the path was not dropped. AWQ-Marlin
+on sm_121a is untested here.
+
+**Rank 5** — **critical: vLLM LoRA over an NVFP4 quantized base is not
+established to work at all.** If it does not load, the candidate is worth zero —
+which is exactly why it is the first thing to test, at three orders of magnitude
+less download than anything else. The card also documents a long-form generation
+termination bug (2026-09-03) recommending grammar-constrained output as the
+workaround; that is a real hazard for agentic loops.
+
+**Rank 10** — benched on A800 80GB under vLLM 0.21.0. Ampere with 2 TB/s HBM2e;
+says nothing about a 245 GB/s box.
+
+---
+
 ## Watchlist — better on paper, unservable today
 
 `0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF` claims **0–1/100
@@ -136,13 +216,54 @@ attached.
 
 ## Disqualified
 
-Full repo lists are in `config/brain_candidates.yml` under `disqualified:`, so
-nobody re-surveys HuggingFace and re-finds them. One deserves calling out here:
+Listed in full so nobody re-surveys HuggingFace and re-finds them. One deserves
+calling out first:
 
 > **`BennyDaBall/Qwen3.8-Uncensored-NVFP4-MTP` says NVFP4 and was built with
 > llama.cpp.** NVFP4-in-GGUF is not compressed-tensors NVFP4 and vLLM will not
 > load it. It is the easiest mistake in this survey to make, because the name
-> looks exactly like the rank 1 candidate.
+> looks exactly like the rank 1 candidate. (18.34 GiB, from JonathanColetti.)
+
+**GGUF** — llama.cpp container format. Not servable by our vLLM stack, and drops
+the MTP / vision / DSpark path.
+
+- `huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF`
+- `Grimxlock/Qwen3.8-27B-Abliterated-GGUF`
+- `Blackfrost-AI/Qwen3.8-27B-ABLITERATED-GGUF`
+- `douyamv/Qwen3.8-27B-abliterated-GGUF`
+- `prithivMLmods/Qwen3.8-27B-abliterated-GGUF`
+- `windowsxp811203/Qwen3.8-27B-Abliterated-GGUF`
+- `JonathanColetti/Qwen3.8-27B-Uncensored-GGUF`
+- `cygnal/Qwen3.8-27B-heretic-ara-Q4_K_M-MTP-GGUF`
+- `mitkox/Huihui-Qwen3.8-27B-abliterated-Q4_K_M-GGUF`
+- `soyaakinohara/qwen3.8-27b-abliterated-3.69bpw-12GB-MTP.gguf`
+- `donghanasd/Huihui-Qwen3.8-27B-abliterated-KO-Ridge-3.7bpw-GGUF`
+- `Brunobkr/OFFFELLIA_f16_huihui-ai_MTP-Qwen3.8-27B-abliterated.gguf`
+- `Ryn1998/Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF`
+- `Verkiki/Qwen3.8-27b-Fable5-Distill-Abliterated-GGUF`
+
+**MLX** — Apple Silicon runtime. Cannot execute on GB10 under any configuration.
+
+- `PocketAiHub/Qwen3.8-27B-Abliterated-MLX`
+- `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed`
+- `KostkaIT/Qwen3.8-27B-Huihui-Abliterated-oQ6e-MTP-MLX`
+- `KostkaIT/Qwen3.8-27B-Huihui-Abliterated-oQ4e-MTP-MLX`
+- `wfiedler/Qwen3.8-27B-ABLITERATED-mlx-q3km`
+- `EgorKodin/Qwen3.8-27B-ABLITERATED-3bit-MLX-TextOnly`
+- `mlasli/Qwen3.8-27B-Heretic-Abliterated-MLX-6bit`
+- `grant-ai/Qwen3.8-27B-Abliterated-MTPLX`
+
+**EXL3** — exllamav3 runtime, not vLLM.
+
+- `WatchDG/Qwen3.8-27B-ABLITERATED-EXL3-3.75bpw`
+
+**Out of scope** — derivative fine-tunes on an abliterated base. A different
+model, not a brain swap.
+
+- `etemiz/Ostrich-27B-Qwen3.8-260816-Abliterated`
+- `root4k/Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp`
+- `root4k/Huihui-Qwen3.8-27B-abliterated-oQ6e-mtp`
+- `KridgeDookie/Qwen3.8-27B-ABLITERATED-UNCENSORED-PHILADELPHIA-CLASS`
 
 ---
 
