@@ -64,7 +64,9 @@ brain:
   # hf_revision: <sha>
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
-  bind_host: 127.0.0.1                # loopback only — this box, not the LAN
+  # Interface vLLM listens on. Loopback serves this box only; 0.0.0.0 would
+  # expose the Brain to every host on the LAN, unauthenticated by default.
+  bind_host: 127.0.0.1
   served_name: qwen38-27b             # arbitrary label; if you change it, re-point OpenClaw
   docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 — GB10 is an ARM host
   gpu_memory_utilization: 0.45
