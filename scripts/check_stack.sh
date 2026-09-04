@@ -294,14 +294,14 @@ if command -v whisper &>/dev/null; then
     printf "  ✅ whisper CLI : %s\n" "${WHISPER_BIN}"
 else
     printf "  ❌ whisper CLI : not found\n"
-    echo "     Fix: bash scripts/04_voice_pipeline.sh"
+    echo "     Fix: bash scripts/04_voice_stt.sh"
 fi
 if [ -f "${WHISPER_CACHE}/${WHISPER_MODEL}.pt" ]; then
     SIZE=$(du -sh "${WHISPER_CACHE}/${WHISPER_MODEL}.pt" 2>/dev/null | cut -f1)
     printf "  ✅ model cache : %s/%s.pt  (%s)\n" "${WHISPER_CACHE}" "${WHISPER_MODEL}" "${SIZE}"
 else
     printf "  ❌ model cache : %s/%s.pt not found\n" "${WHISPER_CACHE}" "${WHISPER_MODEL}"
-    echo "     Fix: bash scripts/04_voice_pipeline.sh"
+    echo "     Fix: bash scripts/04_voice_stt.sh"
 fi
 echo "  Note: OpenClaw auto-detects whisper — no manual config needed."
 echo ""

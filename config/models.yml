@@ -1,331 +1,221 @@
 # =============================================================================
 # MODEL REGISTRY — spark-sovereign
 # =============================================================================
-# This is the single source of truth for all models in the stack.
-# To swap any model:
+# Single source of truth for every model in the stack. To swap one:
 #   1. Edit the relevant section below
-#   2. Re-run the corresponding script (scripts/02_download_models.sh, etc.)
-#   3. Restart the affected Docker container
+#   2. Re-run the matching script (scripts/02_download_models.sh, etc.)
+#   3. Restart the affected container (scripts/03_vllm_servers.sh)
 #
-# All scripts source this file via `yq` or the helper `config/parse_models.sh`
+# Scripts read this with python3 + PyYAML, not yq — see get_model_field() in
+# 02_download_models.sh. Nothing needs to be installed to parse it.
+#
+# WHAT BELONGS IN THIS FILE: what each field does, what value is live, and what
+# breaks if you change it. Measurements live in docs/BENCHMARKS.md (generated
+# from the docs/benchmarks.jsonl ledger); the story of how a config was chosen
+# lives in docs/LESSONS.md. Comments here point at those rather than restating
+# them, so there is one place for a number to be wrong.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # BRAIN — daily driver: coding, vision, agentic, reasoning, tool calls
 # -----------------------------------------------------------------------------
-# STATUS (2026-08-27): 23.85 tok/s decode with the DSpark drafter, up from
-# 19.66 on tuned MTP and 15.18 on what v5.0/v5.1 shipped. VRAM ~55 GB at 0.45
-# util. Output is unchanged at every step — speculative decoding verifies every
-# draft against the real model. See the speculative_config block below, and
-# docs/LESSONS.md #18 and #20.
-# The non-speculative floor is a measured 12.0 tok/s at 245 GB/s achieved
-# bandwidth, and that part IS the bandwidth ceiling. Full matrix of 15 serving
-# configurations in docs/BENCHMARKS.md. Rollback path: `git checkout v4.2.1`
-# restores the v4.2.1 FP8 MoE baseline (~53 tok/s, no vision).
+# STATUS (2026-08-27): 23.85 tok/s decode with the DSpark drafter, from a
+# measured 12.0 tok/s non-speculative floor at 245 GB/s achieved bandwidth. That
+# floor IS the bandwidth ceiling. VRAM ~55 GB at 0.45 util. Output is unchanged
+# at every step — speculative decoding verifies every draft against the real
+# model. Details: docs/LESSONS.md #18 and #20, docs/BENCHMARKS.md.
+# Rollback: `git checkout v4.2.1` (FP8 MoE baseline, ~53 tok/s, no vision).
 #
-# FOUR THINGS THE STARTUP LOG SAYS THAT NOTHING HERE HAS MEASURED (2026-08-27).
-# All four are observations from one clean boot, not verdicts. Recorded so the
-# next person reads them before re-deriving them; `bash scripts/benchmark.sh`
-# is what turns any of them into a number.
-#   1. The drafter is BLIND ON IMAGES. "Draft model Qwen3DSparkForCausalLM does
-#      not support external multimodal embeddings ... using text-only draft
-#      inputs instead." Output is unaffected (every draft is verified), but
-#      acceptance on image turns should fall, and 23.85 tok/s was measured on a
-#      text prompt. Vision turns are an unmeasured third workload alongside the
-#      code/prose split noted below.
-#   2. max_num_batched_tokens FIGHTS THE DRAFTER. vLLM warns at every boot that
-#      8192 minus 7 draft-token slots leaves max_num_scheduled_tokens=8096 and
-#      calls it "suboptimal". Cost unquantified; raising the budget is untested.
-#   3. ~59 GiB SITS IDLE at 0.45 util — vLLM offers --kv-cache-memory=84.18 GiB
-#      against the 26.21 GiB in use. Do NOT take it for speed: the util-080 row
-#      measured 15.07 vs 15.18 tok/s, and the cache already holds ~745K tokens
-#      against a 262144 max_model_len. It buys concurrency, nothing else.
-#   4. SAMPLING DEFAULTS COME FROM THE CHECKPOINT, not from this file:
+# ⚠️  docs/BENCHMARKS.md CURRENTLY SHOWS THIS CONFIG AS FAILED. It is not.
+# The ledger holds three rows named `spec-dspark7`: a VALID 23.85 tok/s run
+# against /models/qwen38-27b-dspark (the drafter pinned below), and two FAILED
+# runs, the last of which tested a DIFFERENT checkpoint — qwen38-27b-dspark-nvfp4.
+# The renderer keys rows by name alone, so the unrelated failure overwrote the
+# real result and BENCHMARKS.md now recommends spec-dspark5 (22.7) over a config
+# it believes is broken. Do not "fix" the live config on the strength of that
+# row. Verify against docs/benchmarks.jsonl, where all three rows survive.
+#
+# THREE THINGS THE STARTUP LOG SAYS THAT NOTHING HAS MEASURED (2026-08-27).
+# Observations from one clean boot, not verdicts. Recorded so the next person
+# reads them instead of re-deriving them; `bash scripts/benchmark.sh` is what
+# turns any of them into a number.
+#   1. The drafter is BLIND ON IMAGES — it logs that it falls back to text-only
+#      draft inputs. Output is unaffected (every draft is verified), but
+#      acceptance on image turns should fall, and 23.85 was measured on text.
+#   2. ~59 GiB SITS IDLE at 0.45 util — vLLM offers --kv-cache-memory=84.18 GiB
+#      against 26.21 GiB in use. Do NOT take it for speed: the util-080 row
+#      measured 15.07 vs 15.18 tok/s. It buys concurrency, nothing else.
+#   3. SAMPLING DEFAULTS COME FROM THE CHECKPOINT, not from this file:
 #      generation_config.json sets temperature 1.0, top_k 20, top_p 0.95. A
 #      client that sends no temperature generates at 1.0 — hot for agentic tool
 #      calling. Check what the client sends before blaming the model.
+# (A fourth was listed here until LESSONS.md #20 answered it — see
+# max_num_batched_tokens below.)
 # -----------------------------------------------------------------------------
 brain:
   name: qwen38-27b-nvfp4
   hf_repo: unsloth/Qwen3.8-27B-NVFP4
-  # Optional revision pin. Omitted = latest on main at pull time, which is the
-  # right default for a fresh drop (first uploads ship broken — that is what the
+  # Optional revision pin. Blank = latest on main at pull time, the right
+  # default for a fresh drop (first uploads ship broken — what the
   # tokenizer-truncation check in 02_download_models.sh exists to catch).
-  # 02_download_models.sh records whatever it resolved to in
-  # <local_path>/DOWNLOADED_REVISION.txt, so the running weights are always
-  # attributable even when this is blank. Set it to that SHA to freeze them.
+  # 02 records what it resolved to in <local_path>/DOWNLOADED_REVISION.txt, so
+  # running weights stay attributable even when this is blank. Set it to that
+  # SHA to freeze them.
   # hf_revision: <sha>
   local_path: /opt/models/qwen38-27b-nvfp4
   port: 8000
-  # Interface vLLM listens on. 127.0.0.1 is more secure than 0.0.0.0: it serves
-  # this box only
-  bind_host: 127.0.0.1
-  served_name: qwen38-27b             # arbitrary label independent of model weights; if you change it, re-point OpenClaw
-  docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 build — GB10 is an ARM host
+  bind_host: 127.0.0.1                # loopback only — this box, not the LAN
+  served_name: qwen38-27b             # arbitrary label; if you change it, re-point OpenClaw
+  docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 — GB10 is an ARM host
   gpu_memory_utilization: 0.45
   max_model_len: 262144
   kv_cache_dtype: fp8
   max_num_seqs: 16
+  # vLLM warns at every boot that 7 draft slots leave
+  # max_num_scheduled_tokens=8096 and calls it "suboptimal". Measured and
+  # settled: 16384 gave 23.79 vs 23.91: noise. Reverted. LESSONS.md #20.
   max_num_batched_tokens: 8192
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
-  # CONFIRMED LIVE (2026-08-26). vLLM was reported to silently disable prefix
-  # caching for this model's card parameters even when the flag is accepted.
-  # That does not reproduce here: measured 37.4% of a repeated identical prefix
-  # served from cache, via vllm:prefix_cache_hits_total / _queries_total.
+  # CONFIRMED LIVE (2026-08-26): 37.4% of a repeated identical prefix served
+  # from cache, via vllm:prefix_cache_hits_total / _queries_total. Reports that
+  # vLLM silently disables prefix caching for this model do not reproduce here.
   #
-  # Judge it on the hit-rate counter, never on a TTFT speedup. The TTFT ratio
-  # for the same working cache has measured anywhere from 0.90x to 4.51x
-  # depending on server state, and an early version of the audit called a
-  # working cache "INERT" on the strength of one low reading.
+  # JUDGE IT ON THE HIT-RATE COUNTER, NEVER ON A TTFT SPEEDUP. The TTFT ratio
+  # for the same working cache has measured 0.90x to 4.51x depending on server
+  # state; an early audit called a working cache "INERT" on one low reading.
   #
-  # NOTE: this cannot currently be turned OFF. Prefix caching is on by default
-  # in vLLM V1, so omitting the flag does not disable it — that needs
-  # --no-enable-prefix-caching, which the launcher does not yet emit. The
-  # benchmark matrix's prefix-off row is marked PARTIAL for exactly this reason.
-  # Measure it (does not restart Brain):  bash scripts/benchmark.sh audit
+  # This cannot currently be turned OFF: prefix caching is on by default in
+  # vLLM V1, so omitting the flag does not disable it — that needs
+  # --no-enable-prefix-caching, which the launcher does not emit. The benchmark
+  # matrix's prefix-off row is PARTIAL for exactly this reason.
+  #   bash scripts/benchmark.sh audit      # read-only, does not restart Brain
   enable_prefix_caching: true
   # Attention backend, passed through as VLLM_ATTENTION_BACKEND.
   #
-  # BLANK ON PURPOSE = vLLM autoselects. Measured 2026-08-26: it selects
-  # FLASHINFER, out of candidates ['FLASHINFER', 'TRITON_ATTN'], and pinning
-  # FLASHINFER explicitly measured identically (15.15 vs 15.15 tok/s). Blank is
-  # the same thing with one less thing to keep in sync.
+  # BLANK ON PURPOSE = vLLM autoselects. It picks FLASHINFER out of
+  # ['FLASHINFER', 'TRITON_ATTN'], and pinning FLASHINFER explicitly measured
+  # identically (15.15 vs 15.15 tok/s), so blank is the same thing with one less
+  # thing to keep in sync.
   #
-  # Two worries that motivated this block did NOT reproduce:
-  #   - FP8 KV is genuinely served. The log confirms
-  #     kv_cache_dtype=torch.float8_e4m3fn alongside decode_backend=
-  #     flashinfer-native, so FLASHINFER and fp8 KV coexist here rather than
-  #     trading against each other as reported elsewhere.
-  #   - Context is reachable with room to spare. The KV cache holds ~745,000
-  #     tokens against a declared max_model_len of 262144 — 2.8x headroom, at
-  #     0.45 utilisation, not the ~60K cap that was reported.
-  #
-  # TRITON_ATTN CANNOT BE SELECTED ON THIS MODEL. Tested two ways, both
-  # accepted and both ignored:
-  #   - VLLM_ATTENTION_BACKEND=TRITON_ATTN   (env var, attn-triton row)
-  #   - --attention-backend=TRITON_ATTN      (CLI flag, attn-triton-cli row)
-  # The CLI flag is genuinely accepted — the server starts, so the argument
-  # exists — and the log still says "Using FLASHINFER attention backend out of
-  # potential backends: ['FLASHINFER', 'TRITON_ATTN']". vLLM is overriding the
-  # request, most likely because this hybrid needs FlashInfer for its
-  # GatedDeltaNet layers or its FP8 KV cache.
-  #
-  # Both rows are PARTIAL and neither measured Triton. This is a closed
-  # question, not an open one: there is no known way to make it take effect
-  # here, and it would not matter if there were — see the next paragraph.
-  #
-  # Also measured: the attention backend does not move single-stream decode on
-  # this model at all. Every backend/KV/utilisation row landed in a 15.07–15.19
-  # tok/s band. Speculative decoding is the lever that matters; see below.
-  #
-  #     bash scripts/benchmark.sh audit         # what is live, read-only
-  #     bash scripts/benchmark.sh               # sweeps and records the winner
+  # DO NOT SPEND TIME HERE. TRITON_ATTN cannot be selected on this model — both
+  # the env var and the CLI flag are accepted and silently overridden — and it
+  # would not matter if it could: every backend/KV/utilisation row landed inside
+  # 15.07-15.19 tok/s. Speculative decoding is the only lever that moves
+  # single-stream decode. Closed question; evidence in LESSONS.md #19.
   attention_backend:
-  # MTP speculative decoding — heads ship inside the checkpoint, no draft model.
+  # ACTIVE: DSpark drafter, 7 tokens. Three runs: 23.85, 23.91, 23.79.
   #
-  # SUPERSEDED by the DSpark drafter below (23.85 tok/s vs 19.66). Kept because
-  # it is the fallback that needs no external checkpoint: set speculative_config
-  # back to '{"method":"mtp","num_speculative_tokens":3}' and everything works
-  # with nothing downloaded. Also the better choice under heavy concurrency —
-  # 102.5 tok/s aggregate at 8 streams against DSpark's 80.2.
+  # THE 23.9 BELONGS WITH ITS WORKLOAD. +21.6% on agentic coding (a file in
+  # context, rewritten); no gain at all on open-ended prose, where it and MTP
+  # are indistinguishable at ~17. A drafter only wins where output is
+  # predictable. Quote it with the workload attached or not at all.
   #
-  # MEASURED 2026-08-26, full matrix, 3 runs x 256 tokens each (docs/BENCHMARKS.md):
+  # EXPECT ~17 tok/s DAY TO DAY on a working box, not the sweep numbers - decode
+  # tracks acceptance, and acceptance tracks the sampled continuation. Read the
+  # matrix as a RANKING measured back-to-back, not a throughput guarantee.
   #
-  #   off      12.04 tok/s              <- the bandwidth roofline, and it is real
-  #   mtp2     18.47 tok/s   60.3% acc
-  #   mtp3     19.66 tok/s   64.4% acc  <- chosen
-  #   mtp5     15.18 tok/s   39.5% acc  <- what shipped in v5.0/v5.1
-  #   ngram5   12.46 tok/s              <- only 10 tokens drafted; see below
+  # DO NOT RAISE num_speculative_tokens. 7 is the drafter's own block_size, and
+  # width is free inside one block but costs a whole extra draft pass beyond it:
+  # 12 measured 19.13 and 20 measured 17.16. The curve is an inverted U and 50
+  # tok/s is not reachable by width. Full table: LESSONS.md #20.
   #
-  # 5 was worse than 3 AND worse than 2. Longer drafts are not monotonically
-  # better: acceptance falls off with draft position, and every rejected token
-  # still costs its verification pass. vLLM warns about this at startup for
-  # this exact model ("will run multiple times of forward on same MTP layer,
-  # which may result in lower acceptance rate") — the warning was accurate and
-  # went unread for two releases.
+  # THE PATH HERE IS THE CONTAINER PATH. MODELS_DIR is bind-mounted at /models
+  # and this JSON reaches the engine verbatim, so it must be /models/<name> —
+  # not the host path in speculative_draft_model below, which is where
+  # 02_download_models.sh writes. Same weights, different namespaces; getting it
+  # wrong yields "Invalid repository ID or local directory specified".
   #
-  # 3 over 2 is +6.4%, which is above run-to-run noise here but not by a wide
-  # margin. If a future change makes acceptance workload-dependent, re-measure
-  # both rather than assuming 3 still wins.
+  # KNOWN TRADE: aggregate throughput at 8 concurrent streams drops from 102.5
+  # to 80.2 tok/s. Speculation competes for compute a saturated GPU was already
+  # using, so it helps an idle box and hurts a busy one. This box is
+  # interactive, one stream at a time. Revert to the MTP fallback if that stops
+  # being true.
   #
-  # READ THE NUMBERS AS A RANKING, NOT A THROUGHPUT GUARANTEE. The four figures
-  # above were measured back-to-back in one sweep under identical conditions
-  # (watchdog stopped, box otherwise idle), which is what makes comparing them
-  # fair. Absolute decode moves with acceptance, and acceptance moves with the
-  # sampled continuation: re-measuring mtp3 two hours later gave 46.5%
-  # acceptance and 17.1 tok/s rather than 64.4% and 19.66.
+  # FALLBACK, needs no external checkpoint — the checkpoint's own MTP heads:
+  #   '{"method":"mtp","num_speculative_tokens":3}'   19.66 tok/s, 64.4% acc
+  # Also the better choice under concurrency. Use 3, not 5: 5 measured 15.18,
+  # worse than 3 AND worse than 2.
   #
-  # At 3 draft tokens, tokens per forward pass is 1 + 3 x acceptance, so that
-  # drop from 64.4% to 46.5% predicts ~16.1 tok/s and 17.1 was observed. The
-  # spread is fully explained by acceptance; nothing is broken.
+  # NGRAM IS RULED OUT FOR THIS MODEL across five configurations — but it still
+  # beat no speculation, so it is worth having on a checkpoint with no MTP
+  # heads. Judge any future attempt on ACCEPTANCE x FIRING RATE, never either
+  # alone. Why more tuning will not rescue it: LESSONS.md #19.
   #
-  # EXPECT ~17 tok/s DAY TO DAY. Four runs gave 16.74, 17.06, 17.13 and 19.66,
-  # and the 19.66 was the sweep itself — idle box, watchdog stopped. Against a
-  # 15.2 tok/s baseline and a 12.0 tok/s non-speculative floor, that is still
-  # the win; it is just not 19.66 on a working machine.
-  #
-  # NGRAM IS NOT RULED OUT. Two attempts, both mis-tuned in opposite directions.
-  #
-  #   same prompt (docs/prompts/agentic-coding.txt):
-  #     mtp3     19.66 tok/s   138 drafted   59.4% accepted
-  #     ngram8   13.04 tok/s   104 drafted   13.5% accepted   <- min 2
-  #
-  # The decode number reads as a clean loss. The acceptance number says why, and
-  # it is not "string matching is worse": 86.5% of those drafts were REJECTED,
-  # and a rejected draft still costs its verification pass. prompt_lookup_min: 2
-  # means a two-token suffix counts as a match, and a two-token suffix matches
-  # almost anywhere in a long context while predicting almost nothing.
-  #
-  # The earlier row, which left the minimum at vLLM's stricter default, has the
-  # opposite problem:
-  #
-  #     ngram5   10 drafted    70.0% accepted   <- more accurate than MTP,
-  #                                                and it almost never fires
-  #
-  # Precise and silent, versus chatty and wrong. The middle was then tested,
-  # and it is not there. Five configs, same agentic prompt:
-  #
-  #     config          min  k   drafted  accept   ACCEPTED TOKENS   decode
-  #     spec-off         -   -      -       -            0           11.22
-  #     ngram-narrow     5   4      8     50.0%          4           12.70
-  #     ngram-tuned      5   6     24     41.7%         10           12.06
-  #     ngram8           2   8    104     13.5%         14           13.09
-  #     mtp3             -   3    138     59.4%         82           19.66
-  #
-  # Raising the minimum to 5 fixed accuracy exactly as predicted and collapsed
-  # the firing rate. The product — drafted x accepted — is what matters, and
-  # every ngram variant lands between 4 and 14 accepted tokens against MTP's 82.
-  # MTP fires constantly AND accurately; prompt-lookup cannot, because the
-  # supply of verbatim-echo spans is limited however you tune the matcher.
-  # That is a property of the workload, so more tuning will not rescue it.
-  #
-  # NGRAM IS RULED OUT FOR THIS MODEL — but note every variant still beat
-  # spec-off (12.06-13.09 vs 11.22). On a checkpoint with no MTP heads it is
-  # worth having. It loses here only because something better ships inside.
-  #
-  # Judge any ngram config on ACCEPTANCE x FIRING RATE, never on either alone.
-  #
-  # To re-verify:        bash scripts/benchmark.sh audit      (read-only)
-  # To compare methods:  bash scripts/benchmark.sh            (restarts Brain)
-  # Is a ceiling real?:  bash scripts/benchmark.sh bandwidth  (read-only)
-  # ACTIVE CONFIG — DSpark drafter, 7 tokens. Three runs: 23.85, 23.91, 23.79.
-  #
-  # THE GAIN IS WORKLOAD-DEPENDENT and the number belongs with its workload:
-  #   agentic coding (a file in context, rewritten)   19.66 -> 23.9   +21.6%
-  #   open-ended prose (the default bench prompt)     ~17.0 -> 16.8   none
-  # A drafter only wins where output is predictable. Code that echoes context is;
-  # fresh explanatory prose is not. Quoting 23.9 flat would be the same error as
-  # quoting 19.66 as what the box does.
-  #
-  # Measured against the
-  # MTP numbers above (19.66 at its best width), same weights, same outputs.
-  # Full write-up in docs/LESSONS.md #20.
-  #
-  # 7 is not arbitrary: the drafter's own config declares block_size 7, and it
-  # proposes a whole block in ONE pass. Width is free inside the block and costs
-  # an entire extra draft pass beyond it — 12 measured 19.13 and 20 measured
-  # 17.16, worse than 7 despite accepting more tokens per draft.
-  #
-  # NOTE THE PATH IS THE CONTAINER PATH. MODELS_DIR is bind-mounted at /models
-  # and this JSON is passed to the engine verbatim, so it must be
-  # /models/<name> — not the host path in speculative_draft_model below, which
-  # is what 02_download_models.sh writes to. They point at the same weights
-  # through different namespaces, and getting this wrong yields
-  # "Invalid repository ID or local directory specified".
-  #
-  # TRADE-OFF, taken deliberately: aggregate throughput at 8 concurrent streams
-  # drops from 102.5 to 80.2 tok/s. Speculation competes for compute a
-  # saturated GPU was already using, so it helps an idle box and hurts a busy
-  # one. This box is used interactively, one stream at a time, where +21% is
-  # what you feel. Revert to '{"method":"mtp","num_speculative_tokens":3}' if
-  # that ever stops being true.
+  #   bash scripts/benchmark.sh audit       # what is live, read-only
+  #   bash scripts/benchmark.sh             # sweeps and records the winner
+  #   bash scripts/benchmark.sh bandwidth   # is a ceiling real? read-only
   speculative_config: '{"method":"dspark","model":"/models/qwen38-27b-dspark","num_speculative_tokens":7}'
   extra_env:
     CUTE_DSL_ARCH: sm_121a
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   limit_mm_per_prompt: '{"image":10}'   # keep space-free: the `serve` entrypoint branch word-splits VLLM_EXTRA_ARGS
   # Raw CLI flags appended to the vLLM command, space-separated. BLANK IN
-  # PRODUCTION and should stay that way — this is an experiment hatch.
-  #
-  # Why it exists: attention_backend above is passed as VLLM_ATTENTION_BACKEND
-  # and this vLLM build IGNORES it. The matrix requested TRITON_ATTN and the
-  # server logged "Using FLASHINFER attention backend" regardless, so those rows
-  # measured FlashInfer twice and are marked PARTIAL in docs/BENCHMARKS.md.
-  # Rather than bake a guess about the right mechanism into the launcher, this
-  # lets one benchmark row test a guess: a wrong flag fails that row and is
-  # recorded FAILED, while production keeps this blank and is unaffected.
-  #
+  # PRODUCTION and should stay that way — an experiment hatch, so one benchmark
+  # row can test a guess (a wrong flag fails that row and is recorded FAILED)
+  # without baking the guess into the launcher.
   # Use --flag=value, never --flag value: benchmark.sh splits overrides on
-  # whitespace, so a space would become two separate overrides.
-  #
-  #   bash scripts/benchmark.sh --only attn-triton-cli
+  # whitespace, so a space becomes two separate overrides.
   extra_args:
-  # Drafter checkpoint for EAGLE-style speculative decoding. BLANK = the
-  # spec-eagle3 matrix rows record BLOCKED, which is honest: not measured,
-  # rather than measured-and-bad.
+  # Drafter checkpoint. Host path — benchmark.sh rewrites an absolute path to
+  # its in-container location (/models/<name>); an HF repo id (contains a slash,
+  # does not start with one) is passed through unchanged.
   #
-  # WHY IT IS THE MOST PROMISING LEVER LEFT. Decode here is bandwidth-bound at
-  # 12.04 tok/s per forward pass — measured, and no config beats it. The only
-  # ways past are fewer bytes per pass (lower-bit quant, a quality cost) or more
-  # TOKENS per pass. Speculation is the second, and tokens-per-pass is entirely
-  # a function of draft ACCEPTANCE.
+  # THE ONLY LEVER LEFT. Decode is bandwidth-bound at 12.04 tok/s per forward
+  # pass and no config beats it, so the only way past is more TOKENS per pass —
+  # entirely a function of draft acceptance. Not the engine: SGLang measured
+  # 9.79 tok/s here, 19% SLOWER than vLLM, so the community's SGLang numbers are
+  # really about their drafter. LESSONS.md #19.
   #
-  # MTP heads ship in the checkpoint and give 0.38-0.90 acceptance depending on
-  # the sampled continuation, so 2.4-3.7 tokens per pass. A stronger drafter
-  # raises that number and nothing else changes — same weights, same output,
-  # same engine. This is also the mechanism behind the community SGLang claims:
-  # we measured SGLang's engine at 9.79 tok/s, 19% SLOWER than vLLM, so their
-  # reported speed is the drafter, not the engine.
+  # A DRAFTER MUST BE TRAINED AGAINST THIS CHECKPOINT. One trained for a
+  # different model loads and drafts garbage: acceptance collapses and you get a
+  # slow, correct answer, since rejected drafts still cost verification. Check
+  # the acceptance rate in docs/BENCHMARKS.md — below ~0.4 it is hurting.
   #
-  # WHAT TO PIN: an EAGLE3 head trained against THIS checkpoint. A head trained
-  # for a different model will load and draft garbage — acceptance collapses and
-  # you get a slow, correct answer, since rejected drafts still cost their
-  # verification pass. Verify the pairing before trusting a number, and check
-  # the acceptance rate in docs/BENCHMARKS.md: below ~0.4 the drafter is
-  # hurting, not helping.
+  # Two drafters exist for this checkpoint:
+  #   RadixArk/Qwen3.8-27B-DSpark   LIVE. Extends DFlash with target-model
+  #                                 auxiliary features and a confidence head.
+  #                                 This build registers DSparkDraftModel and
+  #                                 Qwen3DSparkModel by name, and accepts
+  #                                 method "dspark".
+  #   incoai/Qwen3.8-27B-DFlash2    REJECTED by our image. Its config declares
+  #                                 DFlash2DraftModel; this build registers
+  #                                 DFlashDraftModel (no "2"), so it landed
+  #                                 DFlash v1. A block-diffusion drafter with
+  #                                 its own method name — NOT eagle3 — invoked
+  #                                 as {"method":"dflash", "model":<path>,
+  #                                 "num_speculative_tokens":7}. Needs vLLM
+  #                                 built from PR #52816, which our pinned image
+  #                                 may predate.
   #
-  # Either an HF repo id or a HOST path under MODELS_DIR — benchmark.sh
-  # rewrites an absolute path to its in-container location (/models/<name>),
-  # since MODELS_DIR is bind-mounted there and the engine sees nothing else.
-  # A repo id contains a slash but does not start with one, and is passed
-  # through unchanged. Then:
-  #   bash scripts/benchmark.sh --only spec-eagle3,spec-eagle3-5
-  # Two drafters exist for THIS checkpoint (verified to exist, not yet tested):
-  #   incoai/Qwen3.8-27B-DFlash2   — REJECTED by our image. Its config declares
-  #                                  architecture DFlash2DraftModel; this build
-  #                                  registers DFlashDraftModel (no "2"), so it
-  #                                  landed DFlash v1. Needs a newer vLLM.
-  #   RadixArk/Qwen3.8-27B-DSpark  — the live candidate. This build registers
-  #                                  DSparkDraftModel AND Qwen3DSparkModel by
-  #                                  name, and accepts method "dspark".
-  #   (was: the drafter behind the community SGLang
-  #                                  numbers; vLLM method is "eagle3" or
-  #                                  "draft_model" depending on how it ships
-  #   RadixArk/Qwen3.8-27B-DSpark  — extends DFlash with target-model auxiliary
-  #                                  features and a confidence head
-  # DFlash2 model card gives the exact vLLM invocation:
-  #     "method": "dflash", "model": <this path>, "num_speculative_tokens": 7
-  # It is NOT eagle3 — DFlash2 is a block-diffusion drafter with its own method
-  # name, and it requires vLLM built from PR #52816, which our pinned arm64
-  # image may predate. Check before downloading several GB:
-  #     docker run --rm --entrypoint bash <brain.docker_image> \n  #       -c "grep -rl dflash /usr/local/lib/python3*/dist-packages/vllm/ | head"
-  # No hits = this build cannot serve it, and no config field will change that.
-  # Pin one, then: bash scripts/benchmark.sh --only spec-dflash7,spec-dflash3
+  # Check before downloading several GB — no hits means this build cannot serve
+  # it and no config field will change that:
+  #   docker run --rm --entrypoint bash vllm/vllm-openai:qwen38-arm64-cu130 \
+  #     -c 'grep -rl dflash /usr/local/lib/python3*/dist-packages/vllm/ | head'
+  # Then: bash scripts/benchmark.sh --only spec-dflash7,spec-dflash3
   speculative_draft_model: /opt/models/qwen38-27b-dspark
   speculative_draft_repo: RadixArk/Qwen3.8-27B-DSpark
 
   # Bytes ONE TOKEN actually reads. Dense models read the whole checkpoint, so
   # leave this blank and benchmark.sh uses the file size. An MoE reads only its
-  # active experts — shared layers plus experts_per_tok worth of expert weights
-  # — and the checkpoint size is then several times too large a denominator.
-  # benchmark.sh detects declared experts and refuses to compute a roofline
-  # ratio until this is set, rather than printing a confident wrong verdict.
+  # active experts, and the checkpoint size is then several times too large a
+  # denominator — benchmark.sh detects declared experts and refuses to compute a
+  # roofline ratio until this is set, rather than printing a wrong verdict.
   active_weight_gb:
-  #
+
   # --- SWAP EXAMPLES ---
+  # ⚠️  ANY SWAP THAT CHANGES served_name REQUIRES A MANUAL OPENCLAW RECONFIG on
+  # the Spark afterwards. Until you do it, OpenClaw is aimed at a model ID that
+  # no longer exists and fails to connect even though the brain is healthy. To
+  # skip that step, set served_name to whatever OpenClaw already points at.
+  #
+  # ⚠️  A DRAFTER PINNED ABOVE IS TIED TO THE CHECKPOINT ABOVE. Swapping the
+  # brain without also swapping or clearing speculative_config and
+  # speculative_draft_model leaves a mismatched drafter in place — correct
+  # output, collapsed acceptance.
+  #
   # ROLLBACK — tag v4.2.1 is the last release verified on this hardware
-  # (~53 tok/s, FP8 MoE). `git checkout v4.2.1` restores the whole stack.
+  # (~53 tok/s, FP8 MoE, no vision). `git checkout v4.2.1` restores the stack.
   #
   # Previous brain (Qwen3.6-35B-A3B MoE, NVFP4 — speed never measured):
   # name: qwen36-35b-a3b-nvfp4
@@ -346,7 +236,7 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # limit_mm_per_prompt: '{"image": 10}'
   #
-  # Measured-good fallback (Qwen3.6-35B-A3B FP8 — ~53 tok/s, this is the v4.0/v4.2.1 brain):
+  # Measured-good fallback (Qwen3.6-35B-A3B FP8 — ~53 tok/s, the v4.0/v4.2.1 brain):
   # name: qwen36-35b-a3b-fp8
   # hf_repo: Qwen/Qwen3.6-35B-A3B-FP8
   # local_path: /opt/models/qwen36-35b-a3b-fp8
@@ -364,60 +254,46 @@ brain:
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   # limit_mm_per_prompt: '{"image": 10}'
   #
-  # OPTION 2 — Qwen3-Coder-Next-80B-A3B (coding specialist — a TRADE, not an upgrade):
-  # 80B total / 3B active, built on Qwen3-Next-80B-A3B-Base. Corrected against
-  # the official Qwen model card (huggingface.co/Qwen/Qwen3-Coder-Next) — an
-  # earlier version of this note used a third-party 74.2% SWE-bench figure that
-  # made it look like a straight win. It isn't. Official numbers:
+  # OPTION 2 — Qwen3-Coder-Next-80B-A3B (coding specialist — a TRADE, not an
+  # upgrade). 80B total / 3B active. NEVER BENCHMARKED HERE, and the comparison
+  # below is against the SUPERSEDED Qwen3.6-35B brain, not the Qwen3.8-27B one
+  # running now — treat it as an argument that was made, not a current verdict.
   #
-  #   Benchmark              Coder-Next    Qwen3.6-35B (current)
-  #   SWE-Bench Verified        70.6            73.4      <- current model WINS
-  #   Terminal-Bench 2.0        36.2            51.5      <- current model WINS BIG
+  #   Benchmark              Coder-Next    Qwen3.6-35B (the brain at the time)
+  #   SWE-Bench Verified        70.6            73.4
+  #   Terminal-Bench 2.0        36.2            51.5
   #   SWE-Bench Pro             44.3             n/a
   #
-  # Reported SWE-bench values for this model range 70.6 / 71.3 / 74.2 depending
-  # on scaffold. Only compare same-scaffold numbers; 70.6 is Qwen's own.
+  # Published SWE-bench values for it range 70.6 / 71.3 / 74.2 by scaffold. Only
+  # compare same-scaffold numbers; 70.6 is Qwen's own.
   #
-  # The genuine case for it is what benchmarks measure poorly: it is RL-trained
-  # for long-horizon agentic coding — sustained tool use and recovery from failed
-  # tool calls. That maps directly onto OpenClaw. Worth it ONLY if agentic coding
-  # is overwhelmingly your primary use.
+  # The genuine case is what benchmarks measure poorly: RL-trained for
+  # long-horizon agentic coding — sustained tool use and recovery from failed
+  # tool calls, which maps onto OpenClaw. Worth it ONLY if agentic coding is
+  # overwhelmingly your primary use.
   #
-  # What you GIVE UP by switching:
-  #   - Vision. Coder-Next is TEXT-ONLY. Do not carry limit_mm_per_prompt over.
-  #   - Thinking mode entirely. The card is explicit: "supports only non-thinking
-  #     mode and does not generate <think></think> blocks." Leave reasoning_parser
-  #     unset — there is no reasoning output to parse. (The launch scripts now
-  #     pass --reasoning-parser conditionally, so blank is safe.)
-  #   - Context: 256K native, but see memory notes below.
-  #   - General (non-coding) chat and reasoning quality — it's a specialist.
+  # What you GIVE UP: vision entirely (text-only — do not carry
+  # limit_mm_per_prompt over); thinking mode entirely (the card is explicit that
+  # it emits no <think> blocks, so leave reasoning_parser blank — the launcher
+  # passes it conditionally); and general chat/reasoning quality.
   #
-  # Use the 4-bit build, NOT FP8. Unsloth's own guidance puts Coder-Next at
-  # ~85GB in 8-bit, which would eat the entire GPU budget and leave ~nothing for
-  # KV cache — the FP8 config previously listed here would likely fail to boot.
-  # The NVFP4 GB10 build is ~46GB and is quantized specifically for Spark.
-  # Caveat: an NVIDIA forum thread reports slow perf on RedHatAI's NVFP4 build of
-  # this model, so measure before trusting. Values below are a STARTING POINT.
-  # ⚠️  NOT a config-only swap end to end: served_name changes below, so after the
-  # brain comes up you MUST re-run the OpenClaw config manually on the Spark to
-  # point it at the new model ID. Until you do, OpenClaw is aimed at a model ID
-  # that no longer exists and will fail to connect even though the brain is
-  # healthy. (The active Qwen3.8 config above ALSO changes served_name, so this
-  # step is already required for the current swap regardless.)
-  # If you'd rather skip the reconfig, set served_name to whatever OpenClaw is
-  # already pointed at and it will reconnect untouched.
+  # Use the 4-bit build, NOT FP8: Unsloth puts Coder-Next at ~85GB in 8-bit,
+  # which would consume the whole budget and leave nothing for KV cache. The
+  # NVFP4 GB10 build is ~46GB, quantized for Spark. Caveat: an NVIDIA forum
+  # thread reports slow perf on RedHatAI's NVFP4 build of this model, so measure
+  # before trusting. Values below are a STARTING POINT.
   # name: qwen3-coder-next-nvfp4
   # hf_repo: saricles/Qwen3-Coder-Next-NVFP4-GB10   # GB10-tuned; ~46GB weights
   # local_path: /opt/models/qwen3-coder-next-nvfp4
-  # served_name: qwen3-coder-80b        # CHANGED -> requires manual OpenClaw reconfig (see above)
-  # gpu_memory_utilization: 0.80        # ~97GB; ~46GB weights leaves ~51GB KV cache — VERIFY with nvidia-smi
+  # served_name: qwen3-coder-80b        # CHANGED -> manual OpenClaw reconfig required
+  # gpu_memory_utilization: 0.80        # ~97GB; ~46GB weights leaves ~51GB KV — VERIFY with nvidia-smi
   # max_model_len: 262144               # 256K native; drop to 131072 first if it OOMs
   # kv_cache_dtype: fp8
   # max_num_seqs: 16
   # max_num_batched_tokens: 8192
   # tool_call_parser: qwen3_coder       # confirmed same parser family
   # reasoning_parser:                   # INTENTIONALLY BLANK — no thinking mode
-  # moe_backend: flashinfer_b12x        # NVFP4 MoE on Spark — the active dense brain does not use this
+  # moe_backend: flashinfer_b12x        # NVFP4 MoE; the active dense brain does not use this
   # extra_env:
   #   CUTE_DSL_ARCH: sm_121a
   #   VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
@@ -427,26 +303,23 @@ brain:
 # SGLANG — second engine, for head-to-head comparison. NOT WIRED INTO BOOT.
 # -----------------------------------------------------------------------------
 # The strongest reported throughput configs for this model on GB10 run SGLang
-# with a DFlash2 drafter, not vLLM. Whether that actually holds here is an open
-# question, and a comparison that could only launch vLLM would never find out —
-# so SGLang is a first-class row in scripts/benchmark.sh's matrix rather than an
-# assumption.
+# with a DFlash2 drafter rather than vLLM. Whether that holds here is open, and
+# a comparison that could only launch vLLM would never find out — so SGLang is a
+# first-class row in benchmark.sh's matrix rather than an assumption.
 #
-# UNCOMMENT ONLY docker_image TO ENABLE. Everything else falls back to the
-# brain: block above, so the two engines serve the same weights at the same
-# port with the same served name — which is what makes the comparison fair.
+# UNCOMMENT ONLY docker_image TO ENABLE. Everything else falls back to brain:
+# above, so both engines serve the same weights at the same port under the same
+# served name — which is what makes the comparison fair. No image is pinned
+# because none has been verified here and guessing a tag costs a 5-minute load
+# to learn nothing; until one is set, every SGLang scenario records BLOCKED in
+# docs/BENCHMARKS.md — missing data rather than silently absent. You need a
+# build for SM121 / arm64.
 #
-# No image is pinned because none has been verified on this box, and guessing a
-# tag costs a 5-minute load to learn nothing. Until one is set, every SGLang
-# scenario is recorded as BLOCKED in docs/BENCHMARKS.md — visible as missing
-# data rather than silently absent. You need a build for SM121 / arm64.
-#
-# Only scripts/benchmark.sh reads this.
-# boot_sequence.sh, watchdog.sh and the numbered setup scripts do not, and must
-# not: watchdog recovery calls start_brain_ad_hoc.sh, which starts vLLM, so a
-# crash during an SGLang session silently reverts the engine. Stop the watchdog
-# timer for any SGLang work (benchmark.sh does this for you).
-#
+# ONLY scripts/benchmark.sh READS THIS. boot_sequence.sh, watchdog.sh and the
+# numbered setup scripts do not, and must not: watchdog recovery calls
+# start_brain_ad_hoc.sh, which starts vLLM, so a crash during an SGLang session
+# silently reverts the engine. Stop the watchdog timer for any SGLang work —
+# benchmark.sh does this for you.
 sglang:
   docker_image: lmsysorg/sglang:latest
   mem_fraction_static: 0.45           # SGLang's name for gpu_memory_utilization
@@ -456,7 +329,6 @@ sglang:
   reasoning_parser: qwen3
   disable_radix_cache: false          # radix cache = SGLang's prefix cache, ON by default.
                                       # Note the inverted sense vs vLLM's enable_prefix_caching.
-  # --- Speculative decoding (the reason SGLang is on the list at all) ---
   # DFlash2 needs a drafter checkpoint downloaded separately; leave the path
   # blank and this falls back to whatever the build supports natively.
   speculative_algorithm:              # e.g. EAGLE / NEXTN — depends on the build
@@ -464,10 +336,10 @@ sglang:
   speculative_draft_model_path:
 
 # -----------------------------------------------------------------------------
-# SUB-AGENTS — not used
+# SUB-AGENTS — not used. Nothing here is wired into boot_sequence.sh,
+# watchdog.sh or check_stack.sh. Uncomment to add a fast sub-agent if concurrent
+# throughput ever becomes the bottleneck.
 # -----------------------------------------------------------------------------
-# Uncomment to add a fast sub-agent if concurrent throughput becomes a bottleneck.
-# Nothing here is wired into boot_sequence.sh / watchdog.sh / check_stack.sh.
 # subagent:
 #   name: nemotron-nano
 #   hf_repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
@@ -484,11 +356,23 @@ sglang:
 #   reasoning_parser_plugin: nano_v3_reasoning_parser.py
 
 # -----------------------------------------------------------------------------
-# ASR — speech-to-text (streaming WebSocket)
+# ASR / TTS — WEIGHTS ONLY. NOTHING SERVES THESE TODAY.
+# -----------------------------------------------------------------------------
+# Read this before assuming ports 8002/8003 are live. 02_download_models.sh
+# pulls both checkpoints, and boot_sequence.sh / watchdog.sh will start and
+# self-heal containers named asr-server and tts-server — but NO SCRIPT EVER
+# CREATES THEM. boot_sequence logs "not found, skipping" and moves on, which is
+# why this has been quiet rather than broken.
+#
+# Speech-to-text is actually delivered a different way: 04_voice_stt.sh installs
+# the openai-whisper CLI and points OpenClaw at the binary, which invokes it per
+# media file. No server, no port. check_stack.sh probes for that CLI, not for
+# 8002. So the section below describes intended serving infrastructure that does
+# not exist yet — the ports are reservations, not endpoints.
 # -----------------------------------------------------------------------------
 asr:
   name: nemotron-asr
-  hf_repo: nvidia/nemotron-speech-streaming-en-0.6b    # latest March 12 2026 checkpoint
+  hf_repo: nvidia/nemotron-speech-streaming-en-0.6b    # March 12 2026 checkpoint
   local_path: /opt/models/nemotron-asr
   port: 8002
   # --- SWAP EXAMPLE ---
@@ -498,7 +382,7 @@ asr:
   # port: 8002
 
 # -----------------------------------------------------------------------------
-# TTS — text-to-speech (7 languages, 5 voices)
+# TTS — text-to-speech (7 languages, 5 voices). Weights only; see the ASR note.
 # -----------------------------------------------------------------------------
 tts:
   name: magpie-tts
@@ -523,23 +407,22 @@ infrastructure:
     ui_port: 18789
 
 # -----------------------------------------------------------------------------
-# MEMORY MAP (128GB unified) — PROJECTION, not measured. Replace with real
-# numbers from check_stack.sh / nvidia-smi after the first successful boot.
+# MEMORY MAP (128GB unified, 121.69 GiB visible to CUDA)
 # -----------------------------------------------------------------------------
-# Component                  Allocated   Note
-# Qwen3.8-27B NVFP4 (Brain)   ~54.8 GB   0.45 util
-# ASR (nemotron-speech)         3.0 GB   always-on
-# TTS (magpie_tts)              1.4 GB   always-on
-# SearXNG                       0.5 GB   always-on
-# NemoClaw + OpenClaw           1.0 GB   always-on
-# OS + Docker + vLLM            6.0 GB   always-on
-# ─────────────────────────────────────────────────
-# TOTAL                       ~66.7 GB   (on 121.69GiB visible to CUDA)
-# HEADROOM                    ~55.0 GB
+# Brain is measured (~55 GB at 0.45 util, per the STATUS block above). The
+# always-on services are PROJECTIONS — replace them with real numbers from
+# check_stack.sh / nvidia-smi.
 #
-# If/when swapping to OPTION 2 (Qwen3-Coder-Next-80B, see commented block above):
-# Do NOT use the FP8 build. Unsloth puts Coder-Next at ~85GB in 8-bit, and 0.70 util
-# reserves ~85GB — weights would consume the entire budget and leave ~nothing for KV
-# cache, so 130K context x 16 seqs would not fit. That config was wrong and has been
-# replaced above with the NVFP4 GB10 build (~46GB weights, ~51GB KV cache at 0.80).
-# Still an experiment: measure with check_stack.sh / nvidia-smi before trusting it.
+#   Qwen3.8-27B NVFP4 (Brain)   ~54.8 GB   measured, 0.45 util
+#   ASR (nemotron-speech)         3.0 GB   projected, always-on
+#   TTS (magpie_tts)              1.4 GB   projected, always-on
+#   SearXNG                       0.5 GB   projected, always-on
+#   NemoClaw + OpenClaw           1.0 GB   projected, always-on
+#   OS + Docker + vLLM            6.0 GB   projected, always-on
+#   ──────────────────────────────────────
+#   TOTAL                       ~66.7 GB
+#   HEADROOM                    ~55.0 GB
+#
+# The headroom is large because the brain runs at 0.45 util. See observation 3
+# in the STATUS block before spending it: more KV cache buys concurrency, not
+# single-stream speed.
