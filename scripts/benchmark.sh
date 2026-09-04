@@ -846,8 +846,26 @@ by_key = {}
 for r in rows:
     r.setdefault("model", LEGACY)
     r.setdefault("name", "?")
-    by_key[(r["model"], r["name"])] = r
+    by_key[(r["model"], r["name"], r.get("overrides") or "")] = r
 rows = list(by_key.values())
+
+# OVERRIDES IS PART OF THE KEY. A name describes a config; the overrides say
+# what actually ran. Two rows sharing a name but differing in overrides are
+# different configurations, and collapsing them lets one result speak for a
+# config that was never re-run: `spec-dspark7` measured VALID at 23.85 tok/s
+# against /models/qwen38-27b-dspark, then a later row reused the name for
+# /models/qwen38-27b-dspark-nvfp4, a different checkpoint, which failed to load.
+# Keyed on name alone that failure overwrote the real number, and this report
+# called the live brain config broken. Distinct configs that still share a name
+# are numbered oldest-first so no two rows can render as the same label.
+_by_name = {}
+for r in rows:
+    _by_name.setdefault((r["model"], r["name"]), []).append(r)
+AMBIGUOUS = any(len(g) > 1 for g in _by_name.values())
+for group in _by_name.values():
+    if len(group) > 1:
+        for i, r in enumerate(sorted(group, key=lambda r: r.get("measured_at") or ""), 1):
+            r["name"] = "{} #{}".format(r["name"], i)
 models = sorted({r["model"] for r in rows})
 
 def f(v, spec="{:.1f}", dash="—"):
@@ -944,6 +962,11 @@ for r in sorted(rows, key=lambda r: (r["model"],
         f(r.get("spec_accept_rate"), "{:.1%}"),
         f(r.get("kv_cache_tokens"), "{:,.0f} tok")))
 w("")
+if AMBIGUOUS:
+    w("**A `#n` suffix marks one config name run with different overrides** — separate ")
+    w("configurations sharing a label, numbered oldest first. The Detail section below ")
+    w("prints the overrides each one actually used.")
+    w("")
 w("**Columns.** *Decode* is single-stream tok/s — what one interactive session feels like. ")
 w("*Aggregate* is total tok/s at the highest concurrency tested — what the box can do in ")
 w("parallel; it rises with batching and is not comparable to Decode. ")
