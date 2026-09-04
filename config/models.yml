@@ -205,14 +205,6 @@ brain:
   # roofline ratio until this is set, rather than printing a wrong verdict.
   active_weight_gb:
 
-  # --- SWAP EXAMPLES ---
-  # Refusal-ablated builds of this same base checkpoint are surveyed and ranked
-  # in docs/ABLITERATED_CANDIDATES.md -- ten candidates with build provenance,
-  # ready-to-paste brain blocks for the top four, and the ~27 repos that CANNOT
-  # load here (GGUF, MLX, EXL3) so nobody re-surveys HuggingFace and re-finds
-  # them. That file is the only copy on purpose: nothing reads it, so a second
-  # machine-readable one would just drift. Nothing in it has been measured here.
-  #
   # ⚠️  ANY SWAP THAT CHANGES served_name REQUIRES A MANUAL OPENCLAW RECONFIG on
   # the Spark afterwards. Until you do it, OpenClaw is aimed at a model ID that
   # no longer exists and fails to connect even though the brain is healthy. To
