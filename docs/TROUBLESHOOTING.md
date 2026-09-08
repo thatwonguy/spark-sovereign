@@ -98,10 +98,15 @@ bash scripts/01_system_prep.sh
    across a swap it still produces correct output — every draft is verified —
    but acceptance collapses and decode drops toward the 12.0 tok/s
    non-speculative floor.
-2. Download new model (auto-prunes old):
+2. Get the new model into place:
    ```bash
    bash scripts/02_download_models.sh
    ```
+   If this box has downloaded that exact commit before, 02 finds it in
+   `/opt/model-archive` and offers it back instead of downloading — answer `y`
+   and the swap is a rename. The model you are swapping *away* from is moved to
+   the archive and kept, so going back is another rename. 02 does not delete
+   weights; reclaim the space yourself with `sudo rm -rf /opt/model-archive/<x>`.
 3. Restart Brain:
    ```bash
    bash scripts/start_brain_ad_hoc.sh
