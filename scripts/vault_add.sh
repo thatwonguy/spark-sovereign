@@ -173,11 +173,18 @@ ask() {
 # Empty on any failure. Empty means "unknown", never "changed" — same rule as 02.
 resolve_upstream_sha() {
     python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo ""
-import json, sys, urllib.request
+import json, os, sys, urllib.request
 repo, rev = sys.argv[1], (sys.argv[2] or "main")
+# Authenticated when a token exists: a gated repo often exposes no metadata at
+# all unauthenticated, and an unresolvable SHA looks identical to a dead repo.
+hdrs = {}
+tok = os.environ.get("HF_TOKEN", "")
+if tok:
+    hdrs["Authorization"] = f"Bearer {tok}"
 try:
-    with urllib.request.urlopen(
-            f"https://huggingface.co/api/models/{repo}/revision/{rev}", timeout=15) as r:
+    req = urllib.request.Request(
+        f"https://huggingface.co/api/models/{repo}/revision/{rev}", headers=hdrs)
+    with urllib.request.urlopen(req, timeout=15) as r:
         print(json.load(r).get("sha", ""))
 except Exception:
     print("")
@@ -188,11 +195,16 @@ PYEOF
 # check is skipped rather than guessed at.
 resolve_repo_size() {
     python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo 0
-import json, sys, urllib.request
+import json, os, sys, urllib.request
 repo, rev = sys.argv[1], (sys.argv[2] or "main")
+hdrs = {}
+tok = os.environ.get("HF_TOKEN", "")
+if tok:
+    hdrs["Authorization"] = f"Bearer {tok}"
 try:
     url = f"https://huggingface.co/api/models/{repo}/revision/{rev}?blobs=true"
-    with urllib.request.urlopen(url, timeout=20) as r:
+    with urllib.request.urlopen(
+            urllib.request.Request(url, headers=hdrs), timeout=20) as r:
         data = json.load(r)
     print(sum(s.get("size") or 0 for s in data.get("siblings", [])))
 except Exception:
@@ -306,6 +318,18 @@ if [ "${DRY_RUN}" -eq 1 ]; then
     exit 0
 fi
 
+# Said before the download, not after it fails. An unset token is the cause of
+# both failure modes worth predicting here: a gated repo refuses outright, and
+# an unauthenticated pull is rate-limited — which is felt across a 20GB file.
+if [ -z "${HF_TOKEN}" ]; then
+    echo ""
+    echo "  NOTE: HF_TOKEN is not set, so this downloads unauthenticated."
+    echo "    - gated repos ('requires approval') will REFUSE, not slow down"
+    echo "    - throughput is rate-limited, which shows on 20GB files"
+    echo "  Set it once in .env and every script here picks it up:"
+    echo "    HF_TOKEN=hf_...   (huggingface.co/settings/tokens)"
+fi
+
 if [ -t 0 ] && [ -t 1 ]; then
     echo ""
     echo "  This downloads into the vault. It does not touch ${MODELS_DIR},"
@@ -336,8 +360,24 @@ if ! hf download "${REPO}" --local-dir "${STAGE}" \
     echo ""
     echo "  FAILED. The partial download is kept at:"
     echo "    ${STAGE}"
-    echo "  Re-run the same command to resume it — hf picks up where it stopped."
     echo "  It is NOT in the vault, so 02 will not see or offer it."
+    echo ""
+    # "Re-run to resume" is wrong advice for the most common failure. A gated
+    # repo refuses every attempt identically until access is granted, so saying
+    # "resume" sends the operator round a loop that cannot terminate.
+    if [ -z "${HF_TOKEN}" ]; then
+        echo "  HF_TOKEN IS NOT SET, and that is the first thing to rule out."
+        echo "  If the error above says access denied / requires approval, this"
+        echo "  repo is gated and re-running changes nothing. Two steps:"
+        echo "    1. Open https://huggingface.co/${REPO} and request access"
+        echo "    2. Put a token in .env:  HF_TOKEN=hf_..."
+        echo "  Then run this command again."
+    else
+        echo "  If the error says access denied / requires approval, the repo is"
+        echo "  gated: open https://huggingface.co/${REPO}, request access, and"
+        echo "  make sure .env's HF_TOKEN belongs to the approved account."
+    fi
+    echo "  For an interrupted transfer, re-running resumes where it stopped."
     exit 1
 fi
 
