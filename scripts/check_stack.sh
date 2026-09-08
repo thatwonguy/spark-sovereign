@@ -52,16 +52,18 @@ echo ""
 echo "── Disk ────────────────────────────────────────────────────"
 CS_MODELS_DIR="${MODELS_DIR:-/opt/models}"
 CS_ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
-df -h "${CS_MODELS_DIR}" 2>/dev/null | awk 'NR==1 || NR==2'
+df -h "${CS_MODELS_DIR}" 2>/dev/null | awk 'NR==1 || NR==2' || true
+# EVERY assignment here ends in `|| var=`. This script runs `set -euo pipefail`,
+# under which an assignment from a failing command substitution aborts the whole
+# script — silently, with no error, taking every later section with it. du and
+# find both exit non-zero on an unreadable subdirectory, which is normal for
+# root-owned model trees. A health check must never be the thing that breaks.
 for d in "${CS_MODELS_DIR}" "${CS_ARCHIVE_DIR}"; do
-    if [ -d "${d}" ]; then
-        # sudo -n so a box without cached credentials degrades to a slightly
-        # low number instead of hanging this health check on a password prompt.
-        sz="$(sudo -n du -sh "${d}" 2>/dev/null | awk '{print $1}')"
-        [ -n "${sz}" ] || sz="$(du -sh "${d}" 2>/dev/null | awk '{print $1}')"
-        n="$(find "${d}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
-        printf "  %-22s %-8s %s model dir(s)\n" "$(basename "${d}")" "${sz:-?}" "${n}"
-    fi
+    [ -d "${d}" ] || continue
+    sz="$(du -sh "${d}" 2>/dev/null | awk 'END {print $1}')" || sz=""
+    [ -n "${sz}" ] || sz="?"
+    n="$(find "${d}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" || n="?"
+    printf "  %-22s %-8s %s model dir(s)\n" "$(basename "${d}")" "${sz}" "${n}"
 done
 echo "  vault detail: bash scripts/vault_add.sh --list"
 echo ""
