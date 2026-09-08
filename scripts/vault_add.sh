@@ -57,6 +57,25 @@ export PATH="$HOME/.local/bin:$PATH"
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export HF_TOKEN="${HF_TOKEN:-}"
 
+# .env.example shipped HF_TOKEN=your_hf_token_here for a long time, so plenty of
+# .env files hold that literal string. A non-empty non-token is worse than no
+# token at all: it authenticates as nobody, and it silently suppresses every
+# "you have no token" path — including the prompt that would have fixed it.
+# Real tokens are hf_ prefixed; anything else here is a placeholder.
+if [ -n "${HF_TOKEN}" ] && ! printf '%s' "${HF_TOKEN}" | grep -qE '^hf_[A-Za-z0-9_-]+$'; then
+    echo "  NOTE: HF_TOKEN is set but is not a token (they start with 'hf_')."
+    echo "        Ignoring it and continuing unauthenticated. If it came from"
+    echo "        .env, that is the old 'your_hf_token_here' placeholder — blank"
+    echo "        the line: HF_TOKEN="
+    echo ""
+    HF_TOKEN=""
+    export HF_TOKEN
+fi
+
+# Guards re-prompting within one run. Keyed on "have we asked", NOT on whether
+# a token exists: a wrong or expired token is precisely a case worth asking about.
+TOKEN_PROMPTED=0
+
 REPO=""
 NAME=""
 REVISION=""
@@ -182,17 +201,28 @@ ask() {
 # only. DELIBERATELY NOT PERSISTED: a credential in a dotfile outlives the
 # reason it was created, and nothing here needs one except a gated download.
 # Read with -s so it is not echoed and never reaches shell history.
-# Returns 1 when declined, when there is no terminal, or when a token was
-# already in play — in which case it is not the thing that failed.
+# Returns 1 when declined, when there is no terminal, or when it has already
+# asked once this run. It does NOT bail merely because HF_TOKEN is set — a
+# placeholder or an expired token is exactly the case worth asking about, and
+# keying on that is what silently swallowed this prompt the first time.
 prompt_for_token() {
-    [ -z "${HF_TOKEN}" ] || return 1
+    [ "${TOKEN_PROMPTED}" -eq 0 ] || return 1
+    TOKEN_PROMPTED=1
     ( : < /dev/tty ) 2>/dev/null || return 1
     local t=""
     {
         echo ""
-        echo "  ${REPO} is gated or private, so it needs a token."
-        echo "  Paste one to continue, or press Enter to skip this model."
+        if [ -n "${HF_TOKEN}" ]; then
+            echo "  ${REPO} refused the token already in use."
+            echo "  It is gated, and the account behind that token is not approved."
+            echo "  Paste a token for an approved account, or press Enter to skip."
+        else
+            echo "  ${REPO} is gated or private, so it needs a token."
+            echo "  Paste one to continue, or press Enter to skip this model."
+        fi
         echo "  Not echoed, not saved, not written to .env — this run only."
+        echo "  Get one at https://huggingface.co/settings/tokens (Read is enough),"
+        echo "  and make sure that account has been granted access to the repo."
         printf '  token: '
     } > /dev/tty
     read -rs t < /dev/tty || { echo "" > /dev/tty; return 1; }
