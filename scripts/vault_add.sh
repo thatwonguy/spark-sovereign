@@ -21,6 +21,9 @@
 #   bash scripts/vault_add.sh <hf-repo> --dry-run     # size + disk check only
 #   bash scripts/vault_add.sh --list                  # what is in the vault
 #
+# EXIT CODES: 0 done or already had it, 2 bad arguments, 3 skipped (gated or
+# unreachable — not a breakage), 1 anything else.
+#
 # EXAMPLES
 #   bash scripts/vault_add.sh lyf/Qwen3.8-27B-Heretic-ARA-NVFP4-MTP-VL
 #   bash scripts/vault_add.sh unsloth/Qwen3.8-27B-NVFP4 --revision 9e3f1c0b
@@ -30,7 +33,12 @@
 #   ARCHIVE_DIR   default /opt/model-archive. MUST be the same filesystem as
 #                 /opt/models, or 02 cannot rename it into service later.
 #   MODELS_DIR    default /opt/models. Read only, to report what is already live.
-#   HF_TOKEN      read from .env; needed for gated repos.
+#   HF_TOKEN      OPTIONAL and not required anywhere. If a repo turns out to
+#                 be gated you are prompted for a token at that moment; it is
+#                 not echoed, not saved, and used for that run only. Press
+#                 Enter instead to skip the model and move on. Honoured if it
+#                 is already in the environment, but nothing here asks you to
+#                 put one in .env.
 #
 # Rationale: docs/LESSONS.md #21. User-facing behaviour: README "Downloaded
 # once, kept forever".
@@ -63,7 +71,7 @@ while [ $# -gt 0 ]; do
         --name=*)      NAME="${1#--name=}" ;;
         --revision)    REVISION="${2:-}"; shift ;;
         --revision=*)  REVISION="${1#--revision=}" ;;
-        -h|--help)     sed -n '2,36p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help)     sed -n '2,45p' "${BASH_SOURCE[0]}"; exit 0 ;;
         -*)            echo "Unknown option: $1 (try --help)"; exit 2 ;;
         *)
             if [ -n "${REPO}" ]; then
@@ -170,6 +178,53 @@ ask() {
     printf -v "${__var}" '%s' "${reply}"
 }
 
+# Ask for a token at the one moment it is needed, and keep it for this process
+# only. DELIBERATELY NOT PERSISTED: a credential in a dotfile outlives the
+# reason it was created, and nothing here needs one except a gated download.
+# Read with -s so it is not echoed and never reaches shell history.
+# Returns 1 when declined, when there is no terminal, or when a token was
+# already in play — in which case it is not the thing that failed.
+prompt_for_token() {
+    [ -z "${HF_TOKEN}" ] || return 1
+    ( : < /dev/tty ) 2>/dev/null || return 1
+    local t=""
+    {
+        echo ""
+        echo "  ${REPO} is gated or private, so it needs a token."
+        echo "  Paste one to continue, or press Enter to skip this model."
+        echo "  Not echoed, not saved, not written to .env — this run only."
+        printf '  token: '
+    } > /dev/tty
+    read -rs t < /dev/tty || { echo "" > /dev/tty; return 1; }
+    echo "" > /dev/tty
+    [ -n "${t}" ] || return 1
+    HF_TOKEN="${t}"
+    export HF_TOKEN
+    return 0
+}
+
+do_download() {
+    hf download "${REPO}" --local-dir "${STAGE}" \
+        ${REVISION:+--revision "${REVISION}"}
+}
+
+# Exit 3, not 1: being unable to reach a gated repo is a skip, not a breakage.
+# A batch loop should read as "3 of 4 landed, one needs access", not as failure.
+skip_gated() {
+    echo ""
+    echo "  SKIPPED — ${REPO} could not be downloaded."
+    echo "  If the error says access denied / requires approval, it is gated:"
+    echo "    request access at https://huggingface.co/${REPO}"
+    echo "  then run this again and paste a token when asked."
+    # STAGE does not exist yet when this is reached from the resolve step.
+    if [ -n "${STAGE:-}" ] && [ -d "${STAGE:-}" ]; then
+        echo "  Anything already fetched is parked in ${STAGE}, NOT in the vault,"
+        echo "  so 02 will not see or offer it. Delete it if you are done:"
+        echo "    sudo rm -rf ${STAGE}"
+    fi
+    exit 3
+}
+
 # Empty on any failure. Empty means "unknown", never "changed" — same rule as 02.
 resolve_upstream_sha() {
     python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo ""
@@ -226,6 +281,16 @@ else
     TARGET_SHA="$(resolve_upstream_sha "${REPO}" "${REVISION}")"
 fi
 
+# A fully private repo exposes no metadata at all unauthenticated, so this is
+# indistinguishable from a deleted one until a token is tried.
+if [ -z "${TARGET_SHA}" ] && prompt_for_token; then
+    if printf '%s' "${REVISION}" | grep -qE '^[0-9a-f]{40}$'; then
+        TARGET_SHA="${REVISION}"
+    else
+        TARGET_SHA="$(resolve_upstream_sha "${REPO}" "${REVISION}")"
+    fi
+fi
+
 if [ -z "${TARGET_SHA}" ]; then
     echo "  Could not resolve ${REPO}${REVISION:+ @ ${REVISION}} on HuggingFace."
     echo "  It may be gated, private, renamed, deleted, or simply unreachable"
@@ -234,7 +299,7 @@ if [ -z "${TARGET_SHA}" ]; then
     echo "  If you already have these weights, check the vault — that is what it"
     echo "  is for:"
     echo "    bash scripts/vault_add.sh --list"
-    exit 1
+    skip_gated
 fi
 echo "  resolved commit: ${TARGET_SHA}"
 
@@ -318,16 +383,10 @@ if [ "${DRY_RUN}" -eq 1 ]; then
     exit 0
 fi
 
-# Said before the download, not after it fails. An unset token is the cause of
-# both failure modes worth predicting here: a gated repo refuses outright, and
-# an unauthenticated pull is rate-limited — which is felt across a 20GB file.
 if [ -z "${HF_TOKEN}" ]; then
     echo ""
-    echo "  NOTE: HF_TOKEN is not set, so this downloads unauthenticated."
-    echo "    - gated repos ('requires approval') will REFUSE, not slow down"
-    echo "    - throughput is rate-limited, which shows on 20GB files"
-    echo "  Set it once in .env and every script here picks it up:"
-    echo "    HF_TOKEN=hf_...   (huggingface.co/settings/tokens)"
+    echo "  No token — downloading unauthenticated. If this repo turns out to be"
+    echo "  gated you get a one-off prompt, or you skip it and carry on."
 fi
 
 if [ -t 0 ] && [ -t 1 ]; then
@@ -355,30 +414,20 @@ mkdir -p "${STAGE}" || exit 1
 # tree sitting directly in the vault would be offered as a working model.
 echo ""
 echo "  Downloading into ${STAGE}"
-if ! hf download "${REPO}" --local-dir "${STAGE}" \
-        ${REVISION:+--revision "${REVISION}"}; then
-    echo ""
-    echo "  FAILED. The partial download is kept at:"
-    echo "    ${STAGE}"
-    echo "  It is NOT in the vault, so 02 will not see or offer it."
-    echo ""
-    # "Re-run to resume" is wrong advice for the most common failure. A gated
-    # repo refuses every attempt identically until access is granted, so saying
-    # "resume" sends the operator round a loop that cannot terminate.
-    if [ -z "${HF_TOKEN}" ]; then
-        echo "  HF_TOKEN IS NOT SET, and that is the first thing to rule out."
-        echo "  If the error above says access denied / requires approval, this"
-        echo "  repo is gated and re-running changes nothing. Two steps:"
-        echo "    1. Open https://huggingface.co/${REPO} and request access"
-        echo "    2. Put a token in .env:  HF_TOKEN=hf_..."
-        echo "  Then run this command again."
+if ! do_download; then
+    # A gated repo refuses every attempt identically until it is authenticated,
+    # so "re-run to resume" would send the operator round a loop that cannot
+    # terminate. Offer the credential at the one moment it is needed instead.
+    if prompt_for_token; then
+        echo "  Retrying with the token you pasted..."
+        if do_download; then
+            :
+        else
+            skip_gated
+        fi
     else
-        echo "  If the error says access denied / requires approval, the repo is"
-        echo "  gated: open https://huggingface.co/${REPO}, request access, and"
-        echo "  make sure .env's HF_TOKEN belongs to the approved account."
+        skip_gated
     fi
-    echo "  For an interrupted transfer, re-running resumes where it stopped."
-    exit 1
 fi
 
 # The contract with 02. Without these four keys the directory is findable only

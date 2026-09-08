@@ -314,7 +314,7 @@ git clone https://github.com/thatwonguy/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
 git checkout v5.5   # current release — pins the model and every serving parameter
 cp .env.example .env
-nano .env   # set HF_TOKEN at minimum
+nano .env   # optional — see below; the defaults work unset
 
 # Run these scripts in order (idempotent, safe to re-run)
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
@@ -570,7 +570,8 @@ spark-sovereign/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
 │   └── TROUBLESHOOTING.md
-├── .env.example            ← Copy to .env, fill in HF_TOKEN at minimum
+├── .env.example            ← Copy to .env. Every value is optional; the
+│                             defaults download and serve public models fine
 └── .gitignore
 ```
 
