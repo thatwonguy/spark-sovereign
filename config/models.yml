@@ -53,8 +53,53 @@
 # max_num_batched_tokens below.)
 # -----------------------------------------------------------------------------
 brain:
-  name: qwen38-27b-nvfp4
-  hf_repo: unsloth/Qwen3.8-27B-NVFP4
+  # ── ABLITERATED SWAP (2026-09-07) ────────────────────────────────────────
+  # Refusal-ablated build of the same checkpoint. Same model family, same
+  # context length, same tool-call parser — every serving field below is
+  # unchanged from the stock build, so this is one variable, not five.
+  #
+  # WHY THIS ONE, on the "does it actually serve" question rather than the
+  # "how ablated is it" one:
+  #   - NVFP4 W4A4 compressed-tensors, which THIS BOX ALREADY SERVES. The
+  #     stock brain below is NVFP4 at 23.85 tok/s, so the format is proven
+  #     here, not assumed. That is the whole reason AWQ (rank 4) is not the
+  #     pick: its own peers report W4A16 failing to serve on this arch.
+  #   - Card claims validation under vllm/vllm-openai:qwen38-x86_64-cu130 —
+  #     the x86_64 sibling of the image pinned below, so the kernels are
+  #     almost certainly present.
+  #   - Claims 0/100 refusals vs 98-99/100 for stock, at KL 0.0535.
+  #
+  # UNVERIFIED HERE, and honest about it: they tested SM120 (RTX 5090); this
+  # box is sm_121a. And the 0/100 has a contradiction attached — a downstream
+  # card reports 3/100 for the same upstream at the same KL. Treat it as a
+  # claim. docs/ABLITERATED_CANDIDATES.md has the full survey.
+  #
+  # FALLBACK, if this fails to load or benchmarks badly. Also NVFP4 W4A4, and
+  # the only candidate with real operational evidence (60,541 downloads last
+  # month). Publishes no refusal number, and narrows the ablation on purpose
+  # (layers 18-51, first 15 retained), so expect it to be less thorough:
+  #   name: qwen38-27b-huihui-nvfp4
+  #   hf_repo: sakamakismile/Huihui-Qwen3.8-27B-abliterated-NVFP4
+  #   local_path: /opt/models/qwen38-27b-huihui-nvfp4
+  #   served_name: qwen38-27b-huihui
+  # Both are already in /opt/model-archive, so switching costs a rename, not a
+  # download: edit the four identity fields and re-run 02.
+  #
+  # TO REVERT to the stock brain — also a rename, it goes to the vault on swap:
+  #   name: qwen38-27b-nvfp4
+  #   hf_repo: unsloth/Qwen3.8-27B-NVFP4
+  #   local_path: /opt/models/qwen38-27b-nvfp4
+  #   served_name: qwen38-27b
+  #
+  # ⚠️ THE 23.85 tok/s BELOW DOES NOT CARRY OVER. The DSpark drafter was
+  # trained against the UNABLATED checkpoint, and ablation deliberately moves
+  # the next-token distribution in the refusal-adjacent region. Output stays
+  # correct — every draft is verified — but acceptance will fall, plausibly
+  # toward the 12.0 tok/s non-speculative floor on exactly the prompts this
+  # swap was made for. Benchmark the pairing, not the model.
+  # -------------------------------------------------------------------------
+  name: qwen38-27b-heretic-ara-nvfp4
+  hf_repo: lyf/Qwen3.8-27B-Heretic-ARA-NVFP4-MTP-VL
   # Optional revision pin. Blank = latest on main at pull time, the right
   # default for a fresh drop (first uploads ship broken — what the
   # tokenizer-truncation check in 02_download_models.sh exists to catch).
@@ -62,12 +107,16 @@ brain:
   # running weights stay attributable even when this is blank. Set it to that
   # SHA to freeze them.
   # hf_revision: <sha>
-  local_path: /opt/models/qwen38-27b-nvfp4
+  # Distinct directory from the stock brain ON PURPOSE. Sharing one would leave
+  # heretic weights in a directory named qwen38-27b-nvfp4, and 02 would treat
+  # the swap as revision drift on one model rather than two models trading
+  # places. Separate paths mean both can sit in the vault at once.
+  local_path: /opt/models/qwen38-27b-heretic-ara-nvfp4
   port: 8000
   # Interface vLLM listens on. Loopback serves this box only; 0.0.0.0 would
   # expose the Brain to every host on the LAN, unauthenticated by default.
   bind_host: 127.0.0.1
-  served_name: qwen38-27b             # arbitrary label; if you change it, re-point OpenClaw
+  served_name: qwen38-27b-heretic     # CHANGED -> re-point OpenClaw to this model id
   docker_image: vllm/vllm-openai:qwen38-arm64-cu130   # arm64 — GB10 is an ARM host
   gpu_memory_utilization: 0.45
   max_model_len: 262144

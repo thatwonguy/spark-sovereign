@@ -63,7 +63,7 @@ proxy — lower means less capability was disturbed getting there.
 | 1 | `lyf/Qwen3.8-27B-Heretic-ARA-NVFP4-MTP-VL` | **0** | 0.0535 | NVFP4 W4A4 | 20.56 GB | bf16 ✓ | bf16 ✓ |
 | 2 | `sakamakismile/Huihui-Qwen3.8-27B-abliterated-NVFP4` | *not published* | — | NVFP4 W4A4 g16 | 20.0 GB | bf16 ✓ | bf16 ✓ |
 | 3 | `trohrbaugh/Qwen3.8-27B-heretic-ara` | **0** | 0.0535 | BF16 | ~55 GB | ✓ | ✓ |
-| 4 | `twolven/Qwen3.8-27B-abliterated-AWQ-MTP` | 12 | 0.1191 | AWQ W4A16 g128 | 9.37 GiB | ✓ | bf16 ✓ |
+| 4 | `twolven/Qwen3.8-27B-abliterated-AWQ-MTP` | 12 | 0.1191 | AWQ W4A16 g128 | **19.6 GB** | ✓ | bf16 ✓ |
 | 5 | `msuiche/Qwen3.8-27B-abliterated-cyber-GLP-49` | ~19 equiv. | — | **LoRA rank-1** | **8.6 MB** | n/a | n/a |
 | 6 | `JonathanColetti/Qwen3.8-27B-Uncensored` | 12 | 0.1191 | BF16 | ~55 GB | ✓ | ✓ |
 | 7 | `wangzhang/Qwen3.8-27B-abliterated` | 19 | 0.0069 | BF16 | ~55 GB | ? | ? |
@@ -99,11 +99,22 @@ Its value is letting us build our own NVFP4 with llm-compressor against sm_121a
 rather than inheriting someone's SM120 build — the clean path if rank 1
 benchmarks badly. Same weights, our quantization. Do not serve directly.
 
-**4 — `twolven/...-AWQ-MTP`.** Smallest servable build here, and the only AWQ one
-whose upstream publishes both a refusal count and a capability delta (mean −0.5
-pts across MMLU/ARC/HellaSwag/Winogrande). But 12/100 is not 0/100, and KL 0.1191
-is an order of magnitude more benign-prompt drift than rank 1 — it paid more in
+**4 — `twolven/...-AWQ-MTP`.** The only AWQ build whose upstream publishes both a
+refusal count and a capability delta (mean −0.5 pts across
+MMLU/ARC/HellaSwag/Winogrande). But 12/100 is not 0/100, and KL 0.1191 is an
+order of magnitude more benign-prompt drift than rank 1 — it paid more in
 collateral damage and still ended up less uncensored.
+
+> **Its card says 9.37 GiB. The actual download is 19.6 GB — measured on this
+> box, 2026-09-07.** The card figure is evidently the AWQ tensors alone,
+> excluding the bf16-preserved MTP head and vision tower this same table already
+> credits it with. So it is **not** the smallest servable build, which is what
+> this entry used to claim and rank it on: it is the same size as the NVFP4
+> builds, which removes the only axis on which it beat them.
+>
+> Rank 2 also came in at 20.6 GB against a stated 20.0 GB, and rank 5 at 10.9 MB
+> against 8.6 MB. Rank 1 matched its card exactly. These four numbers are the
+> only measured facts in this file.
 
 **5 — `msuiche/...-cyber-GLP-49`. Ranked here on evidence; may be the best
 practical answer.** It is an 8.6 MB rank-1 LoRA adapter, not a checkpoint. If
