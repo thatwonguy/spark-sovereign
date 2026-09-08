@@ -45,6 +45,27 @@ echo "── System Memory ─────────────────�
 free -h | grep -E "Mem|Swap"
 echo ""
 
+# ── Disk ──────────────────────────────────────────────────────────────────────
+# Reported here because the vault made disk a running concern rather than a
+# one-time install question: 02 never deletes weights, so /opt/model-archive
+# only grows, and the only thing that shrinks it is someone typing rm.
+echo "── Disk ────────────────────────────────────────────────────"
+CS_MODELS_DIR="${MODELS_DIR:-/opt/models}"
+CS_ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
+df -h "${CS_MODELS_DIR}" 2>/dev/null | awk 'NR==1 || NR==2'
+for d in "${CS_MODELS_DIR}" "${CS_ARCHIVE_DIR}"; do
+    if [ -d "${d}" ]; then
+        # sudo -n so a box without cached credentials degrades to a slightly
+        # low number instead of hanging this health check on a password prompt.
+        sz="$(sudo -n du -sh "${d}" 2>/dev/null | awk '{print $1}')"
+        [ -n "${sz}" ] || sz="$(du -sh "${d}" 2>/dev/null | awk '{print $1}')"
+        n="$(find "${d}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+        printf "  %-22s %-8s %s model dir(s)\n" "$(basename "${d}")" "${sz:-?}" "${n}"
+    fi
+done
+echo "  vault detail: bash scripts/vault_add.sh --list"
+echo ""
+
 # ── GPU ───────────────────────────────────────────────────────────────────────
 echo "── GPU / VRAM ──────────────────────────────────────────────"
 nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu \
