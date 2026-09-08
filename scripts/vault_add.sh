@@ -117,6 +117,14 @@ if [ "${LIST}" -eq 1 ]; then
             echo "          name, never by commit."
         fi
     done
+    # Total and headroom, because the only decision this listing supports is
+    # what to keep, and neither number is guessable from the per-entry sizes.
+    echo ""
+    printf '  TOTAL: %s in the vault\n' \
+        "$(du -sh "${ARCHIVE_DIR}" 2>/dev/null | awk '{print $1}')"
+    avail="$(df -Pk "${ARCHIVE_DIR}" 2>/dev/null | awk 'NR==2 {printf "%d", $4 * 1024}')"
+    [ -n "${avail}" ] && [ "${avail}" -gt 0 ] 2>/dev/null &&
+        printf '  FREE:  %s on that filesystem\n' "$(human "${avail}")"
     echo ""
     echo "Nothing here is ever deleted automatically. To reclaim space:"
     echo "  sudo rm -rf ${ARCHIVE_DIR}/<name>"
