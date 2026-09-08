@@ -937,6 +937,87 @@ Related: #19 (SGLang — the engine was never the lever), #18 (the roofline thes
 
 ---
 
+## 21. The Model Vault — Weights You Have Are Not Weights You Can Lose
+
+`02_download_models.sh` could delete model weights. It no longer can, and the
+code path is gone rather than defaulted off. This is the reasoning, and the four
+bugs found on the way there.
+
+### The hole was in `.env`, not in the prompt
+
+The prune step asked before deleting, and only an explicit `n` deleted. That
+looked safe. It was not, for a reason that has nothing to do with the prompt:
+`.env` is sourced *above* the defaults it sets. A single `ARCHIVE_OLD_MODEL=no`
+line left in `.env` — plausibly added once to skip a prompt during a swap — armed
+silent deletion for **every subsequent run**, with no prompt and no confirmation.
+The script even printed the reason it had not asked, which meant the failure was
+observable and still nobody was reading it at 2am mid-swap.
+
+The fix is not a better default. A guarantee that depends on a variable is not a
+guarantee. There is now no code path from any input to `rm -rf` on a model
+directory, and the header says so, so that a future session adding a "cleanup"
+flag has to first delete a sentence claiming it does not exist.
+
+### What the guarantee is actually for
+
+Not disk hygiene — upstream availability. A HuggingFace repo can be deleted,
+gated behind a licence click, renamed, made private, or blocked from where you
+are sitting, and any of those turns a working swap into a dead box. Once weights
+are on the disk none of it applies. The vault costs disk, which is cheap and
+recoverable; the alternative costs a model you can no longer obtain, which is
+neither.
+
+This is the same argument as the rest of the repo. A box that stops working
+because someone else changed their mind is not sovereign.
+
+### Name lookup was the wrong key
+
+The original restore matched `${ARCHIVE_DIR}/<basename of local_path>`. That is
+wrong twice over. It matches a *name*, so a saved copy is invisible the moment
+`models.yml` spells `local_path` differently for the same weights — and it does
+not check the revision at all, so it would happily restore a build that is not
+the one pinned and report success.
+
+Lookup is now keyed on the resolved commit SHA recorded in each entry's
+`DOWNLOADED_REVISION.txt`, and entries are matched on the `repo=` written inside
+them rather than the directory they happen to sit in. An exact commit match is
+offered as such; a different commit is offered too but labelled, and there Enter
+downloads rather than reuses — the saved copy is a fallback, not a substitute
+the user should get without noticing.
+
+### Three smaller bugs the rewrite surfaced
+
+**The drafter recorded no revision.** Every other model wrote
+`DOWNLOADED_REVISION.txt`; the drafter's download path never did. It was
+invisible to a commit-keyed vault, and — worse, and true before any of this — the
+running drafter weights were unattributable. Every acceptance-rate number in #20
+was measured against a SHA nobody had written down.
+
+**The single-slot claim was false.** The header described the archive as holding
+one model at a time. The code keyed on `${ARCHIVE_DIR}/${name}`, which is one
+slot *per name* — it always held as many models as fit. A comment that is wrong
+about the code is worse than no comment: it is the thing a future reader trusts
+instead of reading.
+
+**A duplicate is still not a thing to delete.** When a pruned model matches a
+vault entry byte-for-byte by SHA, the tempting move is to drop one. It now keeps
+both and prints the two paths, because "it is only a duplicate" is exactly the
+reasoning that eventually deletes the wrong thing. Reclaiming that space is a
+`rm -rf` the user types.
+
+### Key lesson
+
+The prompt was never the safety mechanism — it only looked like one, because
+every test of it was interactive. The delete happened on the path where nobody
+was watching, armed by a config line written weeks earlier for an unrelated
+reason. Safety that is one variable away from off is a default, not a property.
+Remove the capability and the class of bug goes with it.
+
+Related: #20 (the drafter these numbers belong to), #18 (why re-downloading 20GB
+is not a neutral cost on a box this size).
+
+---
+
 ## Model History (Quick Reference)
 
 | Release | Model | Architecture | Active Params | tok/s | Vision | Notes |

@@ -3,33 +3,28 @@
 # PHASE 2 — Download All Models
 # =============================================================================
 # Sources model HF repos + local paths from config/models.yml.
-# To swap a model: edit config/models.yml, re-run this script.
-# Idempotent — skips already-downloaded models, removes unused ones.
+# To swap a model: edit config/models.yml, re-run this script. Idempotent.
 #
-# Archive-on-prune:
-#   Before deleting a pruned model dir, offers to move it to ${ARCHIVE_DIR}
-#   (default /opt/model-archive) so a rollback does not require re-downloading
-#   ~35GB from HuggingFace. Archive is single-slot: only ONE saved model at a
-#   time. If a different model already occupies the slot, you are asked
-#   whether to replace it. Env vars:
-#     ARCHIVE_OLD_MODEL=ask|yes|no   default: ask if interactive, archive otherwise
-#     ARCHIVE_DIR=<path>             default: /opt/model-archive
-#   Deleting only ever happens on an explicit no — from the prompt or from
-#   ARCHIVE_OLD_MODEL. With no terminal it archives rather than deletes, and any
-#   delete that skipped the prompt prints the reason it was not asked.
-#   NOTE: .env is sourced before these defaults, so ARCHIVE_OLD_MODEL=no there
-#   silently arms deletion for every run.
+# THIS SCRIPT NEVER DELETES MODEL WEIGHTS. There is no code path that does, and
+# no flag or prompt answer that reaches one. A model is either serving, under
+# /opt/models, or set aside in the vault at ${ARCHIVE_DIR}. Freeing space is
+# manual: sudo rm -rf ${ARCHIVE_DIR}/<name>. Do not add a delete path here.
 #
-# Restore-from-archive:
-#   Checks ${ARCHIVE_DIR}/<name> before downloading and offers to move it back.
-#     RESTORE_ARCHIVED_MODEL=ask|yes|no   default: ask if interactive, yes otherwise
-#   Non-interactive defaults to yes (opposite of archive-on-prune) — nothing on
-#   the boot path runs this script, and a silent 25GB re-pull is worse.
+# The vault is searched BY COMMIT, not by directory name: each entry records its
+# resolved SHA in DOWNLOADED_REVISION.txt, and that is what is matched. On a hit
+# the user chooses reuse (a rename) or a fresh download. A different commit is
+# offered too, labelled as such — an upstream that has been deleted, gated or
+# blocked still leaves something serveable, which is the point of the vault.
 #
-# Revision drift:
-#   A model already on disk is compared against the SHA models.yml asks for,
-#   and you are offered the swap. Detects different, never better.
-#     CHECK_REVISION=ask|yes|no           default: ask if interactive, no otherwise
+#   REUSE_FROM_VAULT=ask|yes|no   default: ask if interactive; non-interactive
+#                                 reuses only on an exact commit match
+#   CHECK_REVISION=ask|yes|no     compare a resident model against the pinned
+#                                 SHA. default: ask if interactive, else no
+#   ARCHIVE_DIR=<path>            default /opt/model-archive. MUST be the same
+#                                 filesystem as /opt/models — moves are renames
+#
+# Rationale, and the bugs that shaped this file: docs/LESSONS.md #21.
+# User-facing behaviour: README "Downloaded once, kept forever".
 # =============================================================================
 
 set -euo pipefail
@@ -37,10 +32,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/.env" 2>/dev/null || true
 
-ARCHIVE_OLD_MODEL="${ARCHIVE_OLD_MODEL:-}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
-RESTORE_ARCHIVED_MODEL="${RESTORE_ARCHIVED_MODEL:-}"
 CHECK_REVISION="${CHECK_REVISION:-}"
+
+# RESTORE_ARCHIVED_MODEL was the old spelling; honour it so an existing .env
+# keeps working, but REUSE_FROM_VAULT is the name now.
+REUSE_FROM_VAULT="${REUSE_FROM_VAULT:-${RESTORE_ARCHIVED_MODEL:-}}"
+
+# Deletion was removed outright. Say so rather than ignoring it in silence — a
+# box carrying ARCHIVE_OLD_MODEL=no in .env has been deleting weights on every
+# run, and its owner should learn that stopped.
+if [ -n "${ARCHIVE_OLD_MODEL:-}" ]; then
+    echo "  NOTE: ARCHIVE_OLD_MODEL=${ARCHIVE_OLD_MODEL} is set, and no longer does anything."
+    echo "        This script cannot delete model weights any more. Pruned models"
+    echo "        are moved to ${ARCHIVE_DIR} and kept. Remove the line from .env."
+    echo ""
+fi
 
 # Ensure user-local Python CLI tools are available (hf, aider, etc.)
 export PATH="$HOME/.local/bin:$PATH"
@@ -84,114 +91,37 @@ print(val if val is not None else '')
 "
 }
 
-# Read an answer from the terminal rather than stdin, and discard anything
-# already buffered. A pasted multi-line command block leaves its remaining lines
-# in the input queue, and a plain `read` consumes the next one as the answer —
-# which silently answered destructive prompts with the following command.
-# Returns 1 when there is no terminal to ask.
+# Read an answer from the terminal, not stdin, discarding anything buffered: a
+# pasted multi-line block otherwise answers the prompt with its own next line.
+# Returns 1 when there is no terminal to ask. LESSONS.md #21.
 ask() {
     local __var="$2" reply=""
-    # -r /dev/tty can pass on a node that still fails to open, so opening it is
-    # the real test. It happens in a subshell: redirecting stderr around the
-    # actual read would swallow the prompt, since read -p writes to stderr.
+    # Opening /dev/tty is the real test; -r can pass where the open fails.
     ( : < /dev/tty ) 2>/dev/null || return 1
     while read -r -t 0 2>/dev/null; do read -r _ 2>/dev/null || break; done
-    # Prompt to the terminal, not stdout: piping the script would otherwise
-    # buffer the question into the pipe while read blocks on the tty, leaving
-    # it waiting on a prompt nobody can see.
+    # Prompt to the terminal, not stdout, or piping the script hides the question.
     printf '%s' "$1" > /dev/tty
     read -r reply < /dev/tty || return 1
     printf -v "${__var}" '%s' "${reply}"
 }
 
-# Move a pruned model dir to the single-slot archive, or delete it.
-# Interactive terminals get a Y/n prompt; non-interactive callers delete
-# (preserving the pre-archive behavior for boot / watchdog / systemd).
-archive_or_remove() {
+# Read one field out of a vault entry's (or model dir's) revision record.
+# Empty when the file or the field is absent — entries predating that record
+# exist, and "unknown" is a legitimate answer everywhere it is consumed.
+revision_field() {
+    local dir="$1" key="$2"
+    [ -f "${dir}/DOWNLOADED_REVISION.txt" ] || return 0
+    sed -n "s/^${key}=//p" "${dir}/DOWNLOADED_REVISION.txt" | head -1
+}
+
+# Move a model dir into the vault. There is no delete path and no prompt: this
+# only ever relocates bytes that are staying on the disk either way.
+keep_in_vault() {
     local dir="$1"
     local name; name="$(basename "${dir}")"
-    local decision unasked=""
-
-    case "${ARCHIVE_OLD_MODEL}" in
-        yes|y|1|true|TRUE|True)  decision=archive ;;
-        no|n|0|false|FALSE|False)
-            decision=delete
-            unasked="ARCHIVE_OLD_MODEL=${ARCHIVE_OLD_MODEL} (set in the environment or .env)"
-            ;;
-        *)
-            if [ -t 0 ] && [ -t 1 ]; then
-                local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
-                echo ""
-                echo "  FOUND: ${dir}  (${size})"
-                echo "  This model is no longer listed in config/models.yml, so it is"
-                echo "  not being used. What should happen to it?"
-                echo ""
-                echo "    y  = KEEP IT, moved to ${ARCHIVE_DIR}/${name}"
-                echo "         Still uses ${size} of disk. You can put it back later."
-                echo "    n  = DELETE IT PERMANENTLY, freeing ${size}"
-                echo "         Getting it back would mean downloading it again."
-                echo ""
-                # Only an explicit no deletes. Anything unrecognised takes the
-                # keep default, because the other branch is unrecoverable.
-                local ans=""
-                ask "  Type y or n and press Enter (or just press Enter to keep it): " ans || ans=""
-                case "${ans}" in
-                    n|N|no|No|NO) decision=delete ;;
-                    *)            decision=archive ;;
-                esac
-            else
-                # No terminal to ask, so do not destroy. Nothing on the boot
-                # path runs this script, so there is no unattended caller whose
-                # behaviour this protects — only disk, which is the cheap side.
-                decision=archive
-                echo "  No terminal to prompt — archiving ${name} rather than deleting."
-            fi
-            ;;
-    esac
-
-    if [ "${decision}" = "delete" ]; then
-        local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
-        echo "  REMOVE unused model: ${dir}  (${size})"
-        [ -n "${unasked}" ] && echo "    deleted without asking, because ${unasked}"
-        sudo rm -rf "${dir}"
-        return
-    fi
+    local size; size="$(du -sh "${dir}" 2>/dev/null | awk '{print $1}')"
 
     sudo mkdir -p "${ARCHIVE_DIR}"
-    local dest="${ARCHIVE_DIR}/${name}"
-
-    if [ -e "${dest}" ]; then
-        # Single-slot archive: something is already saved. Ask before overwriting.
-        if [ -t 0 ] && [ -t 1 ]; then
-            local existing_size; existing_size="$(du -sh "${dest}" 2>/dev/null | awk '{print $1}')"
-            echo "  There is already a saved copy under that name:"
-            echo "    ${dest}  (${existing_size})"
-            echo "  Only one saved copy per name is kept, so they cannot both stay."
-            echo ""
-            echo "    y  = REPLACE the saved copy with this one"
-            echo "         The older saved copy is deleted permanently."
-            echo "    n  = KEEP the saved copy as it is"
-            echo "         ${dir} stays where it is and nothing is deleted."
-            echo ""
-            local ans=""
-            ask "  Type y or n and press Enter (or just press Enter to change nothing): " ans || ans=""
-            case "${ans}" in
-                y|Y|yes|Yes|YES)
-                    sudo rm -rf "${dest}"
-                    ;;
-                *)
-                    # Neither copy gets destroyed on an unclear answer: leave the
-                    # pruned dir in /opt/models and re-offer it next run.
-                    echo "  Archive slot occupied — leaving ${dir} in place."
-                    return
-                    ;;
-            esac
-        else
-            echo "  ERROR: archive slot ${dest} already exists; refusing to overwrite non-interactively."
-            echo "  Move it aside or re-run with ARCHIVE_OLD_MODEL=no."
-            exit 1
-        fi
-    fi
 
     # Reject cross-device moves — an rsync+delete would silently balloon
     # duration and disk use for ~35GB, better to fail fast.
@@ -200,64 +130,161 @@ archive_or_remove() {
     dst_dev="$(stat -c %d "${ARCHIVE_DIR}" 2>/dev/null || echo y)"
     if [ "${src_dev}" != "${dst_dev}" ]; then
         echo "  ERROR: ${dir} and ${ARCHIVE_DIR} are on different filesystems."
+        echo "  A move across devices is a 35GB copy wearing a rename's clothes."
         echo "  Point ARCHIVE_DIR at a location on the same disk as /opt/models."
         exit 1
     fi
 
-    echo "  ARCHIVE: ${dir} → ${dest}"
+    local sha; sha="$(revision_field "${dir}" resolved_sha)"
+    local dest="${ARCHIVE_DIR}/${name}"
+
+    if [ -e "${dest}" ]; then
+        local existing_sha; existing_sha="$(revision_field "${dest}" resolved_sha)"
+
+        if [ -n "${sha}" ] && [ "${sha}" = "${existing_sha}" ]; then
+            # Same weights twice. Both kept — "it is only a duplicate" is the
+            # reasoning that eventually deletes the wrong thing.
+            echo ""
+            echo "  ${name}: the vault already holds this exact revision."
+            echo "    already kept: ${dest}"
+            echo "    duplicate:    ${dir}  (${size})"
+            echo "    revision:     ${sha}"
+            echo "    Nothing deleted. To reclaim ${size}, you remove it yourself:"
+            echo "      sudo rm -rf ${dir}"
+            return
+        fi
+
+        # A different (or unrecorded) revision under a name already taken.
+        # Suffix rather than overwrite, so both stay reachable.
+        local suffix="${sha:0:12}"
+        [ -n "${suffix}" ] || suffix="unknown-$(date +%Y%m%d%H%M%S)"
+        dest="${ARCHIVE_DIR}/${name}@${suffix}"
+        local n=2
+        while [ -e "${dest}" ]; do
+            dest="${ARCHIVE_DIR}/${name}@${suffix}-${n}"
+            n=$(( n + 1 ))
+        done
+    fi
+
+    echo "  KEEP: ${dir} → ${dest}  (${size})"
     sudo mv "${dir}" "${dest}"
 }
 
-# Inverse of archive_or_remove. Returns 0 if ${dest} now holds the model,
-# 1 if nothing was archived or a fresh download was requested.
-# Declining keeps the archived copy — it is the rollback if the new pull is bad.
-restore_from_archive() {
-    local dest="$1"
-    local label="$2"
-    local name; name="$(basename "${dest}")"
-    local src="${ARCHIVE_DIR}/${name}"
+# Every vault entry holding weights for a given HF repo.
+# Prints, one per line:  <dir> <TAB> <resolved_sha> <TAB> <downloaded_at>
+#
+# Matched on the repo recorded INSIDE each entry, not on the directory name —
+# the name is whatever local_path was at the time. Entries with no revision
+# record predate it: matched by directory name, reported unknown, never skipped.
+vault_entries_for() {
+    local want_repo="$1" want_name="$2"
+    [ -d "${ARCHIVE_DIR}" ] || return 0
 
-    if [ ! -d "${src}" ] || [ -z "$(ls -A "${src}" 2>/dev/null)" ]; then
-        return 1
+    local d
+    for d in "${ARCHIVE_DIR}"/*/; do
+        d="${d%/}"
+        [ -d "${d}" ] || continue
+        [ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue
+
+        local repo; repo="$(revision_field "${d}" repo)"
+        if [ -z "${repo}" ]; then
+            # Legacy entry. The directory name is the only identity it has, and
+            # keep_in_vault may have suffixed it with @<sha>.
+            local base="${d##*/}"
+            [ "${base%%@*}" = "${want_name}" ] || continue
+        elif [ "${repo}" != "${want_repo}" ]; then
+            continue
+        fi
+
+        printf '%s\t%s\t%s\n' "${d}" \
+            "$(revision_field "${d}" resolved_sha)" \
+            "$(revision_field "${d}" downloaded)"
+    done
+}
+
+# Look in the vault before downloading. Returns 0 if ${dest} now holds the
+# model (nothing left to download), 1 to fall through and pull from HuggingFace.
+# Neither answer destroys anything: declining leaves the saved copy in place.
+reuse_from_vault() {
+    local dest="$1" label="$2" hf_repo="$3" target_sha="$4"
+    local name; name="$(basename "${dest}")"
+
+    local entries; entries="$(vault_entries_for "${hf_repo}" "${name}")"
+    [ -n "${entries}" ] || return 1
+
+    # Exact commit wins. Failing that, the newest copy of this repo — labelled
+    # as a different build, never passed off as what was asked for.
+    local src="" src_sha="" src_when="" exact=0
+    if [ -n "${target_sha}" ]; then
+        local d s w
+        while IFS=$'\t' read -r d s w; do
+            [ "${s}" = "${target_sha}" ] || continue
+            src="${d}"; src_sha="${s}"; src_when="${w}"; exact=1
+            break
+        done <<< "${entries}"
+    fi
+    if [ -z "${src}" ]; then
+        local newest; newest="$(printf '%s\n' "${entries}" | sort -t"$(printf '\t')" -k3,3r | head -1)"
+        src="$(printf '%s' "${newest}" | cut -f1)"
+        src_sha="$(printf '%s' "${newest}" | cut -f2)"
+        src_when="$(printf '%s' "${newest}" | cut -f3)"
     fi
 
+    local size; size="$(du -sh "${src}" 2>/dev/null | awk '{print $1}')"
+    local count; count="$(printf '%s\n' "${entries}" | grep -c . || true)"
+
     local decision
-    case "${RESTORE_ARCHIVED_MODEL}" in
-        yes|y|1|true|TRUE|True)   decision=restore ;;
+    case "${REUSE_FROM_VAULT}" in
+        yes|y|1|true|TRUE|True)   decision=reuse ;;
         no|n|0|false|FALSE|False) decision=download ;;
         *)
             if [ -t 0 ] && [ -t 1 ]; then
-                local size; size="$(du -sh "${src}" 2>/dev/null | awk '{print $1}')"
                 echo ""
-                echo "  ${label} is missing from /opt/models, but a saved copy is"
-                echo "  already on this machine — no download needed:"
-                echo "    ${src}  (${size})"
-                if [ -f "${src}/DOWNLOADED_REVISION.txt" ]; then
-                    echo "  That copy came from:"
-                    sed 's/^/      /' "${src}/DOWNLOADED_REVISION.txt"
+                if [ "${exact}" -eq 1 ]; then
+                    echo "  ${label} is not in /opt/models — but these EXACT weights are"
+                    echo "  already on this box. Same commit config/models.yml asks for."
                 else
-                    echo "  (There is no record of which version this copy is.)"
+                    echo "  ${label} is not in /opt/models. This box has weights for"
+                    echo "  ${hf_repo}, but NOT at the commit config/models.yml asks for:"
+                    echo "    on hand:   ${src_sha:-unrecorded}"
+                    echo "    asked for: ${target_sha:-unknown — could not reach HuggingFace}"
                 fi
                 echo ""
-                echo "    y  = USE THE SAVED COPY. Takes a second, downloads nothing."
+                echo "    ${src}  (${size})"
+                echo "    revision: ${src_sha:-no record of which version this is}"
+                [ -n "${src_when}" ] && echo "    saved:    ${src_when}"
+                [ "${count}" -gt 1 ] && echo "    (${count} saved copies of this model — see ${ARCHIVE_DIR})"
+                echo ""
+                echo "    y  = USE WHAT IS ALREADY HERE. A rename. Downloads nothing,"
+                echo "         and works with HuggingFace unreachable or the repo gone."
                 echo "    n  = DOWNLOAD A FRESH COPY from HuggingFace instead."
-                echo "         Slower, and it may not match the saved copy if the"
-                echo "         model was re-uploaded since. The saved copy is kept."
+                echo "         The saved copy is kept either way — nothing is deleted."
                 echo ""
                 local ans=""
-                ask "  Type y or n and press Enter (or just press Enter to use the saved copy): " ans || ans=""
-                case "${ans}" in
-                    n|N|no|No|NO) decision=download ;;
-                    *)            decision=restore ;;
-                esac
+                if [ "${exact}" -eq 1 ]; then
+                    ask "  Type y or n and press Enter (Enter = use what is here): " ans || ans=""
+                    case "${ans}" in
+                        n|N|no|No|NO) decision=download ;;
+                        *)            decision=reuse ;;
+                    esac
+                else
+                    # Not what was pinned, so no silent default: Enter downloads.
+                    ask "  Type y to use the saved copy, or Enter to download what was asked for: " ans || ans=""
+                    case "${ans}" in
+                        y|Y|yes|Yes|YES) decision=reuse ;;
+                        *)               decision=download ;;
+                    esac
+                fi
+            elif [ "${exact}" -eq 1 ]; then
+                decision=reuse
             else
-                decision=restore
+                decision=download
             fi
             ;;
     esac
 
     if [ "${decision}" = "download" ]; then
-        echo "  Keeping the archived copy at ${src}; downloading fresh instead."
+        echo "  Keeping the saved copy at ${src}; downloading fresh instead."
         return 1
     fi
 
@@ -272,9 +299,14 @@ restore_from_archive() {
     fi
 
     sudo mkdir -p "$(dirname "${dest}")"
-    echo "  RESTORE: ${src} → ${dest}"
+    echo "  REUSE: ${src} → ${dest}"
     sudo mv "${src}" "${dest}"
-    echo "  OK ${label} (restored from archive — no download)"
+    if [ "${exact}" -eq 1 ]; then
+        echo "  OK ${label} (exact revision reused from the vault — no download)"
+    else
+        echo "  OK ${label} (reused from the vault at revision ${src_sha:-unknown},"
+        echo "     which is NOT what models.yml pins — no download)"
+    fi
     return 0
 }
 
@@ -295,8 +327,8 @@ PYEOF
 }
 
 # Returns 0 to keep what is on disk, 1 to fall through and download.
-# Detects that hashes differ, not that the new one is better — upstream
-# re-uploads have shipped broken — so it always asks and always archives first.
+# Detects that hashes DIFFER, not that the new one is better — upstream
+# re-uploads have shipped broken — so it asks, and vaults the old copy first.
 check_revision_drift() {
     local local_path="$1" hf_repo="$2" hf_revision="$3" label="$4"
 
@@ -347,10 +379,10 @@ check_revision_drift() {
         *) echo "  Keeping the copy on disk."; return 0 ;;
     esac
 
-    # Before archiving, not after: failing here otherwise strands the working
-    # copy in the archive with /opt/models empty.
+    # Before moving it aside, not after: failing here otherwise strands the
+    # working copy in the vault with /opt/models empty.
     require_hf
-    ARCHIVE_OLD_MODEL=yes archive_or_remove "${local_path}"
+    keep_in_vault "${local_path}"
     return 1
 }
 
@@ -362,9 +394,8 @@ download_model() {
     hf_repo=$(get_model_field "${top_key}" hf_repo)
     local_path=$(get_model_field "${top_key}" local_path)
 
-    # Optional pin. Blank (the normal case) means "latest on main at pull time",
-    # which is what you want on a fresh drop. Set hf_revision only to reproduce
-    # a known-good state or to dodge a bad upstream push.
+    # Optional pin. Blank = latest on main at pull time. Set it only to
+    # reproduce a known-good state or dodge a bad upstream push.
     hf_revision=$(get_model_field "${top_key}" hf_revision)
 
     if [ -z "${hf_repo}" ] || [ -z "${local_path}" ]; then
@@ -377,11 +408,23 @@ download_model() {
             echo "  SKIP ${label}: already exists at ${local_path}"
             return
         fi
-        # Drift accepted: the old copy is archived, fall through and download.
+        # Drift accepted: the old copy is in the vault, fall through and download.
     fi
 
-    # An earlier prune may have parked it in the archive; a rename beats a re-pull.
-    if restore_from_archive "${local_path}" "${label}"; then
+    # What commit is models.yml asking for? A 40-hex pin already is one; anything
+    # else resolves upstream. EMPTY IS NORMAL, not an error — HuggingFace being
+    # unreachable or the repo gone is the case the vault exists for. Resolved
+    # here, not at startup, so a fully resident stack makes no network calls.
+    local target_sha=""
+    if printf '%s' "${hf_revision}" | grep -qE '^[0-9a-f]{40}$'; then
+        target_sha="${hf_revision}"
+    else
+        target_sha=$(resolve_upstream_sha "${hf_repo}" "${hf_revision}")
+    fi
+
+    # Already downloaded once? A rename beats a re-pull, and works whether or
+    # not HuggingFace will still serve it.
+    if reuse_from_vault "${local_path}" "${label}" "${hf_repo}" "${target_sha}"; then
         return
     fi
 
@@ -393,11 +436,10 @@ download_model() {
     hf download "${hf_repo}" --local-dir "${local_path}" \
         ${hf_revision:+--revision "${hf_revision}"}
 
-    # Record which commit we actually got. Without this the running weights are
-    # unattributable: "latest at pull time" is not a state you can return to,
-    # and every measured number in docs/LESSONS.md is implicitly against a SHA
-    # nobody wrote down. `hf download` leaves the resolved ref in the local
-    # cache metadata; fall back to the API when --local-dir has stripped it.
+    # Record which commit we got: "latest at pull time" is not a state you can
+    # return to, and the vault matches on this SHA. `hf download` leaves the
+    # resolved ref in cache metadata; fall back to the API when --local-dir
+    # has stripped it.
     local sha=""
     if [ -f "${local_path}/.cache/huggingface/.gitattributes.metadata" ]; then
         sha=$(head -1 "${local_path}/.cache/huggingface/.gitattributes.metadata" 2>/dev/null || echo "")
@@ -429,10 +471,9 @@ echo ""
 
 # ── Prune model directories no longer in models.yml ──────────────────────────
 echo ">>> Checking for unused model directories in /opt/models..."
-# Every field that can name a resident model dir, across all sections. Reading
-# only local_path of a fixed key list meant brain.speculative_draft_model was
-# never seen, so the drafter was pruned on every run. Err toward keeping: a
-# stale dir costs disk, a pruned live one costs a re-download and a dead server.
+# EVERY field that can name a resident model dir, across ALL sections. A fixed
+# key list reading only local_path missed brain.speculative_draft_model and
+# pruned the drafter every run. Err toward keeping. LESSONS.md #21.
 ACTIVE_PATHS=$(python3 -c "
 import yaml
 with open('${REPO_ROOT}/config/models.yml') as f:
@@ -451,7 +492,7 @@ if [ -d /opt/models ]; then
     for dir in /opt/models/*/; do
         dir="${dir%/}"
         if ! echo "${ACTIVE_PATHS}" | grep -qxF "${dir}"; then
-            archive_or_remove "${dir}"
+            keep_in_vault "${dir}"
         fi
     done
 fi
@@ -463,31 +504,25 @@ download_model "TTS (Magpie TTS)"                tts
 
 # -----------------------------------------------------------------------------
 # Speculative decoding drafter — separate checkpoint, not part of Brain.
+# Why it exists and what it bought: docs/LESSONS.md #20.
 # -----------------------------------------------------------------------------
-# Brain's own MTP heads ship inside its checkpoint and need nothing here. This
-# is the external drafter that replaced them: measured 23.85 tok/s against MTP's
-# 19.66 on the same prompt, output unchanged (docs/LESSONS.md #20).
-#
-# THE RENAME BELOW IS REQUIRED, NOT COSMETIC. The upload declares architecture
-# "DSparkDraftModel", a generic name vLLM dispatches to its DeepSeek-V4
-# implementation, which then dies reading a DeepSeek-only config field:
+# THE RENAME BELOW IS REQUIRED, NOT COSMETIC. DO NOT REMOVE IT. The upload
+# declares architecture "DSparkDraftModel", which vLLM dispatches to its
+# DeepSeek-V4 implementation, which then dies on a DeepSeek-only config field:
 #
 #   AttributeError: 'Qwen3Config' object has no attribute 'hc_mult'
 #
-# "Qwen3DSparkModel" is registered in the image and is the Qwen3 path. Renaming
-# it here means a fresh install works; leaving it to a manual step means Brain
-# fails to start with an error that names DeepSeek and points nowhere useful.
-#
-# This lives in the model directory rather than the repo, so it cannot be
-# committed — which is exactly why it belongs in the script that creates that
-# directory. It was found the hard way, after four failed launches.
+# "Qwen3DSparkModel" is the Qwen3 path registered in the image. It is patched
+# here, in the script that creates the directory, because it lives in the model
+# directory and so cannot be committed to the repo.
 DRAFT_PATH=$(get_model_field brain speculative_draft_model)
 DRAFT_REPO=$(get_model_field brain speculative_draft_repo)
 if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
     echo ""
     if [ -d "${DRAFT_PATH}" ] && [ "$(ls -A "${DRAFT_PATH}" 2>/dev/null)" ]; then
         echo "  SKIP Drafter: already exists at ${DRAFT_PATH}"
-    elif restore_from_archive "${DRAFT_PATH}" "Drafter"; then
+    elif reuse_from_vault "${DRAFT_PATH}" "Drafter" "${DRAFT_REPO}" \
+            "$(resolve_upstream_sha "${DRAFT_REPO}" "")"; then
         :
     else
         require_hf
@@ -495,6 +530,16 @@ if [ -n "${DRAFT_REPO}" ] && [ -n "${DRAFT_PATH}" ]; then
         echo "    HF repo: ${DRAFT_REPO}"
         mkdir -p "${DRAFT_PATH}"
         hf download "${DRAFT_REPO}" --local-dir "${DRAFT_PATH}"
+
+        # vault_entries_for matches on the repo written here. Without this file
+        # the drafter is findable only by directory name, never by commit.
+        DRAFT_SHA="$(resolve_upstream_sha "${DRAFT_REPO}" "")"
+        if [ -n "${DRAFT_SHA}" ]; then
+            printf 'repo=%s\nrevision=%s\nresolved_sha=%s\ndownloaded=%s\n' \
+                "${DRAFT_REPO}" "main" "${DRAFT_SHA}" "$(date -Iseconds)" \
+                > "${DRAFT_PATH}/DOWNLOADED_REVISION.txt"
+            echo "    Resolved SHA: ${DRAFT_SHA}"
+        fi
     fi
 
     if [ -f "${DRAFT_PATH}/config.json" ]; then
@@ -540,19 +585,26 @@ fi
 
 echo ""
 echo "Disk usage summary:"
-# Reuses the prune keep-list rather than its own key list, so the summary cannot
-# disagree with it — a hardcoded list here silently omitted the drafter.
+# Reuses the prune keep-list, so the summary cannot disagree with it.
 while IFS= read -r path; do
     [ -n "${path}" ] && [ -d "${path}" ] && du -sh "${path}" 2>/dev/null || true
 done <<< "${ACTIVE_PATHS}"
 
 if [ -d "${ARCHIVE_DIR}" ] && [ -n "$(ls -A "${ARCHIVE_DIR}" 2>/dev/null || true)" ]; then
     echo ""
-    echo "Archived (re-run this script after switching models.yml and it offers"
-    echo "these back automatically; 'sudo mv ${ARCHIVE_DIR}/<name> /opt/models/' still works):"
+    echo "Already downloaded and kept in ${ARCHIVE_DIR} — point models.yml at any"
+    echo "of these and re-run this script; it offers them back without downloading,"
+    echo "whether or not HuggingFace still has them:"
     for a in "${ARCHIVE_DIR}"/*/; do
-        [ -d "${a}" ] && du -sh "${a%/}" 2>/dev/null || true
+        [ -d "${a}" ] || continue
+        printf '  %s\n' "$(du -sh "${a%/}" 2>/dev/null || echo "     ?  ${a%/}")"
+        rev="$(revision_field "${a%/}" resolved_sha)"
+        repo="$(revision_field "${a%/}" repo)"
+        [ -n "${repo}" ] && printf '      %s @ %s\n' "${repo}" "${rev:-unknown revision}"
     done
+    echo ""
+    echo "Nothing here is ever deleted by this script. To reclaim the space:"
+    echo "  sudo rm -rf ${ARCHIVE_DIR}/<name>"
 fi
 
 echo ""
