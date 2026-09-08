@@ -314,7 +314,7 @@ git clone https://github.com/thatwonguy/spark-sovereign.git ~/spark-sovereign
 cd ~/spark-sovereign
 git checkout v5.5   # current release — pins the model and every serving parameter
 cp .env.example .env
-nano .env   # set HF_TOKEN at minimum
+nano .env   # optional — see below; the defaults work unset
 
 # Run these scripts in order (idempotent, safe to re-run)
 bash scripts/00_first_boot.sh      # Tailscale + confirms setup
@@ -365,10 +365,9 @@ See [docs/OPENCLAW_SETUP.md](docs/OPENCLAW_SETUP.md) for detailed connection exa
 > reach port 8000 — other machines on your LAN or tailnet included. Set it to
 > `0.0.0.0` if you deliberately want remote access.
 
-> **Script 02 prunes models no longer in `config/models.yml`.** In an
-> interactive terminal it offers to move the pruned model to
-> `/opt/model-archive` first, so rolling back costs a `mv` instead of another
-> download. Non-interactive callers delete without asking.
+> **Script 02 never deletes model weights.** A model you stop using is moved to
+> `/opt/model-archive` and kept, and 02 offers it back instead of downloading it
+> again. See [Downloaded once, kept forever](#downloaded-once-kept-forever).
 
 ### Rotating the API key
 
@@ -447,16 +446,125 @@ Brain gets a 10-min load grace window — the watchdog will not restart Brain mi
 
 ---
 
+## Downloaded once, kept forever
+
+**`/opt/model-archive` holds every model this box has downloaded and is no
+longer serving.** Script 02 will not delete from it — not on a flag, not on a
+prompt, not ever. Once weights are on your disk they stay there, so it stops
+mattering whether the upstream repo is still available: deleted, gated, renamed,
+made private, or blocked from where you are, the bytes are already local.
+
+A model is always in exactly one of two places — serving, under `/opt/models`,
+or set aside, in the archive.
+
+**Before downloading anything, 02 searches the archive for the exact commit
+`config/models.yml` asks for**, matched on the SHA recorded in each entry's
+`DOWNLOADED_REVISION.txt`. On a hit it tells you what it found and you choose:
+
+```
+  Brain is not in /opt/models — but these EXACT weights are
+  already on this box. Same commit config/models.yml asks for.
+
+    /opt/model-archive/qwen38-27b-nvfp4  (21G)
+    revision: 9e3f1c0b7a24...
+    saved:    2026-08-27T14:02:11-04:00
+
+    y  = USE WHAT IS ALREADY HERE. A rename. Downloads nothing,
+         and works with HuggingFace unreachable or the repo gone.
+    n  = DOWNLOAD A FRESH COPY from HuggingFace instead.
+         The saved copy is kept either way — nothing is deleted.
+```
+
+If all it has is a *different* commit of that model, it offers that too and says
+plainly that it isn't what you pinned. If HuggingFace is unreachable it says
+`asked for: unknown` and still offers what you have. Either answer leaves the
+saved copy where it is.
+
+None of this is specific to any particular model — it applies to the brain, the
+drafter, ASR, TTS, anything `models.yml` names.
+
+### Putting a model in the archive before you need it
+
+The archive fills on its own as you swap models, but you can also stock it
+directly — grab weights while they're available, test them later:
+
+```bash
+bash scripts/vault_add.sh <hf-repo>              # pull it into the archive
+bash scripts/vault_add.sh <hf-repo> --dry-run    # size + disk check only
+bash scripts/vault_add.sh --list                 # what you have, and its commit
+```
+
+It downloads to the archive and **nothing else** — `/opt/models`, `models.yml`,
+and anything running are untouched. It skips the download entirely if that exact
+commit is already on the box, whether archived or currently live. To serve one
+later, point `models.yml` at the same `hf_repo` and run 02; it matches on the
+recorded commit and offers it back without downloading.
+
+This is an ad-hoc helper, not a setup step — the numbered `00`→`04` sequence is
+still the whole path from an unboxed Spark to a working stack.
+
+**Freeing space is yours to do, on purpose:**
+
+```bash
+du -sh /opt/model-archive/*/          # what is kept, and what it costs
+sudo rm -rf /opt/model-archive/<name> # gone, and only because you said so
+```
+
+The repo does not track or list what is in your archive — that is local state,
+different on every machine.
+
+---
+
 ## Swapping the Model
 
 All model config lives in `config/models.yml` — the single source of truth.
 
-1. Edit `config/models.yml` — update model fields
-2. `bash scripts/02_download_models.sh` — downloads new, prunes old
-3. `bash scripts/start_brain_ad_hoc.sh` — restarts Brain
-4. Update OpenClaw model ID → `openclaw gateway restart`
+```bash
+# 1. Stop the watchdog and the Brain FIRST — see the warning below
+sudo systemctl stop spark-watchdog.timer
+docker rm -f brain
 
-Each section in `models.yml` has commented swap examples. See [docs/LESSONS.md](docs/LESSONS.md) for what we've tested and why.
+# 2. Edit config/models.yml, then swap the weights
+nano config/models.yml
+bash scripts/02_download_models.sh
+
+# 3. Start Brain on the new model, and let the watchdog resume
+bash scripts/03_vllm_servers.sh
+sudo systemctl start spark-watchdog.timer
+
+# 4. Re-point OpenClaw if served_name changed
+openclaw gateway restart
+```
+
+> ⚠️ **Stop the watchdog before running 02 on a live Brain.** 02 sets aside any
+> `/opt/models` directory `models.yml` no longer claims — including the model
+> currently being served — and it does that *before* it fetches the new one. The
+> watchdog polls every 2 minutes, sees the Brain container gone, and runs
+> `start_brain_ad_hoc.sh` against a half-swapped tree. Three failures and it
+> **quarantines** the Brain, after which even a correct `03` is skipped until you
+> clear it by hand:
+>
+> ```bash
+> sudo rm /var/lib/spark-sovereign/state/brain.quarantined
+> ```
+>
+> Moving the live model directory is otherwise safe — it is a rename on one
+> filesystem, so the running container keeps its open handles. The watchdog is
+> the part that bites.
+
+**Step 2 usually costs nothing.** If this box has downloaded that exact commit
+before, 02 finds it in `/opt/model-archive` and offers it back — answer `y` and
+the swap is a rename, not a download. The model you are swapping *away* from is
+moved to the archive and kept, so going back is another rename. See
+[Downloaded once, kept forever](#downloaded-once-kept-forever).
+
+⚠️ **Swapping the brain? Swap or clear `speculative_config` and
+`speculative_draft_model` too.** The pinned drafter is trained against the
+*current* checkpoint. Left in place across a swap it still produces correct
+output — every draft is verified — but acceptance collapses and decode drops
+toward the 12.0 tok/s non-speculative floor.
+
+Each section in `models.yml` has commented swap examples. See [docs/LESSONS.md](docs/LESSONS.md) for what we've tested and why, and [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for the full swap checklist.
 
 ---
 
@@ -470,22 +578,28 @@ spark-sovereign/
 ├── scripts/
 │   ├── 00_first_boot.sh       ← WiFi setup + NVIDIA Sync + Tailscale
 │   ├── 01_system_prep.sh      ← Docker config, directories, Python deps, boot service
-│   ├── 02_download_models.sh  ← Download model from HF → /opt/models (prunes unused)
+│   ├── 02_download_models.sh  ← Download models → /opt/models. Reuses anything
+│   │                             already in /opt/model-archive instead of
+│   │                             re-downloading. NEVER deletes weights.
 │   ├── 03_vllm_servers.sh     ← Start Brain (port 8000)
 │   ├── 04_voice_stt.sh        ← Local Whisper STT setup (optional)
 │   ├── boot_sequence.sh       ← Auto-start on boot (oneshot, runs once at boot)
 │   ├── watchdog.sh            ← Self-healing tick (every 2 min via systemd timer)
 │   ├── start_brain_ad_hoc.sh  ← Restart Brain manually
 │   ├── check_stack.sh         ← Health check
-│   └── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
-│                                  Self-contained. `benchmark.sh` alone fills
-│                                  docs/BENCHMARKS.md; subcommands audit / quick /
-│                                  bandwidth / matrix / render / list
+│   ├── benchmark.sh           ← AD-HOC: the only benchmarking entry point.
+│   │                             Self-contained. `benchmark.sh` alone fills
+│   │                             docs/BENCHMARKS.md; subcommands audit / quick /
+│   │                             bandwidth / matrix / render / list
+│   └── vault_add.sh           ← AD-HOC: pull any HF model into the vault for
+│                                 later use. Never touches /opt/models or
+│                                 anything running. `--list` shows the vault
 ├── docs/
 │   ├── LESSONS.md          ← Full build journey and model decisions
 │   ├── OPENCLAW_SETUP.md   ← Agentic framework connection guide
 │   └── TROUBLESHOOTING.md
-├── .env.example            ← Copy to .env, fill in HF_TOKEN at minimum
+├── .env.example            ← Copy to .env. Every value is optional; the
+│                             defaults download and serve public models fine
 └── .gitignore
 ```
 
