@@ -62,7 +62,11 @@ for d in "${CS_MODELS_DIR}" "${CS_ARCHIVE_DIR}"; do
     [ -d "${d}" ] || continue
     sz="$(du -sh "${d}" 2>/dev/null | awk 'END {print $1}')" || sz=""
     [ -n "${sz}" ] || sz="?"
-    n="$(find "${d}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" || n="?"
+    # -not -name '.*' to match what vault_add.sh --list counts, which iterates
+    # "${ARCHIVE_DIR}"/*/ and so skips dotted directories. Without it this said
+    # 11 where that said 10, the difference being .staging — and two tools
+    # disagreeing about one number is worse than neither reporting it.
+    n="$(find "${d}" -mindepth 1 -maxdepth 1 -type d -not -name '.*' 2>/dev/null | wc -l)" || n="?"
     printf "  %-22s %-8s %s model dir(s)\n" "$(basename "${d}")" "${sz}" "${n}"
 done
 echo "  vault detail: bash scripts/vault_add.sh --list"
