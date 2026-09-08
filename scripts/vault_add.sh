@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# AD-HOC — Put any HuggingFace model into the vault, for later use or testing
+# AD-HOC — Put HuggingFace models into the vault, for later use or testing
 # =============================================================================
 # NOT part of the numbered setup sequence (00 -> 04). A helper you run when you
 # want weights on this box before — or without — committing to serving them.
@@ -17,37 +17,54 @@
 # a directory without it can only ever be matched by name.
 #
 # USAGE
-#   bash scripts/vault_add.sh <hf-repo> [--name <dir>] [--revision <ref|sha>]
-#   bash scripts/vault_add.sh <hf-repo> --dry-run     # size + disk check only
+#   bash scripts/vault_add.sh <hf-repo> [<hf-repo> ...] [options]
 #   bash scripts/vault_add.sh --list                  # what is in the vault
 #
-# EXIT CODES: 0 done or already had it, 2 bad arguments, 3 skipped (gated or
-# unreachable — not a breakage), 1 anything else.
+#   -y, --yes        do not ask before downloading (for unattended batches)
+#   -n, --dry-run    resolve, size and disk-check everything; download nothing
+#   --revision <r>   pin a ref or SHA        (single repo only)
+#   --name <dir>     vault directory name    (single repo only)
 #
-# EXAMPLES
-#   bash scripts/vault_add.sh lyf/Qwen3.8-27B-Heretic-ARA-NVFP4-MTP-VL
-#   bash scripts/vault_add.sh unsloth/Qwen3.8-27B-NVFP4 --revision 9e3f1c0b
-#   bash scripts/vault_add.sh some/model --name my-test-build
+# Many repos in one run is the point: they are planned together, confirmed once,
+# downloaded one at a time, and summarised at the end with what landed and what
+# did not. A gated repo does not stop the batch.
+#
+# EXIT CODES: 0 everything landed or was already here, 2 bad arguments,
+# 3 some were skipped (gated/unreachable — not a breakage), 1 a real failure.
+#
+# TOKENS — nothing is ever stored by this script:
+#   Public models need none. For a gated repo you are prompted once per run;
+#   the value is not echoed, not saved, and used for that process only. Press
+#   Enter to skip the model instead.
+#   For a batch, export it for the session so you are not asked per repo:
+#       read -rs HF_TOKEN && export HF_TOKEN     # not echoed, not in history
+#       bash scripts/vault_add.sh repo1 repo2 --yes
+#   An exported HF_TOKEN takes precedence over .env.
+#
+#   A TOKEN DOES NOT BYPASS GATING. "requires approval" means the account is
+#   not approved: request access on the model's page first.
 #
 # ENV
 #   ARCHIVE_DIR   default /opt/model-archive. MUST be the same filesystem as
 #                 /opt/models, or 02 cannot rename it into service later.
-#   MODELS_DIR    default /opt/models. Read only, to report what is already live.
-#   HF_TOKEN      OPTIONAL and not required anywhere. If a repo turns out to
-#                 be gated you are prompted for a token at that moment; it is
-#                 not echoed, not saved, and used for that run only. Press
-#                 Enter instead to skip the model and move on. Honoured if it
-#                 is already in the environment, but nothing here asks you to
-#                 put one in .env.
+#   MODELS_DIR    default /opt/models. Read only, to skip what is already live.
 #
-# Rationale: docs/LESSONS.md #21. User-facing behaviour: README "Downloaded
-# once, kept forever".
+# Rationale: docs/LESSONS.md #21. Behaviour: README "Downloaded once, kept forever".
 # =============================================================================
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Capture before sourcing. `.env` assigns HF_TOKEN unconditionally, so without
+# this an HF_TOKEN exported in the caller's shell is silently replaced by
+# whatever is on disk — which defeats the entire "paste it for this session
+# only, never store it" workflow.
+_HF_TOKEN_FROM_SHELL="${HF_TOKEN:-}"
 source "${REPO_ROOT}/.env" 2>/dev/null || true
+if [ -n "${_HF_TOKEN_FROM_SHELL}" ]; then
+    HF_TOKEN="${_HF_TOKEN_FROM_SHELL}"
+fi
 
 ARCHIVE_DIR="${ARCHIVE_DIR:-/opt/model-archive}"
 MODELS_DIR="${MODELS_DIR:-/opt/models}"
@@ -57,52 +74,46 @@ export PATH="$HOME/.local/bin:$PATH"
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export HF_TOKEN="${HF_TOKEN:-}"
 
-# .env.example shipped HF_TOKEN=your_hf_token_here for a long time, so plenty of
-# .env files hold that literal string. A non-empty non-token is worse than no
-# token at all: it authenticates as nobody, and it silently suppresses every
-# "you have no token" path — including the prompt that would have fixed it.
-# Real tokens are hf_ prefixed; anything else here is a placeholder.
+# A non-empty non-token is worse than none: it authenticates as nobody and
+# suppresses every "you have no token" path, including the prompt that would
+# fix it. Real tokens are hf_ prefixed.
 if [ -n "${HF_TOKEN}" ] && ! printf '%s' "${HF_TOKEN}" | grep -qE '^hf_[A-Za-z0-9_-]+$'; then
     echo "  NOTE: HF_TOKEN is set but is not a token (they start with 'hf_')."
     echo "        Ignoring it and continuing unauthenticated. If it came from"
-    echo "        .env, that is the old 'your_hf_token_here' placeholder — blank"
-    echo "        the line: HF_TOKEN="
+    echo "        .env, blank the line: HF_TOKEN="
     echo ""
     HF_TOKEN=""
     export HF_TOKEN
 fi
 
 # Guards re-prompting within one run. Keyed on "have we asked", NOT on whether
-# a token exists: a wrong or expired token is precisely a case worth asking about.
+# a token exists: a wrong or unapproved token is worth asking about once.
 TOKEN_PROMPTED=0
 
-REPO=""
+REPOS=()
 NAME=""
 REVISION=""
 DRY_RUN=0
 LIST=0
+ASSUME_YES=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --list|-l)     LIST=1 ;;
         --dry-run|-n)  DRY_RUN=1 ;;
+        --yes|-y)      ASSUME_YES=1 ;;
         --name)        NAME="${2:-}"; shift ;;
         --name=*)      NAME="${1#--name=}" ;;
         --revision)    REVISION="${2:-}"; shift ;;
         --revision=*)  REVISION="${1#--revision=}" ;;
-        -h|--help)     sed -n '2,45p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help)     sed -n '2,55p' "${BASH_SOURCE[0]}"; exit 0 ;;
         -*)            echo "Unknown option: $1 (try --help)"; exit 2 ;;
-        *)
-            if [ -n "${REPO}" ]; then
-                echo "ERROR: more than one repo given ('${REPO}' and '$1')."
-                echo "This takes one model at a time. Run it again for the next."
-                exit 2
-            fi
-            REPO="$1"
-            ;;
+        *)             REPOS+=("$1") ;;
     esac
     shift
 done
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 # Same reader 02 uses. The format is the contract between the two scripts.
 revision_field() {
@@ -124,13 +135,13 @@ else:
 " 2>/dev/null || echo "unknown"
 }
 
-# ── --list ───────────────────────────────────────────────────────────────────
-if [ "${LIST}" -eq 1 ]; then
+vault_listing() {
     echo "Vault: ${ARCHIVE_DIR}"
     if [ ! -d "${ARCHIVE_DIR}" ] || [ -z "$(ls -A "${ARCHIVE_DIR}" 2>/dev/null)" ]; then
         echo "  (empty)"
-        exit 0
+        return 0
     fi
+    local d
     for d in "${ARCHIVE_DIR}"/*/; do
         d="${d%/}"
         [ -d "${d}" ] || continue
@@ -144,25 +155,43 @@ if [ "${LIST}" -eq 1 ]; then
             echo "          name, never by commit."
         fi
     done
-    # Total and headroom, because the only decision this listing supports is
-    # what to keep, and neither number is guessable from the per-entry sizes.
+    # Total and headroom: the only decision this listing supports is what to
+    # keep, and neither number is guessable from the per-entry sizes.
     echo ""
     printf '  TOTAL: %s in the vault\n' \
         "$(du -sh "${ARCHIVE_DIR}" 2>/dev/null | awk '{print $1}')"
+    local avail
     avail="$(df -Pk "${ARCHIVE_DIR}" 2>/dev/null | awk 'NR==2 {printf "%d", $4 * 1024}')"
     [ -n "${avail}" ] && [ "${avail}" -gt 0 ] 2>/dev/null &&
         printf '  FREE:  %s on that filesystem\n' "$(human "${avail}")"
+}
+
+if [ "${LIST}" -eq 1 ]; then
+    vault_listing
     echo ""
     echo "Nothing here is ever deleted automatically. To reclaim space:"
     echo "  sudo rm -rf ${ARCHIVE_DIR}/<name>"
     exit 0
 fi
 
-if [ -z "${REPO}" ]; then
+if [ "${#REPOS[@]}" -eq 0 ]; then
     echo "ERROR: no model given."
-    echo "  bash scripts/vault_add.sh <hf-repo> [--name <dir>] [--revision <ref>]"
+    echo "  bash scripts/vault_add.sh <hf-repo> [<hf-repo> ...] [-y] [-n]"
     echo "  bash scripts/vault_add.sh --list"
     exit 2
+fi
+
+# --name and --revision identify ONE build, so they cannot apply to a list.
+if [ "${#REPOS[@]}" -gt 1 ]; then
+    if [ -n "${NAME}" ]; then
+        echo "ERROR: --name applies to a single repo, but ${#REPOS[@]} were given."
+        exit 2
+    fi
+    if [ -n "${REVISION}" ]; then
+        echo "ERROR: --revision applies to a single repo, but ${#REPOS[@]} were given."
+        echo "Pin one at a time; the rest resolve to latest on main."
+        exit 2
+    fi
 fi
 
 case "${NAME}" in
@@ -170,11 +199,13 @@ case "${NAME}" in
     */*|.|..) echo "ERROR: --name must be a plain directory name, got '${NAME}'."; exit 2 ;;
 esac
 
-if ! printf '%s' "${REPO}" | grep -qE '^[^/[:space:]]+/[^/[:space:]]+$'; then
-    echo "ERROR: '${REPO}' does not look like a HuggingFace repo id."
-    echo "Expected <org>/<model>, e.g. unsloth/Qwen3.8-27B-NVFP4."
-    exit 2
-fi
+for r in "${REPOS[@]}"; do
+    if ! printf '%s' "${r}" | grep -qE '^[^/[:space:]]+/[^/[:space:]]+$'; then
+        echo "ERROR: '${r}' does not look like a HuggingFace repo id."
+        echo "Expected <org>/<model>, e.g. unsloth/Qwen3.8-27B-NVFP4."
+        exit 2
+    fi
+done
 
 require_hf() {
     command -v hf >/dev/null 2>&1 && return 0
@@ -199,12 +230,9 @@ ask() {
 
 # Ask for a token at the one moment it is needed, and keep it for this process
 # only. DELIBERATELY NOT PERSISTED: a credential in a dotfile outlives the
-# reason it was created, and nothing here needs one except a gated download.
-# Read with -s so it is not echoed and never reaches shell history.
-# Returns 1 when declined, when there is no terminal, or when it has already
-# asked once this run. It does NOT bail merely because HF_TOKEN is set — a
-# placeholder or an expired token is exactly the case worth asking about, and
-# keying on that is what silently swallowed this prompt the first time.
+# reason it was created. Read with -s so it is neither echoed nor left in
+# shell history. Asks at most once per run, whether or not a token already
+# exists — an unapproved token is worth asking about, but only once.
 prompt_for_token() {
     [ "${TOKEN_PROMPTED}" -eq 0 ] || return 1
     TOKEN_PROMPTED=1
@@ -213,16 +241,15 @@ prompt_for_token() {
     {
         echo ""
         if [ -n "${HF_TOKEN}" ]; then
-            echo "  ${REPO} refused the token already in use."
-            echo "  It is gated, and the account behind that token is not approved."
-            echo "  Paste a token for an approved account, or press Enter to skip."
+            echo "  ${1} refused the token already in use — that account is not"
+            echo "  approved for it. A token does NOT bypass gating."
         else
-            echo "  ${REPO} is gated or private, so it needs a token."
-            echo "  Paste one to continue, or press Enter to skip this model."
+            echo "  ${1} is gated or private, so it needs a token."
         fi
+        echo "  Paste a token for an APPROVED account, or press Enter to skip."
         echo "  Not echoed, not saved, not written to .env — this run only."
-        echo "  Get one at https://huggingface.co/settings/tokens (Read is enough),"
-        echo "  and make sure that account has been granted access to the repo."
+        echo "  Tokens: https://huggingface.co/settings/tokens (Read is enough)"
+        echo "  Access: request it on the model's page first, or this will fail again."
         printf '  token: '
     } > /dev/tty
     read -rs t < /dev/tty || { echo "" > /dev/tty; return 1; }
@@ -233,35 +260,11 @@ prompt_for_token() {
     return 0
 }
 
-do_download() {
-    hf download "${REPO}" --local-dir "${STAGE}" \
-        ${REVISION:+--revision "${REVISION}"}
-}
-
-# Exit 3, not 1: being unable to reach a gated repo is a skip, not a breakage.
-# A batch loop should read as "3 of 4 landed, one needs access", not as failure.
-skip_gated() {
-    echo ""
-    echo "  SKIPPED — ${REPO} could not be downloaded."
-    echo "  If the error says access denied / requires approval, it is gated:"
-    echo "    request access at https://huggingface.co/${REPO}"
-    echo "  then run this again and paste a token when asked."
-    # STAGE does not exist yet when this is reached from the resolve step.
-    if [ -n "${STAGE:-}" ] && [ -d "${STAGE:-}" ]; then
-        echo "  Anything already fetched is parked in ${STAGE}, NOT in the vault,"
-        echo "  so 02 will not see or offer it. Delete it if you are done:"
-        echo "    sudo rm -rf ${STAGE}"
-    fi
-    exit 3
-}
-
 # Empty on any failure. Empty means "unknown", never "changed" — same rule as 02.
 resolve_upstream_sha() {
     python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo ""
 import json, os, sys, urllib.request
 repo, rev = sys.argv[1], (sys.argv[2] or "main")
-# Authenticated when a token exists: a gated repo often exposes no metadata at
-# all unauthenticated, and an unresolvable SHA looks identical to a dead repo.
 hdrs = {}
 tok = os.environ.get("HF_TOKEN", "")
 if tok:
@@ -276,8 +279,8 @@ except Exception:
 PYEOF
 }
 
-# Total size in bytes from the repo's file listing. 0 when unknown — the disk
-# check is skipped rather than guessed at.
+# Total bytes from the repo file listing. 0 when unknown — the disk check is
+# then skipped rather than guessed at.
 resolve_repo_size() {
     python3 - "$1" "${2:-}" <<'PYEOF' 2>/dev/null || echo 0
 import json, os, sys, urllib.request
@@ -297,112 +300,112 @@ except Exception:
 PYEOF
 }
 
+# Where these exact weights already sit, if anywhere. Matched on repo + SHA the
+# same way 02 does it, so "already have it" means the same in both scripts.
+already_present() {
+    local repo="$1" sha="$2" d
+    [ -n "${sha}" ] || return 1
+    for d in "${ARCHIVE_DIR}"/*/ "${MODELS_DIR}"/*/; do
+        d="${d%/}"
+        [ -d "${d}" ] || continue
+        [ "$(revision_field "${d}" repo)" = "${repo}" ] || continue
+        [ "$(revision_field "${d}" resolved_sha)" = "${sha}" ] || continue
+        printf '%s' "${d}"
+        return 0
+    done
+    return 1
+}
+
 echo "========================================================"
-echo " vault_add — ${REPO}"
+echo " vault_add — ${#REPOS[@]} model(s)"
 echo "========================================================"
 echo "  vault: ${ARCHIVE_DIR}"
+[ -z "${HF_TOKEN}" ] && echo "  token: none (gated repos will prompt once, or be skipped)"
+[ -n "${HF_TOKEN}" ] && echo "  token: present"
 echo ""
 
-# ── Resolve what we are actually being asked for ─────────────────────────────
-TARGET_SHA=""
-if printf '%s' "${REVISION}" | grep -qE '^[0-9a-f]{40}$'; then
-    TARGET_SHA="${REVISION}"
-else
-    TARGET_SHA="$(resolve_upstream_sha "${REPO}" "${REVISION}")"
-fi
-
-# A fully private repo exposes no metadata at all unauthenticated, so this is
-# indistinguishable from a deleted one until a token is tried.
-if [ -z "${TARGET_SHA}" ] && prompt_for_token; then
-    if printf '%s' "${REVISION}" | grep -qE '^[0-9a-f]{40}$'; then
-        TARGET_SHA="${REVISION}"
-    else
-        TARGET_SHA="$(resolve_upstream_sha "${REPO}" "${REVISION}")"
-    fi
-fi
-
-if [ -z "${TARGET_SHA}" ]; then
-    echo "  Could not resolve ${REPO}${REVISION:+ @ ${REVISION}} on HuggingFace."
-    echo "  It may be gated, private, renamed, deleted, or simply unreachable"
-    echo "  from here. Nothing was downloaded."
-    echo ""
-    echo "  If you already have these weights, check the vault — that is what it"
-    echo "  is for:"
-    echo "    bash scripts/vault_add.sh --list"
-    skip_gated
-fi
-echo "  resolved commit: ${TARGET_SHA}"
-
-# ── Do we already have this exact commit anywhere? ───────────────────────────
-# Matched on repo + SHA recorded inside each entry, the same way 02 does it,
-# so "already have it" means the same thing in both scripts.
-for d in "${ARCHIVE_DIR}"/*/ "${MODELS_DIR}"/*/; do
-    d="${d%/}"
-    [ -d "${d}" ] || continue
-    [ "$(revision_field "${d}" repo)" = "${REPO}" ] || continue
-    [ "$(revision_field "${d}" resolved_sha)" = "${TARGET_SHA}" ] || continue
-    echo ""
-    echo "  Already on this box — nothing to download:"
-    echo "    ${d}  ($(du -sh "${d}" 2>/dev/null | awk '{print $1}'))"
-    echo "    saved: $(revision_field "${d}" downloaded)"
-    case "${d}" in
-        "${MODELS_DIR}"/*) echo "    (this one is live in ${MODELS_DIR})" ;;
-    esac
-    exit 0
-done
-
-# ── Where it will land ───────────────────────────────────────────────────────
-# Org-qualified by default: two orgs publish models under the same name, and the
-# directory name is cosmetic anyway — 02 matches on the recorded repo, and
-# renames the directory to models.yml's local_path when it puts it into service.
-if [ -z "${NAME}" ]; then
-    NAME="${REPO%%/*}__${REPO##*/}"
-fi
-DEST="${ARCHIVE_DIR}/${NAME}"
-if [ -e "${DEST}" ]; then
-    # Occupied by something that is NOT this commit (the exact-match check above
-    # already returned). Suffix rather than overwrite — same convention as 02's
-    # keep_in_vault, and consistent with never destroying anything.
-    DEST="${ARCHIVE_DIR}/${NAME}@${TARGET_SHA:0:12}"
-    n=2
-    while [ -e "${DEST}" ]; do
-        DEST="${ARCHIVE_DIR}/${NAME}@${TARGET_SHA:0:12}-${n}"
-        n=$(( n + 1 ))
-    done
-    echo "  ${ARCHIVE_DIR}/${NAME} is taken by another revision — using $(basename "${DEST}")"
-fi
-echo "  destination:     ${DEST}"
-
-# ── Preflight ────────────────────────────────────────────────────────────────
+# ── Preflight, once for the whole batch ──────────────────────────────────────
 sudo mkdir -p "${ARCHIVE_DIR}" || exit 1
-
-# Same-filesystem check. 02 puts a vaulted model into service with a rename and
-# refuses to cross devices, so a vault on another disk is a download that can
-# never be used. Failing here costs a second; failing there costs the download.
 if [ -d "${MODELS_DIR}" ]; then
     a_dev="$(stat -c %d "${ARCHIVE_DIR}" 2>/dev/null || echo x)"
     m_dev="$(stat -c %d "${MODELS_DIR}" 2>/dev/null || echo y)"
     if [ "${a_dev}" != "${m_dev}" ]; then
-        echo ""
         echo "  ERROR: ${ARCHIVE_DIR} and ${MODELS_DIR} are on different filesystems."
         echo "  02 puts a vaulted model into service by renaming it, and refuses to"
         echo "  cross devices — anything downloaded here could never be used."
-        echo "  Point ARCHIVE_DIR at the same disk as ${MODELS_DIR}."
         exit 1
     fi
 fi
 
-SIZE="$(resolve_repo_size "${REPO}" "${TARGET_SHA}")"
-echo "  download size:   $(human "${SIZE}")"
+# ── Plan: resolve every repo before downloading any ──────────────────────────
+PLAN_REPO=()
+PLAN_SHA=()
+PLAN_DEST=()
+PLAN_SIZE=()
+SKIPPED=()
+TOTAL=0
 
+echo "  Planning:"
+for repo in "${REPOS[@]}"; do
+    sha=""
+    if printf '%s' "${REVISION}" | grep -qE '^[0-9a-f]{40}$'; then
+        sha="${REVISION}"
+    else
+        sha="$(resolve_upstream_sha "${repo}" "${REVISION}")"
+    fi
+
+    if [ -z "${sha}" ]; then
+        printf '    %-52s UNRESOLVED\n' "${repo}"
+        SKIPPED+=("${repo}  (could not resolve — gated, private, gone or offline)")
+        continue
+    fi
+
+    if where="$(already_present "${repo}" "${sha}")"; then
+        printf '    %-52s HAVE  %s\n' "${repo}" "$(basename "${where}")"
+        continue
+    fi
+
+    name="${NAME}"
+    [ -n "${name}" ] || name="${repo%%/*}__${repo##*/}"
+    dest="${ARCHIVE_DIR}/${name}"
+    if [ -e "${dest}" ]; then
+        dest="${ARCHIVE_DIR}/${name}@${sha:0:12}"
+        n=2
+        while [ -e "${dest}" ]; do
+            dest="${ARCHIVE_DIR}/${name}@${sha:0:12}-${n}"
+            n=$(( n + 1 ))
+        done
+    fi
+
+    size="$(resolve_repo_size "${repo}" "${sha}")"
+    printf '    %-52s FETCH %s\n' "${repo}" "$(human "${size}")"
+    PLAN_REPO+=("${repo}")
+    PLAN_SHA+=("${sha}")
+    PLAN_DEST+=("${dest}")
+    PLAN_SIZE+=("${size}")
+    TOTAL=$(( TOTAL + size ))
+done
+
+if [ "${#PLAN_REPO[@]}" -eq 0 ]; then
+    echo ""
+    echo "  Nothing to download."
+    if [ "${#SKIPPED[@]}" -gt 0 ]; then
+        echo ""
+        echo "  Could not be resolved:"
+        printf '    %s\n' "${SKIPPED[@]}"
+        exit 3
+    fi
+    exit 0
+fi
+
+echo ""
+echo "  To download: ${#PLAN_REPO[@]} model(s), $(human "${TOTAL}")"
 AVAIL="$(df -Pk "${ARCHIVE_DIR}" 2>/dev/null | awk 'NR==2 {printf "%d", $4 * 1024}')"
-if [ -n "${AVAIL}" ]; then
-    echo "  free on disk:    $(human "${AVAIL}")"
-    if [ "${SIZE}" -gt 0 ] && [ "${AVAIL}" -lt $(( SIZE + SIZE / 10 )) ]; then
+if [ -n "${AVAIL}" ] && [ "${AVAIL}" -gt 0 ] 2>/dev/null; then
+    echo "  Free on disk: $(human "${AVAIL}")"
+    if [ "${TOTAL}" -gt 0 ] && [ "${AVAIL}" -lt $(( TOTAL + TOTAL / 10 )) ]; then
         echo ""
         echo "  ERROR: not enough free space, counting a 10% margin."
-        echo "  See what the vault is holding and free some yourself:"
-        echo "    bash scripts/vault_add.sh --list"
         exit 1
     fi
 fi
@@ -410,19 +413,15 @@ fi
 if [ "${DRY_RUN}" -eq 1 ]; then
     echo ""
     echo "  Dry run — nothing downloaded."
+    [ "${#SKIPPED[@]}" -gt 0 ] && printf '  skipped: %s\n' "${SKIPPED[@]}"
     exit 0
 fi
 
-if [ -z "${HF_TOKEN}" ]; then
+# One confirmation for the batch, not one per model.
+if [ "${ASSUME_YES}" -eq 0 ] && [ -t 1 ]; then
     echo ""
-    echo "  No token — downloading unauthenticated. If this repo turns out to be"
-    echo "  gated you get a one-off prompt, or you skip it and carry on."
-fi
-
-if [ -t 0 ] && [ -t 1 ]; then
-    echo ""
-    echo "  This downloads into the vault. It does not touch ${MODELS_DIR},"
-    echo "  models.yml, or anything that is running."
+    echo "  Downloads into the vault only. Does not touch ${MODELS_DIR},"
+    echo "  models.yml, or anything running."
     ans=""
     ask "  Type y to start, anything else to stop: " ans || ans="y"
     case "${ans}" in
@@ -431,59 +430,70 @@ if [ -t 0 ] && [ -t 1 ]; then
     esac
 fi
 
-# ── Download ─────────────────────────────────────────────────────────────────
 require_hf
 sudo mkdir -p "${STAGING_DIR}" || exit 1
 sudo chown "$(id -u):$(id -g)" "${STAGING_DIR}" || exit 1
 
-STAGE="${STAGING_DIR}/${NAME}"
-mkdir -p "${STAGE}" || exit 1
+# ── Download ─────────────────────────────────────────────────────────────────
+DONE=()
+FAILED=()
 
-# Staged, then renamed in. An interrupted pull must never look complete: 02's
-# reuse path only checks that a directory is non-empty, so a half-downloaded
-# tree sitting directly in the vault would be offered as a working model.
-echo ""
-echo "  Downloading into ${STAGE}"
-if ! do_download; then
-    # A gated repo refuses every attempt identically until it is authenticated,
-    # so "re-run to resume" would send the operator round a loop that cannot
-    # terminate. Offer the credential at the one moment it is needed instead.
-    if prompt_for_token; then
-        echo "  Retrying with the token you pasted..."
-        if do_download; then
+i=0
+while [ "${i}" -lt "${#PLAN_REPO[@]}" ]; do
+    repo="${PLAN_REPO[$i]}"
+    sha="${PLAN_SHA[$i]}"
+    dest="${PLAN_DEST[$i]}"
+    stage="${STAGING_DIR}/$(basename "${dest}")"
+    i=$(( i + 1 ))
+
+    echo ""
+    echo "  ── [${i}/${#PLAN_REPO[@]}] ${repo}"
+    mkdir -p "${stage}" || { FAILED+=("${repo}  (cannot create staging dir)"); continue; }
+
+    # Staged then renamed in. An interrupted pull must never look complete: 02's
+    # reuse path only checks that a directory is non-empty, so a half-downloaded
+    # tree in the vault would be offered as a working model.
+    if ! hf download "${repo}" --local-dir "${stage}" ${REVISION:+--revision "${REVISION}"}; then
+        if prompt_for_token "${repo}" &&
+           hf download "${repo}" --local-dir "${stage}" ${REVISION:+--revision "${REVISION}"}; then
             :
         else
-            skip_gated
+            echo "  SKIPPED ${repo} — not downloaded. Partial left in ${stage}"
+            SKIPPED+=("${repo}  (access denied / requires approval)")
+            continue
         fi
-    else
-        skip_gated
     fi
-fi
 
-# The contract with 02. Without these four keys the directory is findable only
-# by name, never by commit — which is the bug that made the drafter invisible.
-printf 'repo=%s\nrevision=%s\nresolved_sha=%s\ndownloaded=%s\n' \
-    "${REPO}" "${REVISION:-main}" "${TARGET_SHA}" "$(date -Iseconds)" \
-    > "${STAGE}/DOWNLOADED_REVISION.txt"
+    # The contract with 02. Without these four keys the directory is findable
+    # only by name, never by commit.
+    printf 'repo=%s\nrevision=%s\nresolved_sha=%s\ndownloaded=%s\n' \
+        "${repo}" "${REVISION:-main}" "${sha}" "$(date -Iseconds)" \
+        > "${stage}/DOWNLOADED_REVISION.txt"
 
-sudo mv "${STAGE}" "${DEST}" || exit 1
+    if ! sudo mv "${stage}" "${dest}"; then
+        FAILED+=("${repo}  (could not move into the vault)")
+        continue
+    fi
+    echo "  OK ${repo} -> ${dest}"
+    DONE+=("${repo}")
+done
+
 rmdir "${STAGING_DIR}" 2>/dev/null || true
 
+# ── Summary, then what the vault actually holds ──────────────────────────────
 echo ""
 echo "========================================================"
-echo "  IN THE VAULT: ${DEST}"
-echo "    repo:     ${REPO}"
-echo "    revision: ${TARGET_SHA}"
-echo "    size:     $(du -sh "${DEST}" 2>/dev/null | awk '{print $1}')"
-echo ""
-echo "  These weights are now local. It no longer matters whether HuggingFace"
-echo "  keeps, gates or removes this repo."
-echo ""
-echo "  To serve it: point the relevant section of config/models.yml at"
-echo "    hf_repo: ${REPO}"
-echo "  and run 02. It matches this entry on the recorded commit and offers it"
-echo "  back without downloading — answer y."
-echo ""
-echo "  Pin the exact build by also setting:"
-echo "    hf_revision: ${TARGET_SHA}"
+echo " Summary"
 echo "========================================================"
+[ "${#DONE[@]}" -gt 0 ]    && { echo "  Downloaded (${#DONE[@]}):";    printf '    %s\n' "${DONE[@]}"; }
+[ "${#SKIPPED[@]}" -gt 0 ] && { echo "  Skipped (${#SKIPPED[@]}):";    printf '    %s\n' "${SKIPPED[@]}"; }
+[ "${#FAILED[@]}" -gt 0 ]  && { echo "  Failed (${#FAILED[@]}):";      printf '    %s\n' "${FAILED[@]}"; }
+echo ""
+vault_listing
+echo ""
+echo "  To serve any of these: point config/models.yml at its hf_repo and run"
+echo "  02. It matches on the recorded commit and offers it back — answer y."
+
+[ "${#FAILED[@]}" -gt 0 ]  && exit 1
+[ "${#SKIPPED[@]}" -gt 0 ] && exit 3
+exit 0
