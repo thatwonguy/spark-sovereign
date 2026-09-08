@@ -519,10 +519,38 @@ different on every machine.
 
 All model config lives in `config/models.yml` — the single source of truth.
 
-1. Edit `config/models.yml` — update model fields
-2. `bash scripts/02_download_models.sh`
-3. `bash scripts/start_brain_ad_hoc.sh` — restarts Brain
-4. Update OpenClaw model ID → `openclaw gateway restart`
+```bash
+# 1. Stop the watchdog and the Brain FIRST — see the warning below
+sudo systemctl stop spark-watchdog.timer
+docker rm -f brain
+
+# 2. Edit config/models.yml, then swap the weights
+nano config/models.yml
+bash scripts/02_download_models.sh
+
+# 3. Start Brain on the new model, and let the watchdog resume
+bash scripts/03_vllm_servers.sh
+sudo systemctl start spark-watchdog.timer
+
+# 4. Re-point OpenClaw if served_name changed
+openclaw gateway restart
+```
+
+> ⚠️ **Stop the watchdog before running 02 on a live Brain.** 02 sets aside any
+> `/opt/models` directory `models.yml` no longer claims — including the model
+> currently being served — and it does that *before* it fetches the new one. The
+> watchdog polls every 2 minutes, sees the Brain container gone, and runs
+> `start_brain_ad_hoc.sh` against a half-swapped tree. Three failures and it
+> **quarantines** the Brain, after which even a correct `03` is skipped until you
+> clear it by hand:
+>
+> ```bash
+> sudo rm /var/lib/spark-sovereign/state/brain.quarantined
+> ```
+>
+> Moving the live model directory is otherwise safe — it is a rename on one
+> filesystem, so the running container keeps its open handles. The watchdog is
+> the part that bites.
 
 **Step 2 usually costs nothing.** If this box has downloaded that exact commit
 before, 02 finds it in `/opt/model-archive` and offers it back — answer `y` and
