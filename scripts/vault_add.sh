@@ -354,6 +354,13 @@ for repo in "${REPOS[@]}"; do
         sha="$(resolve_upstream_sha "${repo}" "${REVISION}")"
     fi
 
+    # A private repo exposes no metadata at all unauthenticated, so it fails
+    # HERE rather than at download time — and would be skipped without ever
+    # offering the token that would fix it. Ask now, then resolve again.
+    if [ -z "${sha}" ] && prompt_for_token "${repo}"; then
+        sha="$(resolve_upstream_sha "${repo}" "${REVISION}")"
+    fi
+
     if [ -z "${sha}" ]; then
         printf '    %-52s UNRESOLVED\n' "${repo}"
         SKIPPED+=("${repo}  (could not resolve — gated, private, gone or offline)")
