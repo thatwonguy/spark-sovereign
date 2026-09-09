@@ -219,3 +219,8 @@ memory/
 
 # Full container logs from failed benchmark launches — regenerated per run.
 docs/failed-*.log
+
+# Agent instruction files and local settings — never commit
+CLAUDE.md
+AGENTS.md
+.claude/
